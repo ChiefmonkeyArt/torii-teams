@@ -219,23 +219,42 @@ export async function disconnectCoordinatorClients(account?: IAccount): Promise<
 }
 
 /**
- * Re-resolve a coordinator's relays from the network (explicit user action):
- * a throwaway relay-less client runs the transport's full resolution chain
- * (hints → kind-10002 discovery → fallback probe) and the result OVERWRITES the
- * stored set — unlike automatic persistence (fill-if-empty), explicit intent
- * replaces, so a coordinator that moved relays gets fixed here. The next
- * getClient swaps in a fresh configured client automatically (relays mismatch).
+ * Re-resolve a coordinator's relays from the network WITHOUT persisting: a
+ * throwaway relay-less client runs the transport's full resolution chain
+ * (hints → kind-10002 discovery → fallback probe), and the returned set is
+ * verified — a successful return implies the coordinator answered a full MCP
+ * connect on it. `discoveryRelayUrls` narrows discovery to relays the caller
+ * knows carry the announcement, so a fallback answer cannot masquerade as
+ * discovery (callers that persist must check the result themselves).
  */
-export async function refetchCoordinatorRelays(coordinatorKey: string): Promise<string[]> {
-	const normalized = normalizePubKey(coordinatorKey);
-	const client = new cordnClient({ serverPubkey: normalized, relays: [] });
+export async function resolveCoordinatorRelaysFromNetwork(
+	coordinatorKey: string,
+	options: { discoveryRelayUrls?: string[] } = {}
+): Promise<string[]> {
+	const client = new cordnClient({
+		serverPubkey: normalizePubKey(coordinatorKey),
+		relays: [],
+		discoveryRelayUrls: options.discoveryRelayUrls
+	});
 	try {
-		const urls = await client.operationalRelayUrls();
-		if (urls.length) upsertChatCoordinator({ pubkey: normalized, relays: urls });
-		return urls;
+		return await client.operationalRelayUrls();
 	} finally {
 		await client.disconnect().catch(() => undefined);
 	}
+}
+
+/**
+ * Re-resolve a coordinator's relays from the network (explicit user action)
+ * and OVERWRITE the stored set with the result — unlike automatic persistence
+ * (fill-if-empty), explicit intent replaces, so a coordinator that moved
+ * relays gets fixed here. The next getClient swaps in a fresh configured
+ * client automatically (relays mismatch).
+ */
+export async function refetchCoordinatorRelays(coordinatorKey: string): Promise<string[]> {
+	const normalized = normalizePubKey(coordinatorKey);
+	const urls = await resolveCoordinatorRelaysFromNetwork(normalized);
+	if (urls.length) upsertChatCoordinator({ pubkey: normalized, relays: urls });
+	return urls;
 }
 
 export async function disconnectCoordinatorClient(

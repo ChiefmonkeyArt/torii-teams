@@ -22,6 +22,9 @@ export interface StoredCoordinator {
 	pubkey: string;
 	label: string;
 	relays: string[];
+	/** When this relay set was last adopted or verified (staleness marker for
+	 *  the automatic relay refresh; absent = never checked → stale). */
+	relaysResolvedAt?: number;
 	isDefault: boolean;
 	color?: string;
 	createdAt: number;
@@ -291,12 +294,17 @@ export function upsertChatCoordinator(input: {
 	const nextIsDefault = input.isDefault ?? existing?.isDefault ?? false;
 	const nextRelays = normalizeRelays(input.relays ?? existing?.relays);
 	const nextColor = normalizeColor(input.color ?? existing?.color, pubkey);
+	// Staleness marker: stamped on any explicit relay write (seed, hints, fill,
+	// manual edit, auto-refresh adoption) and preserved otherwise — an unrelated
+	// label-only upsert must never silence the refresh sweep.
+	const nextRelaysResolvedAt = input.relays?.length ? Date.now() : existing?.relaysResolvedAt;
 
 	if (existing) {
 		const updated: StoredCoordinator = {
 			...existing,
 			label: nextLabel,
 			relays: nextRelays,
+			relaysResolvedAt: nextRelaysResolvedAt,
 			isDefault: nextIsDefault,
 			color: nextColor
 		};
@@ -319,6 +327,7 @@ export function upsertChatCoordinator(input: {
 		pubkey,
 		label: nextLabel,
 		relays: nextRelays,
+		relaysResolvedAt: nextRelaysResolvedAt,
 		isDefault: nextIsDefault,
 		color: nextColor,
 		createdAt: Date.now()
@@ -377,6 +386,21 @@ export function markCoordinatorRelaysResolved(pubkey: string, relays: string[]):
 	if (existing && !existing.relays.length) {
 		upsertChatCoordinator({ pubkey: normalized, relays: resolved });
 	}
+}
+
+/**
+ * Bump the staleness marker without touching the relay set: the coordinator's
+ * relays were checked and the current set kept (auto-refresh confirmed it or
+ * found nothing better). One coordinator only — never touches other entries.
+ */
+export function markCoordinatorRelaysChecked(pubkey: string): void {
+	const normalized = normalizePubKey(pubkey);
+	const existing = getChatCoordinator(normalized);
+	if (!existing) return;
+	chatCoordinatorsStore.coordinators = chatCoordinatorsStore.coordinators.map((entry) =>
+		entry.pubkey === normalized ? { ...entry, relaysResolvedAt: Date.now() } : entry
+	);
+	saveCoordinators();
 }
 
 /**
