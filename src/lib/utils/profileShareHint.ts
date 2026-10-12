@@ -1,7 +1,8 @@
 /**
  * Share-dialog reachability hints: is the person scanning this QR actually able
- * to start a chat with the sharer? Pure text building — the caller supplies the
- * verified state (key-package listing + coordinator health) and wires actions.
+ * to start a chat with the sharer? Pure logic — the caller supplies the verified
+ * state (key-package listing per coordinator) and wires actions; this builds the
+ * hint text and maps states to one hint per share option.
  */
 
 export type ProfileShareHintState = 'checking' | 'discoverable' | 'missing' | 'unverified';
