@@ -186,14 +186,7 @@ async function editOffered(page, text, waitMs = 0) {
  *  sent first — same reason as editOffered's waitMs. */
 async function tryEdit(page, text) {
 	if (!(await editOffered(page, text, 20_000))) return false;
-	const row = page.locator('[data-message-id]', { hasText: text }).first();
-	await row.scrollIntoViewIfNeeded().catch(() => undefined);
-	await row.hover().catch(() => undefined);
-	await row
-		.locator('[aria-label="Open message actions"]')
-		.first()
-		.click({ timeout: 3_000 })
-		.catch(() => undefined);
+	if (!(await openActionsMenu(page, text))) return false;
 	await page
 		.getByRole('menuitem', { name: 'Edit' })
 		.first()
