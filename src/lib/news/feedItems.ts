@@ -91,6 +91,13 @@ export const DEFAULT_DONATION: DonationConfig = {
  */
 const newsReleases: NewsRelease[] = [
 	{
+		id: 'cordn-news-2026-10-12-coordinator-relay-refresh',
+		createdAt: Date.UTC(2026, 9, 12),
+		version: 1,
+		title: 'Chats recover on their own when a coordinator moves',
+		body: '- ✨ The servers that carry your groups — coordinators — can change address. Until now the app kept knocking on the old door and those groups stayed quiet until you noticed and fixed it by hand. Cordn now checks about once a day whether a coordinator announced a new address — and sooner when one stops answering — and switches over by itself the moment the new address is confirmed to work. No action needed: messages just flow again.'
+	},
+	{
 		id: 'cordn-news-2026-10-07-gif-picker',
 		createdAt: Date.UTC(2026, 9, 7),
 		version: 1,
