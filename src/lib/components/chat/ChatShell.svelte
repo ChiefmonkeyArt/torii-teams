@@ -88,8 +88,7 @@
 		// The armed reply is per-group like the draft: switching away and back
 		// must not drop it (the reset effect below handles the other composer
 		// state).
-		const savedReply = getChatDraftReply(groupId);
-		replyTarget = savedReply;
+		replyTarget = getChatDraftReply(groupId);
 	});
 
 	$effect(() => {
