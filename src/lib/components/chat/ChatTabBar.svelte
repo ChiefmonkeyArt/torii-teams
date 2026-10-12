@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import QrShareDialog from '$lib/components/QrShareDialog.svelte';
 	import NewConversationDialog from '$lib/components/chat/NewConversationDialog.svelte';
@@ -18,9 +17,11 @@
 	import {
 		buildProfileShareHint,
 		type ProfileShareHint,
+		type ProfileShareHintAction,
 		type ProfileShareHintState
 	} from '$lib/utils/profileShareHint';
 	import { availableKeyPackagesQueryOptions } from '$lib/queries/chatKeyPackageQueries';
+	import { makeReachableAction } from '$lib/services/chatUiActions.svelte';
 	import { safeNormalizePubKey } from '$lib/utils';
 	import { createQueries } from '@tanstack/svelte-query';
 
@@ -67,11 +68,15 @@
 			availableKeyPackagesQueryOptions($activeAccount?.pubkey ?? '', option.coordinatorKey)
 		)
 	}));
-	function openKeyPackages() {
-		shareOpen = false;
-		void goto(resolve('/chat/config/key-packages'));
-	}
-	const keyPackagesAction = { label: 'Open key packages', onAction: openKeyPackages };
+	// The same direct action as the chat-home reachability callout: publish a
+	// last-resort key package so people scanning this link can invite the
+	// sharer. Per-option links publish on the coordinator the link resolves
+	// through; the bare npub link falls back to the default coordinator.
+	const reachableAction = (coordinatorKey?: string): ProfileShareHintAction => ({
+		label: 'Make me reachable',
+		pendingLabel: 'Setting up…',
+		onAction: () => makeReachableAction(coordinatorKey)
+	});
 	const shareHints = $derived.by<ProfileShareHint[]>(() => {
 		const owner = safeNormalizePubKey($activeAccount?.pubkey ?? '');
 		return shareOptionData.map((option, i) => {
@@ -85,7 +90,9 @@
 							? 'discoverable'
 							: 'missing';
 			const hint = buildProfileShareHint(state, option.label);
-			return state === 'missing' ? { ...hint, action: keyPackagesAction } : hint;
+			return state === 'missing'
+				? { ...hint, action: reachableAction(option.coordinatorKey) }
+				: hint;
 		});
 	});
 	const shareOptions = $derived.by(() =>
@@ -95,7 +102,7 @@
 	// npub link still shares the profile, but nobody can start a chat from it.
 	const shareFallbackHint = $derived<ProfileShareHint | undefined>(
 		$activeAccount && shareOptionData.length === 0
-			? { ...buildProfileShareHint('missing'), action: keyPackagesAction }
+			? { ...buildProfileShareHint('missing'), action: reachableAction() }
 			: undefined
 	);
 

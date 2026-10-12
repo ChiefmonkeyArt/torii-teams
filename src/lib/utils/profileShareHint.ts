@@ -6,10 +6,17 @@
 
 export type ProfileShareHintState = 'checking' | 'discoverable' | 'missing' | 'unverified';
 
+export interface ProfileShareHintAction {
+	label: string;
+	/** Label while `onAction` runs (e.g. 'Setting up…'). Falls back to `label`. */
+	pendingLabel?: string;
+	onAction: () => void | Promise<void>;
+}
+
 export interface ProfileShareHint {
 	tone: 'ok' | 'warn' | 'muted';
 	text: string;
-	action?: { label: string; onAction: () => void };
+	action?: ProfileShareHintAction;
 }
 
 export function buildProfileShareHint(

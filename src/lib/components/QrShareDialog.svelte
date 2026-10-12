@@ -4,6 +4,8 @@
 	import { toast } from 'svelte-sonner';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { Button } from '$lib/components/ui/button';
+	import { Spinner } from '$lib/components/ui/spinner';
+	import { errorMessage } from '$lib/utils';
 	import QrCode from '$lib/components/QrCode.svelte';
 	import QrScanner from '$lib/components/QrScanner.svelte';
 	import GroupLinkInput from '$lib/components/chat/GroupLinkInput.svelte';
@@ -53,6 +55,20 @@
 		showShareOptions ? (shareOptions[selectedShareIndexSafe]?.value ?? data) : data
 	);
 	const activeHint = $derived(shareOptions[selectedShareIndexSafe]?.hint ?? hint);
+	let hintBusy = $state(false);
+
+	async function runHintAction() {
+		const action = activeHint?.action;
+		if (!action || hintBusy) return;
+		hintBusy = true;
+		try {
+			await action.onAction();
+		} catch (error) {
+			toast.error(errorMessage(error));
+		} finally {
+			hintBusy = false;
+		}
+	}
 
 	// Reset to the Share tab whenever the dialog closes so reopening it never
 	// surprises the user by immediately requesting camera access.
@@ -192,9 +208,15 @@
 								variant="outline"
 								size="sm"
 								class="shrink-0"
-								onclick={activeHint.action.onAction}
+								disabled={hintBusy}
+								onclick={runHintAction}
 							>
-								{activeHint.action.label}
+								{#if hintBusy}
+									<Spinner class="mr-2 size-4" />
+								{/if}
+								{hintBusy
+									? (activeHint.action.pendingLabel ?? activeHint.action.label)
+									: activeHint.action.label}
 							</Button>
 						{/if}
 					</div>
