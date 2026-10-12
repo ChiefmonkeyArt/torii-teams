@@ -117,6 +117,10 @@
 	const LONG_PRESS_MS = 400;
 
 	const isOwn = $derived(message.isOwn ?? false);
+	// A queued/sending/failed bubble has no event yet — an edit would target an
+	// event id that doesn't exist and silently no-op, so the action must not
+	// appear. Confirmed rows carry 'sent' (or nothing when inbound).
+	const canEdit = $derived(message.deliveryState === undefined || message.deliveryState === 'sent');
 	const savedReactions = $derived(sharedSavedReactions ?? []);
 	const availableReactions = $derived.by(() => [...REACTIONS, ...savedReactions]);
 	const shouldMountInteractionControls = $derived(
@@ -768,11 +772,14 @@
 											</DropdownMenuItem>
 										{/if}
 
-										{#if isOwn && !message.deleted}
+										{#if isOwn && !message.deleted && canEdit}
 											<DropdownMenuItem onSelect={startEditing} class="gap-2">
 												<Pencil class="size-4" />
 												<span>Edit</span>
 											</DropdownMenuItem>
+										{/if}
+
+										{#if isOwn && !message.deleted}
 											<DropdownMenuItem onSelect={deleteMessage} class="gap-2 text-destructive">
 												<Trash2 class="size-4" />
 												<span>Delete</span>
@@ -1086,7 +1093,7 @@
 									<Info class="size-4 shrink-0 text-muted-foreground" />
 									<span>Message info</span>
 								</button>
-								{#if isOwn && !message.deleted}
+								{#if isOwn && !message.deleted && canEdit}
 									<button
 										type="button"
 										class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors hover:bg-muted/40"
@@ -1095,6 +1102,8 @@
 										<Pencil class="size-4 shrink-0 text-muted-foreground" />
 										<span>Edit</span>
 									</button>
+								{/if}
+								{#if isOwn && !message.deleted}
 									<button
 										type="button"
 										class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors hover:bg-muted/40"
