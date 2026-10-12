@@ -16,9 +16,9 @@
 	import { defaultProfileShareUrl, listProfileShareOptions } from '$lib/utils/profileShareOptions';
 	import {
 		buildProfileShareHint,
+		buildProfileShareHints,
 		type ProfileShareHint,
-		type ProfileShareHintAction,
-		type ProfileShareHintState
+		type ProfileShareHintAction
 	} from '$lib/utils/profileShareHint';
 	import { availableKeyPackagesQueryOptions } from '$lib/queries/chatKeyPackageQueries';
 	import { makeReachableAction } from '$lib/services/chatUiActions.svelte';
@@ -79,21 +79,21 @@
 	});
 	const shareHints = $derived.by<ProfileShareHint[]>(() => {
 		const owner = safeNormalizePubKey($activeAccount?.pubkey ?? '');
-		return shareOptionData.map((option, i) => {
-			const query = shareReachQueries[i];
-			const state: ProfileShareHintState =
-				!query || query.isPending
-					? 'checking'
-					: query.isError
-						? 'unverified'
-						: query.data?.some((entry) => safeNormalizePubKey(entry.pk) === owner)
-							? 'discoverable'
-							: 'missing';
-			const hint = buildProfileShareHint(state, option.label);
-			return state === 'missing'
-				? { ...hint, action: reachableAction(option.coordinatorKey) }
-				: hint;
-		});
+		return buildProfileShareHints(
+			shareOptionData,
+			// Reachability per coordinator: each tab reads its own key-package query.
+			shareOptionData.map((_, i) => {
+				const query = shareReachQueries[i];
+				return {
+					pending: !query || query.isPending,
+					error: Boolean(query?.isError),
+					discoverable: Boolean(
+						query?.data?.some((entry) => safeNormalizePubKey(entry.pk) === owner)
+					)
+				};
+			}),
+			reachableAction
+		);
 	});
 	const shareOptions = $derived.by(() =>
 		shareOptionData.map((option, i) => ({ ...option, hint: shareHints[i] }))

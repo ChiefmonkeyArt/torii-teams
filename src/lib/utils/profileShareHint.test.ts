@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { buildProfileShareHint } from '$lib/utils/profileShareHint';
+import { buildProfileShareHint, buildProfileShareHints } from '$lib/utils/profileShareHint';
 
-describe('buildProfileShareHint', () => {
+describe('profile share hints', () => {
 	it('reports discoverability for the shared coordinator', () => {
 		expect(buildProfileShareHint('discoverable', 'Default coordinator')).toEqual({
 			tone: 'ok',
@@ -28,5 +28,35 @@ describe('buildProfileShareHint', () => {
 		expect(buildProfileShareHint('checking').tone).toBe('muted');
 		expect(buildProfileShareHint('unverified', 'Relay A').tone).toBe('warn');
 		expect(buildProfileShareHint('unverified').text).toContain('coordinator may be unreachable');
+	});
+
+	it('keeps reachability per coordinator and fixes exactly that tab', () => {
+		const coordA = 'aa'.repeat(32);
+		const coordB = 'bb'.repeat(32);
+		const fixed: string[] = [];
+		const hints = buildProfileShareHints(
+			[
+				{ label: 'Coordinator A', coordinatorKey: coordA },
+				{ label: 'Coordinator B', coordinatorKey: coordB },
+				{ label: 'Coordinator C', coordinatorKey: 'cc'.repeat(32) }
+			],
+			// Reachable on A, missing on B, unverifiable on C — at the same time.
+			[{ discoverable: true }, { discoverable: false }, { error: true }],
+			(coordinatorKey) => ({
+				label: 'Make me reachable',
+				onAction: () => {
+					fixed.push(coordinatorKey);
+				}
+			})
+		);
+
+		expect(hints[0].tone).toBe('ok');
+		expect(hints[0].action).toBeUndefined();
+		expect(hints[1].tone).toBe('warn');
+		expect(hints[2].tone).toBe('warn');
+		expect(hints[2].action).toBeUndefined();
+		// The fix targets exactly the coordinator behind the unreachable tab.
+		void hints[1].action?.onAction();
+		expect(fixed).toEqual([coordB]);
 	});
 });
