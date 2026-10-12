@@ -138,8 +138,6 @@ export interface StoredChatOutboxRecord {
 	content: string;
 	tags: string[][];
 	replyTo?: ChatMessageReplyTarget;
-	/** Display label for the optimistic reply preview (profile name at queue time). */
-	replyToAuthorLabel?: string;
 	createdAt: number;
 	state: StoredChatOutboxState;
 	/** Event id of the most recent MLS sealing of this intent (set before post). */

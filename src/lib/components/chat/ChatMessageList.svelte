@@ -356,8 +356,15 @@
 
 	async function navigateToMessage(messageId: string) {
 		if (!browser || !container) return;
-		const messageIndex = messages.findIndex((message) => message.id === messageId);
+		// Accept the raw event id too: reply quotes on pending bubbles and
+		// unavailable-parent stubs carry it (no cursor yet), while rendered
+		// messages match on their composite `${eventId}:${cursor}` id. Raw ids
+		// can't collide with composite ones (no colon).
+		const messageIndex = messages.findIndex(
+			(message) => message.id === messageId || message.eventId === messageId
+		);
 		if (messageIndex === -1) return;
+		const targetId = messages[messageIndex].id;
 
 		suppressNextAutoScroll = true;
 		const run = ++scrollRun;
@@ -365,7 +372,7 @@
 		if (run !== scrollRun) return;
 		if (!element) return;
 
-		highlightedMessageId = messageId;
+		highlightedMessageId = targetId;
 		if (highlightTimeout) {
 			clearTimeout(highlightTimeout);
 		}

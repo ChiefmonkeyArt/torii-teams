@@ -1,8 +1,9 @@
+import type { ReplyQuoteView } from '$lib/chat/replyQuote';
+
 export interface ChatMessage {
 	id: string;
 	eventId: string;
 	author: string;
-	authorLabel?: string;
 	text: string;
 	kind: number;
 	createdAt: number;
@@ -21,13 +22,7 @@ export interface ChatMessage {
 		reactedByMe?: boolean;
 		reactors: string[];
 	}>;
-	replyTo?: {
-		id: string;
-		author: string;
-		authorLabel?: string;
-		text: string;
-		deleted?: boolean;
-	};
+	replyTo?: ReplyQuoteView;
 	cursor?: number;
 	/** Confirmed-message event tags (carries `imeta` for media). */
 	tags?: string[][];

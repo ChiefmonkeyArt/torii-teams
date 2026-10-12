@@ -36,6 +36,7 @@
 		getMessageReactionReference,
 		type MessageTarget
 	} from '$lib/chat/references';
+	import { buildReplyQuote, unavailableReplyQuote } from '$lib/chat/replyQuote';
 	import { ChatKinds, SYSTEM_MESSAGE_KIND, isAnnotationKind } from '$lib/chat/kinds';
 	import { mergeAdjacentReactionMarkers, pruneAdjacentReactionTargets } from './reactionMarkers';
 	import { getShowReactionMarkers } from '$lib/services/chatComposerSettings.svelte';
@@ -53,7 +54,12 @@
 	import { metadataRelays } from '$lib/services/relay-pool';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { useProfileHints } from '$lib/services/useProfileHints.svelte';
-	import { getChatDraft, setChatDraft } from '$lib/services/chatDrafts.svelte';
+	import {
+		getChatDraft,
+		setChatDraft,
+		getChatDraftReply,
+		setChatDraftReply
+	} from '$lib/services/chatDrafts.svelte';
 	import {
 		addPendingMessage,
 		getPendingMessages,
@@ -75,22 +81,26 @@
 		title?: string;
 	} = $props();
 
-	// eslint-disable-next-line svelte/prefer-writable-derived -- writable $derived.by setter form not available in this Svelte version; draft must be both derived-from-storage and user-mutable via bind:value
 	let draft = $state('');
 
 	$effect(() => {
 		draft = getChatDraft(groupId);
+		// The armed reply is per-group like the draft: switching away and back
+		// must not drop it (the reset effect below handles the other composer
+		// state).
+		replyTarget = getChatDraftReply(groupId);
 	});
 
 	$effect(() => {
 		setChatDraft(groupId, draft);
+		setChatDraftReply(groupId, replyTarget);
 		return () => {
 			setChatDraft(groupId, draft);
+			setChatDraftReply(groupId, replyTarget);
 		};
 	});
 	let sendError = $state('');
 	let replyTarget = $state<ChatMessageReplyTarget | null>(null);
-	let replyTargetAuthor = $state('');
 	let editTarget = $state<MessageTarget | null>(null);
 	let editPreview = $state('');
 	let optimisticEdits = $state<Record<string, string>>({});
@@ -239,16 +249,15 @@
 
 	// SvelteKit reuses this component across group navigation (only params.id
 	// changes), so the composer's transient state would otherwise bleed into
-	// the newly opened group (e.g. group A's reply preview or send error shown
-	// in group B). Reset it on group change, like the per-group draft effect.
+	// the newly opened group (e.g. group A's send error shown in group B).
+	// Reset it on group change. The draft text and the armed reply are exempt:
+	// the effects above save and restore them per group, like any other text.
 	// In-flight outgoing MESSAGES are not touched here: they live in the
 	// per-group outbox (chatOutbox.svelte) so they stay attached to their own
 	// group while you navigate and reappear when you come back.
 	$effect(() => {
 		void groupId;
 		sendError = '';
-		replyTarget = null;
-		replyTargetAuthor = '';
 		editTarget = null;
 		editPreview = '';
 		selectedMentions = [];
@@ -389,15 +398,18 @@
 					edited: !deleted && Boolean(optimisticEdit || edit),
 					reactions: reactionEntries,
 					replyTo: replySource
-						? {
+						? buildReplyQuote({
 								id: `${replySource.id}:${replySource.cursor}`,
 								author: replySource.sender,
-								text: deletedIds.has(replySource.id)
+								content: deletedIds.has(replySource.id)
 									? ''
 									: (editMap.get(replySource.id)?.content ?? replySource.content),
-								deleted: deletedIds.has(replySource.id)
-							}
-						: undefined
+								deleted: deletedIds.has(replySource.id),
+								tags: replySource.tags
+							})
+						: threadReference
+							? unavailableReplyQuote(threadReference.parentId, threadReference.parentPubkey)
+							: undefined
 				};
 			});
 
@@ -444,7 +456,6 @@
 		replyTarget
 			? {
 					author: replyTarget.pubkey,
-					authorLabel: replyTargetAuthor || replyTarget.pubkey,
 					// No raw `nostr:npub…` wire tokens in the chip — resolve to @Name like
 					// the sidebar previews do.
 					text: formatChatMessagePreviewText(replyTarget.content, groupProfileHints)
@@ -480,7 +491,6 @@
 
 		const serialized = serializeChatProfileMentions(draft.trim(), selectedMentions);
 		const currentReplyTarget = replyTarget;
-		const currentReplyTargetAuthor = replyTargetAuthor;
 
 		// Text sends go through the durable outbox: the intent is persisted before
 		// any network attempt, so it survives reload/close/offline and drains
@@ -490,8 +500,7 @@
 			groupId,
 			content: serialized.content,
 			tags: serialized.tags,
-			replyTo: currentReplyTarget ?? undefined,
-			replyToAuthorLabel: currentReplyTargetAuthor || undefined
+			replyTo: currentReplyTarget ?? undefined
 		});
 
 		await messageListRef?.scrollToBottom();
@@ -532,11 +541,12 @@
 			)
 		);
 
-		// Consume the caption + draft + reply so the composer is immediately free
-		// for the next message (mirrors the text-send reset).
+		// Consume the caption + draft so the composer is immediately free for the
+		// next message (mirrors the text-send reset). The reply chip clears when
+		// the reply-carrying send lands (sendOneMedia) — media sends aren't
+		// outbox-backed, so clearing here would drop the reply on failure.
 		draft = '';
 		selectedMentions = [];
-		clearReplyTarget();
 	}
 
 	function sendOneMedia(
@@ -595,6 +605,13 @@
 			.then(() => {
 				removeOptimisticMessage(optimisticId);
 				if (previewUrl) URL.revokeObjectURL(previewUrl);
+				// The reply rode this message (first file): consume the chip now that
+				// it landed — identity compare so a reply re-armed meanwhile (a fresh
+				// object, even for the same parent) is never consumed. ponytail: a
+				// send landing after switching groups leaves that group's chip armed
+				// on return (visible, so a duplicate send is obvious); clear the
+				// stored entry by send-group id if it ever matters.
+				if (replyTo && replyTarget === replyTo) clearReplyTarget();
 			})
 			.catch((error) => {
 				// User cancelled: drop the optimistic bubble silently (no error state,
@@ -668,6 +685,10 @@
 			.then(() => {
 				removeOptimisticMessage(optimisticId);
 				URL.revokeObjectURL(previewUrl);
+				// The voice note carried the reply (first-and-only message): consume
+				// the chip now that it landed — identity compare, same rule as
+				// sendOneMedia.
+				if (currentReplyTarget && replyTarget === currentReplyTarget) clearReplyTarget();
 			})
 			.catch((error) => {
 				if (controller.signal.aborted) {
@@ -697,9 +718,6 @@
 		sendVoiceMessage(result, serialized.content, serialized.tags);
 		draft = '';
 		selectedMentions = [];
-		// Consume the reply like the text/media sends do — the voice note carries
-		// it (first-and-only message), so the chip must not stay armed.
-		clearReplyTarget();
 	}
 
 	async function handleRetrySend(message: ChatMessage) {
@@ -733,25 +751,23 @@
 			content: storedMessage.content,
 			tags: storedMessage.tags
 		};
-		replyTargetAuthor = message.author;
 		composerFocusKey += 1;
 	}
 
 	function clearReplyTarget() {
 		replyTarget = null;
-		replyTargetAuthor = '';
 	}
 
-	/** Bubble-shaped reply view for optimistic messages (mirrors the confirmed
-	 *  mapping in `messages`); shared by the media and voice sends. */
+	/** Bubble-shaped reply view for optimistic messages (same builder as the
+	 *  confirmed mapping in `messages`); shared by the media and voice sends. */
 	function buildOptimisticReplyView(): ChatMessage['replyTo'] {
 		if (!replyTarget) return undefined;
-		return {
+		return buildReplyQuote({
 			id: replyTarget.id,
 			author: replyTarget.pubkey,
-			authorLabel: replyTargetAuthor || replyTarget.pubkey,
-			text: replyTarget.content
-		};
+			content: replyTarget.content,
+			tags: replyTarget.tags
+		});
 	}
 
 	function clearEditTarget() {
