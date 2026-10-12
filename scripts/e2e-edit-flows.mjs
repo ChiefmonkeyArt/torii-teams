@@ -145,6 +145,10 @@ async function sendText(page, text) {
 async function openActionsMenu(page, text) {
 	const row = page.locator('[data-message-id]', { hasText: text }).first();
 	for (let attempt = 0; attempt < 4; attempt++) {
+		// Dismiss any menu left open by a previous step or attempt — the menu is
+		// a portal that survives the outbox→confirmed row swap, and a stale one
+		// would answer the Edit question about the wrong row.
+		await page.keyboard.press('Escape');
 		await row.scrollIntoViewIfNeeded().catch(() => undefined);
 		await row.hover().catch(() => undefined);
 		await row
@@ -160,18 +164,36 @@ async function openActionsMenu(page, text) {
 	throw new Error(`message actions menu did not open for "${text}"`);
 }
 
-async function editOffered(page, text) {
-	const offered = await openActionsMenu(page, text);
-	await page.keyboard.press('Escape');
-	await sleep(150);
-	return offered;
+/** Is Edit offered on the row? Single-shot by default — negative checks must
+ *  catch the row in its pending state, not race past it. With waitMs, keeps
+ *  re-checking until the message confirms and Edit appears: right after an
+ *  offline drain the bubble can still be pending (or failed once and retrying),
+ *  and waitSettled ignores the Failed badge. */
+async function editOffered(page, text, waitMs = 0) {
+	const deadline = Date.now() + waitMs;
+	for (;;) {
+		const offered = await openActionsMenu(page, text);
+		await page.keyboard.press('Escape');
+		await sleep(150);
+		if (offered) return true;
+		if (Date.now() >= deadline) return false;
+		await sleep(500);
+	}
 }
 
 /** Arm an edit on the first row containing `text`; returns whether the edit
- *  chip appeared (`aria-label="Cancel edit"`). */
+ *  chip appeared (`aria-label="Cancel edit"`). Polls for the message to be
+ *  sent first — same reason as editOffered's waitMs. */
 async function tryEdit(page, text) {
-	const offered = await openActionsMenu(page, text);
-	if (!offered) return false;
+	if (!(await editOffered(page, text, 20_000))) return false;
+	const row = page.locator('[data-message-id]', { hasText: text }).first();
+	await row.scrollIntoViewIfNeeded().catch(() => undefined);
+	await row.hover().catch(() => undefined);
+	await row
+		.locator('[aria-label="Open message actions"]')
+		.first()
+		.click({ timeout: 3_000 })
+		.catch(() => undefined);
 	await page
 		.getByRole('menuitem', { name: 'Edit' })
 		.first()
@@ -197,7 +219,9 @@ async function waitSettled(page, ms = 15_000) {
 	const deadline = Date.now() + ms;
 	while (Date.now() < deadline) {
 		const { deliveryBadges } = await readRows(page, '');
-		if (!deliveryBadges.some((b) => b === 'Sending' || b === 'Queued — will send when back online')) {
+		if (
+			!deliveryBadges.some((b) => b === 'Sending' || b === 'Queued — will send when back online')
+		) {
 			return true;
 		}
 		await sleep(500);
@@ -307,7 +331,7 @@ async function main() {
 		// --- S1: editing a confirmed message replaces text in place ---
 		await sendText(page, 'hello edit me');
 		await waitSettled(page);
-		assert('S1 Edit offered on a sent message', await editOffered(page, 'hello edit me'));
+		assert('S1 Edit offered on a sent message', await editOffered(page, 'hello edit me', 20_000));
 		const chip1 = await tryEdit(page, 'hello edit me');
 		assert('S1 edit chip arms', chip1);
 		if (chip1) await submitEdit(page, 'hello EDITED');
@@ -330,8 +354,11 @@ async function main() {
 		assert('S2 Edit NOT offered while queued', !(await editOffered(page, 'queued target')));
 		await contextA.setOffline(false);
 		await waitSettled(page);
-		assert('S2 queued message sends as one row', (await readRows(page, 'queued target')).matches === 1);
-		assert('S2 Edit offered once sent', await editOffered(page, 'queued target'));
+		assert(
+			'S2 queued message sends as one row',
+			(await readRows(page, 'queued target')).matches === 1
+		);
+		assert('S2 Edit offered once sent', await editOffered(page, 'queued target', 20_000));
 
 		// --- S3: in-flight window (race — evidence only) ---
 		await sendText(page, 'in flight target');
@@ -339,7 +366,10 @@ async function main() {
 			offered: await editOffered(page, 'in flight target')
 		});
 		await waitSettled(page);
-		assert('S3 in-flight message is one row', (await readRows(page, 'in flight target')).matches === 1);
+		assert(
+			'S3 in-flight message is one row',
+			(await readRows(page, 'in flight target')).matches === 1
+		);
 
 		// --- S4: no Edit on a FAILED bubble; retry keeps one row ---
 		await contextA.setOffline(true);
@@ -351,19 +381,23 @@ async function main() {
 		await retry.click({ timeout: 5_000 }).catch(() => log('no retry button on failed bubble'));
 		await waitSettled(page);
 		assert('S4 retry keeps one row', (await readRows(page, 'failed target')).matches === 1);
-		assert('S4 Edit offered after retry lands', await editOffered(page, 'failed target'));
+		assert('S4 Edit offered after retry lands', await editOffered(page, 'failed target', 20_000));
 
 		// --- S5: editing twice leaves only the last text ---
 		await sendText(page, 'double edit target');
 		await waitSettled(page);
-		assert('S5 first edit chip arms', await tryEdit(page, 'double edit target'));
-		await submitEdit(page, 'double edit FIRST');
+		const chip5a = await tryEdit(page, 'double edit target');
+		assert('S5 first edit chip arms', chip5a);
+		if (chip5a) await submitEdit(page, 'double edit FIRST');
 		await waitSettled(page);
 		const chip5b = await tryEdit(page, 'double edit FIRST');
 		assert('S5 second edit chip arms', chip5b);
 		if (chip5b) await submitEdit(page, 'double edit SECOND');
 		await waitSettled(page);
-		assert('S5 final text is the only row', (await readRows(page, 'double edit SECOND')).matches === 1);
+		assert(
+			'S5 final text is the only row',
+			(await readRows(page, 'double edit SECOND')).matches === 1
+		);
 		assert('S5 intermediate text gone', (await readRows(page, 'double edit FIRST')).matches === 0);
 		await page.reload();
 		await sleep(2_500);
@@ -383,7 +417,8 @@ async function main() {
 		await waitSettled(page);
 		const chip6 = await tryEdit(page, 'parent message');
 		assert('S6 parent edit chip arms', chip6);
-		if (chip6) await submitEdit(page, 'parent EDITED');		await waitSettled(page);
+		if (chip6) await submitEdit(page, 'parent EDITED');
+		await waitSettled(page);
 		assert('S6 parent edited in place', (await readRows(page, 'parent EDITED')).matches === 1);
 		assert('S6 parent old text gone', (await readRows(page, 'parent message')).matches === 0);
 		assert('S6 quote follows the edit right away', (await quoteShows(page, 'parent EDITED')) >= 1, {
@@ -404,7 +439,10 @@ async function main() {
 		assert('S7 chip arms after drain', chip7);
 		if (chip7) await submitEdit(page, 'stale hunt EDITED');
 		await waitSettled(page);
-		assert('S7 edited text is the only row', (await readRows(page, 'stale hunt EDITED')).matches === 1);
+		assert(
+			'S7 edited text is the only row',
+			(await readRows(page, 'stale hunt EDITED')).matches === 1
+		);
 		assert('S7 old text gone', (await readRows(page, 'stale hunt target')).matches === 0);
 
 		log('================ VERDICT ================');
