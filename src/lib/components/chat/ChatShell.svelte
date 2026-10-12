@@ -54,7 +54,12 @@
 	import { metadataRelays } from '$lib/services/relay-pool';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { useProfileHints } from '$lib/services/useProfileHints.svelte';
-	import { getChatDraft, setChatDraft } from '$lib/services/chatDrafts.svelte';
+	import {
+		getChatDraft,
+		setChatDraft,
+		getChatDraftReply,
+		setChatDraftReply
+	} from '$lib/services/chatDrafts.svelte';
 	import {
 		addPendingMessage,
 		getPendingMessages,
@@ -76,17 +81,30 @@
 		title?: string;
 	} = $props();
 
-	// eslint-disable-next-line svelte/prefer-writable-derived -- writable $derived.by setter form not available in this Svelte version; draft must be both derived-from-storage and user-mutable via bind:value
 	let draft = $state('');
 
 	$effect(() => {
 		draft = getChatDraft(groupId);
+		// The armed reply is per-group like the draft: switching away and back
+		// must not drop it (the reset effect below handles the other composer
+		// state).
+		const savedReply = getChatDraftReply(groupId);
+		replyTarget = savedReply?.target ?? null;
+		replyTargetAuthor = savedReply?.authorLabel ?? '';
 	});
 
 	$effect(() => {
 		setChatDraft(groupId, draft);
+		setChatDraftReply(
+			groupId,
+			replyTarget ? { target: replyTarget, authorLabel: replyTargetAuthor } : null
+		);
 		return () => {
 			setChatDraft(groupId, draft);
+			setChatDraftReply(
+				groupId,
+				replyTarget ? { target: replyTarget, authorLabel: replyTargetAuthor } : null
+			);
 		};
 	});
 	let sendError = $state('');
@@ -240,16 +258,15 @@
 
 	// SvelteKit reuses this component across group navigation (only params.id
 	// changes), so the composer's transient state would otherwise bleed into
-	// the newly opened group (e.g. group A's reply preview or send error shown
-	// in group B). Reset it on group change, like the per-group draft effect.
+	// the newly opened group (e.g. group A's send error shown in group B).
+	// Reset it on group change. The draft text and the armed reply are exempt:
+	// the effects above save and restore them per group, like any other text.
 	// In-flight outgoing MESSAGES are not touched here: they live in the
 	// per-group outbox (chatOutbox.svelte) so they stay attached to their own
 	// group while you navigate and reappear when you come back.
 	$effect(() => {
 		void groupId;
 		sendError = '';
-		replyTarget = null;
-		replyTargetAuthor = '';
 		editTarget = null;
 		editPreview = '';
 		selectedMentions = [];
@@ -601,8 +618,12 @@
 				removeOptimisticMessage(optimisticId);
 				if (previewUrl) URL.revokeObjectURL(previewUrl);
 				// The reply rode this message (first file): consume the chip now that
-				// it landed — never a newer reply armed in the meantime.
-				if (replyTo && replyTarget?.id === replyTo.id) clearReplyTarget();
+				// it landed — identity compare so a reply re-armed meanwhile (a fresh
+				// object, even for the same parent) is never consumed. ponytail: a
+				// send landing after switching groups leaves that group's chip armed
+				// on return (visible, so a duplicate send is obvious); clear the
+				// stored entry by send-group id if it ever matters.
+				if (replyTo && replyTarget === replyTo) clearReplyTarget();
 			})
 			.catch((error) => {
 				// User cancelled: drop the optimistic bubble silently (no error state,
@@ -677,8 +698,9 @@
 				removeOptimisticMessage(optimisticId);
 				URL.revokeObjectURL(previewUrl);
 				// The voice note carried the reply (first-and-only message): consume
-				// the chip now that it landed — never a newer reply armed meanwhile.
-				if (currentReplyTarget && replyTarget?.id === currentReplyTarget.id) clearReplyTarget();
+				// the chip now that it landed — identity compare, same rule as
+				// sendOneMedia.
+				if (currentReplyTarget && replyTarget === currentReplyTarget) clearReplyTarget();
 			})
 			.catch((error) => {
 				if (controller.signal.aborted) {
