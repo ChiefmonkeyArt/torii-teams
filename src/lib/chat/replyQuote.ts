@@ -11,7 +11,6 @@ export interface ReplyQuoteView {
 	/** Jump-target id: confirmed quotes use the composite `${eventId}:${cursor}`. */
 	id: string;
 	author: string;
-	authorLabel?: string;
 	text: string;
 	deleted?: boolean;
 }
@@ -19,7 +18,6 @@ export interface ReplyQuoteView {
 export interface ReplyQuoteSource {
 	id: string;
 	author: string;
-	authorLabel?: string;
 	/** Parent's display text with edits already applied by the caller. */
 	content: string;
 	/** Parent is deleted — `content` is ignored and the renderer shows its tombstone. */
@@ -33,7 +31,6 @@ export function buildReplyQuote(source: ReplyQuoteSource): ReplyQuoteView {
 		return {
 			id: source.id,
 			author: source.author,
-			authorLabel: source.authorLabel,
 			text: '',
 			deleted: true
 		};
@@ -41,7 +38,6 @@ export function buildReplyQuote(source: ReplyQuoteSource): ReplyQuoteView {
 	return {
 		id: source.id,
 		author: source.author,
-		authorLabel: source.authorLabel,
 		// A textless media parent must not render as a blank quote — that reads
 		// as "the reply text was dropped".
 		text: source.content || quotePlaceholder(source.tags)

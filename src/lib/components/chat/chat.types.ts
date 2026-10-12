@@ -4,7 +4,6 @@ export interface ChatMessage {
 	id: string;
 	eventId: string;
 	author: string;
-	authorLabel?: string;
 	text: string;
 	kind: number;
 	createdAt: number;

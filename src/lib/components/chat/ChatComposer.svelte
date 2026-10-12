@@ -62,7 +62,7 @@
 		value?: string;
 		onSubmit: () => void;
 		disabled?: boolean;
-		replyTo?: { author: string; authorLabel?: string; text: string } | null;
+		replyTo?: { author: string; text: string } | null;
 		editTo?: { text: string } | null;
 		onCancelReply?: () => void;
 		onCancelEdit?: () => void;

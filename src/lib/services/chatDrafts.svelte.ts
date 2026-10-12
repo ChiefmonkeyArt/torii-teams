@@ -4,18 +4,13 @@ import type { ChatMessageReplyTarget } from '$lib/chat/references';
 const drafts = new SvelteMap<string, string>();
 
 /** The composer's armed reply, kept per group like the draft text. */
-export interface ChatDraftReply {
-	target: ChatMessageReplyTarget;
-	authorLabel: string;
-}
+const draftReplies = new SvelteMap<string, ChatMessageReplyTarget>();
 
-const draftReplies = new SvelteMap<string, ChatDraftReply>();
-
-export function getChatDraftReply(groupId: string): ChatDraftReply | null {
+export function getChatDraftReply(groupId: string): ChatMessageReplyTarget | null {
 	return draftReplies.get(groupId) ?? null;
 }
 
-export function setChatDraftReply(groupId: string, reply: ChatDraftReply | null): void {
+export function setChatDraftReply(groupId: string, reply: ChatMessageReplyTarget | null): void {
 	if (reply === null) {
 		draftReplies.delete(groupId);
 	} else {

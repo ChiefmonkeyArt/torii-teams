@@ -113,7 +113,6 @@ function outboxEntryToChatMessage(entry: StoredChatOutboxRecord): UiChatMessage 
 			? buildReplyQuote({
 					id: entry.replyTo.id,
 					author: entry.replyTo.pubkey,
-					authorLabel: entry.replyToAuthorLabel || entry.replyTo.pubkey,
 					content: entry.replyTo.content,
 					tags: entry.replyTo.tags
 				})
@@ -176,8 +175,6 @@ export function enqueueTextMessage(input: {
 	content: string;
 	tags?: string[][];
 	replyTo?: ChatMessageReplyTarget;
-	/** Profile label for the optimistic reply preview (UX parity with live sends). */
-	replyToAuthorLabel?: string;
 }): void {
 	const ownerPubkey = activePubkey();
 	if (!ownerPubkey) return;
@@ -188,7 +185,6 @@ export function enqueueTextMessage(input: {
 		content: input.content,
 		tags: input.tags ?? [],
 		replyTo: input.replyTo,
-		replyToAuthorLabel: input.replyToAuthorLabel,
 		createdAt: Date.now(),
 		state: 'queued',
 		attempts: 0

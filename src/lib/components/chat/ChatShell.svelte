@@ -89,27 +89,19 @@
 		// must not drop it (the reset effect below handles the other composer
 		// state).
 		const savedReply = getChatDraftReply(groupId);
-		replyTarget = savedReply?.target ?? null;
-		replyTargetAuthor = savedReply?.authorLabel ?? '';
+		replyTarget = savedReply;
 	});
 
 	$effect(() => {
 		setChatDraft(groupId, draft);
-		setChatDraftReply(
-			groupId,
-			replyTarget ? { target: replyTarget, authorLabel: replyTargetAuthor } : null
-		);
+		setChatDraftReply(groupId, replyTarget);
 		return () => {
 			setChatDraft(groupId, draft);
-			setChatDraftReply(
-				groupId,
-				replyTarget ? { target: replyTarget, authorLabel: replyTargetAuthor } : null
-			);
+			setChatDraftReply(groupId, replyTarget);
 		};
 	});
 	let sendError = $state('');
 	let replyTarget = $state<ChatMessageReplyTarget | null>(null);
-	let replyTargetAuthor = $state('');
 	let editTarget = $state<MessageTarget | null>(null);
 	let editPreview = $state('');
 	let optimisticEdits = $state<Record<string, string>>({});
@@ -465,7 +457,6 @@
 		replyTarget
 			? {
 					author: replyTarget.pubkey,
-					authorLabel: replyTargetAuthor || replyTarget.pubkey,
 					// No raw `nostr:npub…` wire tokens in the chip — resolve to @Name like
 					// the sidebar previews do.
 					text: formatChatMessagePreviewText(replyTarget.content, groupProfileHints)
@@ -501,7 +492,6 @@
 
 		const serialized = serializeChatProfileMentions(draft.trim(), selectedMentions);
 		const currentReplyTarget = replyTarget;
-		const currentReplyTargetAuthor = replyTargetAuthor;
 
 		// Text sends go through the durable outbox: the intent is persisted before
 		// any network attempt, so it survives reload/close/offline and drains
@@ -511,8 +501,7 @@
 			groupId,
 			content: serialized.content,
 			tags: serialized.tags,
-			replyTo: currentReplyTarget ?? undefined,
-			replyToAuthorLabel: currentReplyTargetAuthor || undefined
+			replyTo: currentReplyTarget ?? undefined
 		});
 
 		await messageListRef?.scrollToBottom();
@@ -763,13 +752,11 @@
 			content: storedMessage.content,
 			tags: storedMessage.tags
 		};
-		replyTargetAuthor = message.author;
 		composerFocusKey += 1;
 	}
 
 	function clearReplyTarget() {
 		replyTarget = null;
-		replyTargetAuthor = '';
 	}
 
 	/** Bubble-shaped reply view for optimistic messages (same builder as the
@@ -779,7 +766,6 @@
 		return buildReplyQuote({
 			id: replyTarget.id,
 			author: replyTarget.pubkey,
-			authorLabel: replyTargetAuthor || replyTarget.pubkey,
 			content: replyTarget.content,
 			tags: replyTarget.tags
 		});

@@ -17,9 +17,11 @@ function mediaTags(mime: string): string[][] {
 
 describe('reply quote', () => {
 	it('keeps the parent text and identity', () => {
-		expect(
-			buildReplyQuote({ id: 'e1:1', author: 'pub', authorLabel: 'Ann', content: 'hello' })
-		).toEqual({ id: 'e1:1', author: 'pub', authorLabel: 'Ann', text: 'hello' });
+		expect(buildReplyQuote({ id: 'e1:1', author: 'pub', content: 'hello' })).toEqual({
+			id: 'e1:1',
+			author: 'pub',
+			text: 'hello'
+		});
 	});
 
 	it('marks deleted parents without inventing text', () => {
