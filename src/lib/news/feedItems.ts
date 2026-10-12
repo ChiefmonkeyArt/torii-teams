@@ -93,9 +93,9 @@ const newsReleases: NewsRelease[] = [
 	{
 		id: 'cordn-news-2026-10-12-coordinator-relay-refresh',
 		createdAt: Date.UTC(2026, 9, 12),
-		version: 1,
-		title: 'Chats recover on their own when a coordinator moves',
-		body: '- ✨ The servers that carry your groups — coordinators — can change address. Until now the app kept knocking on the old door and those groups stayed quiet until you noticed and fixed it by hand. Cordn now checks about once a day whether a coordinator announced a new address — and sooner when one stops answering — and switches over by itself the moment the new address is confirmed to work. No action needed: messages just flow again.'
+		version: 2,
+		title: 'Chats recover on their own, and sharing tells you who can reach you',
+		body: "- ✨ The servers that carry your groups — coordinators — can change address. Until now the app kept knocking on the old door and those groups stayed quiet until you noticed and fixed it by hand. Cordn now checks about once a day whether a coordinator announced a new address — and sooner when one stops answering — and switches over by itself the moment the new address is confirmed to work. No action needed: messages just flow again.\n- ✨ The share dialog now tells you whether people can actually reach you from the link you are about to share: each profile link shows if a key package is published on its coordinator, so you never hand out a QR code that leads to a dead end.\n- ✨ When you are not reachable yet, one tap on “Make me reachable” publishes a key package right from the share dialog — the same action as the callout on chat home.\n- 🔄 Starting a chat from someone's profile now says “Checking availability…” while it looks for their key package, instead of a button that gives no clue what is happening."
 	},
 	{
 		id: 'cordn-news-2026-10-07-gif-picker',
