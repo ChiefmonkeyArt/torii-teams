@@ -43,6 +43,11 @@ import { fetchCoordinatorAvailableKeyPackages } from '$lib/queries/chatKeyPackag
 import { fetchCoordinatorWelcomeNotifications } from '$lib/queries/chatWelcomeQueries';
 import { fetchCoordinatorJoinRequests } from '$lib/queries/chatJoinRequestQueries';
 import { requireActiveAccount } from '$lib/services/chatRuntime';
+import { ensureLastResortPublished } from '$lib/services/chatKeyPackages.svelte';
+import { promptForeignLastResort } from '$lib/services/lastResortConflict.svelte';
+import { getDefaultChatCoordinator } from '$lib/services/chatCoordinators.svelte';
+import { DEFAULT_CHAT_COORDINATOR_PUBKEY } from '$lib/constants/chat';
+import { toast } from 'svelte-sonner';
 import type { ChatMessageReplyTarget, MessageTarget, PinOp } from '$lib/chat/references';
 import type { StoredChatMessage } from '$lib/services/chatGroupMessages.svelte';
 
@@ -278,6 +283,29 @@ export async function startChatWithKeyPackageAction(keyPackage: {
 		throw error;
 	}
 	return group.id;
+}
+
+/**
+ * "Make me reachable": publish a last-resort key package so others can invite
+ * the active identity. Shared by the chat-home reachability callout and the
+ * profile share dialog. A foreign last-resort hands off to the existing
+ * non-destructive link/take-over prompt and publishes nothing here; errors
+ * propagate to the caller (each surface reports them differently).
+ */
+export async function makeReachableAction(coordinatorKey?: string): Promise<void> {
+	// With no coordinator given (the generic callout, the bare npub link):
+	// honor a power user's flagged default if set; otherwise publish to the
+	// default coordinator (seeded on first run), so new users never pick one.
+	const result = await ensureLastResortPublished(
+		coordinatorKey || getDefaultChatCoordinator()?.pubkey || DEFAULT_CHAT_COORDINATOR_PUBKEY
+	);
+	if (result.kind === 'foreign') {
+		void promptForeignLastResort(result.coordinatorKey);
+		return;
+	}
+	toast.success('You are reachable', {
+		description: 'Others can now start private conversations with you.'
+	});
 }
 
 export async function refreshWelcomeNotificationsAction() {

@@ -9,20 +9,14 @@
 	import { isAndroidNative } from '$lib/services/nativeBridge';
 	import { Button } from '$lib/components/ui/button';
 	import { Spinner } from '$lib/components/ui/spinner';
-	import { toast } from 'svelte-sonner';
 	import { resolve } from '$app/paths';
 	import { activeAccount } from '$lib/services/accountManager.svelte';
 	import { DEFAULT_CHAT_COORDINATOR_PUBKEY } from '$lib/constants/chat';
-	import { getDefaultChatCoordinator } from '$lib/services/chatCoordinators.svelte';
 	import { migrationBannerStore } from '$lib/services/migrationBanner.svelte';
 	import { listChatGroups } from '$lib/services/chatGroups.svelte';
 	import { getUnreadNewsCount, isNewsItemUnread } from '$lib/news/newsReadState.svelte';
 	import { getNewsFeedItems } from '$lib/news/feedItems';
-	import {
-		ensureLastResortPublished,
-		listChatKeyPackages
-	} from '$lib/services/chatKeyPackages.svelte';
-	import { promptForeignLastResort } from '$lib/services/lastResortConflict.svelte';
+	import { listChatKeyPackages } from '$lib/services/chatKeyPackages.svelte';
 	import {
 		getChatGroupSummary,
 		markAllChatGroupsRead
@@ -32,7 +26,7 @@
 	import { buildGroupSharePath } from '$lib/utils/groupShareLink';
 	import { groupRouteId } from '$lib/services/chatGroupLinks.svelte';
 	import { pullToRefresh } from '$lib/actions/pullToRefresh';
-	import { refreshChatFeedAction } from '$lib/services/chatUiActions.svelte';
+	import { makeReachableAction, refreshChatFeedAction } from '$lib/services/chatUiActions.svelte';
 	import { appUpdateStore, reloadForUpdate } from '$lib/services/appUpdate.svelte';
 	import CheckCheck from '@lucide/svelte/icons/check-check';
 
@@ -99,7 +93,6 @@
 		);
 	});
 	const keyPackages = $derived.by(() => listChatKeyPackages($activeAccount?.pubkey));
-	const defaultCoordinator = $derived.by(() => getDefaultChatCoordinator());
 	const hasUnreadChats = $derived(feedRows.some((row) => row.kind === 'group' && row.unread));
 	const hasAccount = $derived.by(() => Boolean($activeAccount));
 	// Web-only storage disclaimer: browser storage is the source of truth on web,
@@ -167,20 +160,7 @@
 		try {
 			makingReachable = true;
 			reachabilityError = '';
-			// Honor a power user's flagged default if set; otherwise publish to the
-			// default coordinator (seeded on first run), so new users never pick one.
-			const result = await ensureLastResortPublished(
-				defaultCoordinator?.pubkey ?? DEFAULT_CHAT_COORDINATOR_PUBKEY
-			);
-			if (result.kind === 'foreign') {
-				// Another device already made this identity reachable — hand off to the
-				// existing non-destructive link/take-over prompt.
-				void promptForeignLastResort(result.coordinatorKey);
-				return;
-			}
-			toast.success('You are reachable', {
-				description: 'Others can now start private conversations with you.'
-			});
+			await makeReachableAction();
 		} catch (error) {
 			reachabilityError = error instanceof Error ? error.message : 'Failed to publish key package';
 		} finally {
