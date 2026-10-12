@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import QrShareDialog from '$lib/components/QrShareDialog.svelte';
 	import NewConversationDialog from '$lib/components/chat/NewConversationDialog.svelte';
@@ -14,6 +15,14 @@
 	import { getUnreadJoinRequestCount } from '$lib/services/chatJoinRequests.svelte';
 	import { getUnreadWelcomeNotificationCount } from '$lib/services/chatWelcomeNotifications.svelte';
 	import { defaultProfileShareUrl, listProfileShareOptions } from '$lib/utils/profileShareOptions';
+	import {
+		buildProfileShareHint,
+		type ProfileShareHint,
+		type ProfileShareHintState
+	} from '$lib/utils/profileShareHint';
+	import { availableKeyPackagesQueryOptions } from '$lib/queries/chatKeyPackageQueries';
+	import { safeNormalizePubKey } from '$lib/utils';
+	import { createQueries } from '@tanstack/svelte-query';
 
 	// Primary navigation on every viewport (desktop included): four tab
 	// destinations plus a center “+” action (the old floating FAB, folded into
@@ -47,8 +56,48 @@
 		page.url.pathname.startsWith(settingsHref) || page.url.pathname.startsWith(coordinatorsHref)
 	);
 
-	const shareOptions = $derived.by(() => listProfileShareOptions($activeAccount?.pubkey));
+	const shareOptionData = $derived.by(() => listProfileShareOptions($activeAccount?.pubkey));
 	const shareUrl = $derived.by(() => defaultProfileShareUrl($activeAccount?.pubkey));
+
+	// Reachability per share option, from the same cached per-coordinator
+	// key-package listing the directory uses: "is there a key package for ME on
+	// this coordinator?" — stale local publish markers must not pass for it.
+	const shareReachQueries = createQueries(() => ({
+		queries: shareOptionData.map((option) =>
+			availableKeyPackagesQueryOptions($activeAccount?.pubkey ?? '', option.coordinatorKey)
+		)
+	}));
+	function openKeyPackages() {
+		shareOpen = false;
+		void goto(resolve('/chat/config/key-packages'));
+	}
+	const keyPackagesAction = { label: 'Open key packages', onAction: openKeyPackages };
+	const shareHints = $derived.by<ProfileShareHint[]>(() => {
+		const owner = safeNormalizePubKey($activeAccount?.pubkey ?? '');
+		return shareOptionData.map((option, i) => {
+			const query = shareReachQueries[i];
+			const state: ProfileShareHintState =
+				!query || query.isPending
+					? 'checking'
+					: query.isError
+						? 'unverified'
+						: query.data?.some((entry) => safeNormalizePubKey(entry.pk) === owner)
+							? 'discoverable'
+							: 'missing';
+			const hint = buildProfileShareHint(state, option.label);
+			return state === 'missing' ? { ...hint, action: keyPackagesAction } : hint;
+		});
+	});
+	const shareOptions = $derived.by(() =>
+		shareOptionData.map((option, i) => ({ ...option, hint: shareHints[i] }))
+	);
+	// No share options at all = no published key package anywhere: the bare
+	// npub link still shares the profile, but nobody can start a chat from it.
+	const shareFallbackHint = $derived<ProfileShareHint | undefined>(
+		$activeAccount && shareOptionData.length === 0
+			? { ...buildProfileShareHint('missing'), action: keyPackagesAction }
+			: undefined
+	);
 
 	const itemClass =
 		'flex min-h-14 flex-col items-center justify-center gap-1 px-2 pt-3 pb-1.5 text-[11px] font-medium transition-colors';
@@ -141,6 +190,7 @@
 			description="Share your public Cordn profile link as a QR code, or scan someone else's."
 			data={shareUrl}
 			{shareOptions}
+			hint={shareFallbackHint}
 			copyLabel="Copy profile link"
 			copiedLabel="Copied profile link"
 		/>

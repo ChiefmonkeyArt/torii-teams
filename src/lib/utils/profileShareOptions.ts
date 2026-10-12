@@ -20,6 +20,8 @@ export interface ProfileShareOption {
 	label: string;
 	value: string;
 	color?: string;
+	/** Coordinator this link resolves key packages through (reachability checks). */
+	coordinatorKey: string;
 }
 
 function toAbsoluteProfileUrl(path: string): string {
@@ -60,6 +62,7 @@ export function listProfileShareOptions(ownerPubkey: string | undefined): Profil
 	return coordinatorKeys.map((coordinatorKey) => ({
 		label: getCoordinatorLabel(coordinatorKey),
 		color: getCoordinatorColor({ pubkey: coordinatorKey, color: undefined }),
+		coordinatorKey,
 		value: toAbsoluteProfileUrl(
 			buildProfileSharePath(owner, coordinatorKey, resolveCoordinatorRelays(coordinatorKey))
 		)

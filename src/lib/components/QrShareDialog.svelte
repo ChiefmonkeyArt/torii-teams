@@ -8,6 +8,7 @@
 	import QrScanner from '$lib/components/QrScanner.svelte';
 	import GroupLinkInput from '$lib/components/chat/GroupLinkInput.svelte';
 	import { isAppOrigin } from '$lib/utils/appOrigin';
+	import type { ProfileShareHint } from '$lib/utils/profileShareHint';
 	import { copyText, openExternal } from '$lib/services/nativeShims';
 	import Copy from '@lucide/svelte/icons/copy';
 	import QrCodeIcon from '@lucide/svelte/icons/qr-code';
@@ -20,6 +21,7 @@
 		data,
 		copyLabel = 'Copy link',
 		copiedLabel = 'Copied link',
+		hint = undefined,
 		shareOptions = [],
 		onNavigate = () => {}
 	}: {
@@ -29,9 +31,11 @@
 		data: string;
 		copyLabel?: string;
 		copiedLabel?: string;
+		/** Optional status/warning block shown under the share link (e.g. reachability). */
+		hint?: ProfileShareHint;
 		/** Alternative `data` values the user can switch between (e.g. per-coordinator
 		 * profile links). Tabs render only when more than one is offered. */
-		shareOptions?: { label: string; value: string; color?: string }[];
+		shareOptions?: { label: string; value: string; color?: string; hint?: ProfileShareHint }[];
 		onNavigate?: () => void;
 	} = $props();
 
@@ -48,6 +52,7 @@
 	const effectiveData = $derived(
 		showShareOptions ? (shareOptions[selectedShareIndexSafe]?.value ?? data) : data
 	);
+	const activeHint = $derived(shareOptions[selectedShareIndexSafe]?.hint ?? hint);
 
 	// Reset to the Share tab whenever the dialog closes so reopening it never
 	// surprises the user by immediately requesting camera access.
@@ -173,6 +178,27 @@
 					<Copy class="mr-2 size-4" />
 					{copied ? copiedLabel : copyLabel}
 				</Button>
+				{#if activeHint}
+					<div
+						class="flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-xs {activeHint.tone ===
+						'warn'
+							? 'border-destructive/30 bg-destructive/10 text-destructive'
+							: 'border-border bg-muted/30 text-muted-foreground'}"
+					>
+						<p>{activeHint.text}</p>
+						{#if activeHint.action}
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								class="shrink-0"
+								onclick={activeHint.action.onAction}
+							>
+								{activeHint.action.label}
+							</Button>
+						{/if}
+					</div>
+				{/if}
 			</div>
 		{:else}
 			<div class="flex flex-col items-center gap-3 py-2">

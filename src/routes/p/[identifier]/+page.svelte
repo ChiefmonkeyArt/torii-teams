@@ -172,6 +172,9 @@
 			isSelf ||
 			(Boolean($activeAccount) && (loadingAvailableKeyPackages || !profileKeyPackage))
 	);
+	const checkingAvailability = $derived(
+		Boolean($activeAccount) && loadingAvailableKeyPackages && !isSelf
+	);
 	const loadedProfileRelays = $derived.by(() => getUserRelayListFromStore(profilePubkey));
 	// Relay hints embedded in the identifier (nprofile relays, NIP-05 `relays`
 	// map). Empty for hex/npub. Passed to `ensureProfileLoaded` as a bootstrap so
@@ -636,8 +639,16 @@
 										onclick={handleStartChat}
 										disabled={startChatDisabled || startingChat}
 									>
-										<MessageCirclePlus class="mr-2 size-4" />
-										{startingChat ? 'Starting chat…' : 'Start chat'}
+										{#if startingChat || checkingAvailability}
+											<Spinner class="mr-2 size-4" />
+										{:else}
+											<MessageCirclePlus class="mr-2 size-4" />
+										{/if}
+										{startingChat
+											? 'Starting chat…'
+											: checkingAvailability
+												? 'Checking availability…'
+												: 'Start chat'}
 									</Button>
 									{#if coordinatorError}
 										<p class="text-sm text-destructive">{coordinatorError}</p>
