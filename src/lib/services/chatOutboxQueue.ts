@@ -21,6 +21,7 @@ import {
 import { getChatGroupResumePromise } from './chatGroupWatchStatus.svelte';
 import { ChatKinds } from '$lib/chat/kinds';
 import type { ChatMessageReplyTarget } from '$lib/chat/references';
+import { buildReplyQuote } from '$lib/chat/replyQuote';
 import type { ChatMessage as UiChatMessage } from '$lib/components/chat/chat.types';
 import { errorMessage, formatUnixTimestamp, normalizePubKey } from '$lib/utils';
 
@@ -109,12 +110,13 @@ function outboxEntryToChatMessage(entry: StoredChatOutboxRecord): UiChatMessage 
 		reactions: [],
 		tags: entry.tags,
 		replyTo: entry.replyTo
-			? {
+			? buildReplyQuote({
 					id: entry.replyTo.id,
 					author: entry.replyTo.pubkey,
 					authorLabel: entry.replyToAuthorLabel || entry.replyTo.pubkey,
-					text: entry.replyTo.content
-				}
+					content: entry.replyTo.content,
+					tags: entry.replyTo.tags
+				})
 			: undefined
 	};
 }

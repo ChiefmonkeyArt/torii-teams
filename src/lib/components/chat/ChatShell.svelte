@@ -36,6 +36,7 @@
 		getMessageReactionReference,
 		type MessageTarget
 	} from '$lib/chat/references';
+	import { buildReplyQuote, unavailableReplyQuote } from '$lib/chat/replyQuote';
 	import { ChatKinds, SYSTEM_MESSAGE_KIND, isAnnotationKind } from '$lib/chat/kinds';
 	import { mergeAdjacentReactionMarkers, pruneAdjacentReactionTargets } from './reactionMarkers';
 	import { getShowReactionMarkers } from '$lib/services/chatComposerSettings.svelte';
@@ -389,15 +390,18 @@
 					edited: !deleted && Boolean(optimisticEdit || edit),
 					reactions: reactionEntries,
 					replyTo: replySource
-						? {
+						? buildReplyQuote({
 								id: `${replySource.id}:${replySource.cursor}`,
 								author: replySource.sender,
-								text: deletedIds.has(replySource.id)
+								content: deletedIds.has(replySource.id)
 									? ''
 									: (editMap.get(replySource.id)?.content ?? replySource.content),
-								deleted: deletedIds.has(replySource.id)
-							}
-						: undefined
+								deleted: deletedIds.has(replySource.id),
+								tags: replySource.tags
+							})
+						: threadReference
+							? unavailableReplyQuote(threadReference.parentId, threadReference.parentPubkey)
+							: undefined
 				};
 			});
 
@@ -532,11 +536,12 @@
 			)
 		);
 
-		// Consume the caption + draft + reply so the composer is immediately free
-		// for the next message (mirrors the text-send reset).
+		// Consume the caption + draft so the composer is immediately free for the
+		// next message (mirrors the text-send reset). The reply chip clears when
+		// the reply-carrying send lands (sendOneMedia) — media sends aren't
+		// outbox-backed, so clearing here would drop the reply on failure.
 		draft = '';
 		selectedMentions = [];
-		clearReplyTarget();
 	}
 
 	function sendOneMedia(
@@ -595,6 +600,9 @@
 			.then(() => {
 				removeOptimisticMessage(optimisticId);
 				if (previewUrl) URL.revokeObjectURL(previewUrl);
+				// The reply rode this message (first file): consume the chip now that
+				// it landed — never a newer reply armed in the meantime.
+				if (replyTo && replyTarget?.id === replyTo.id) clearReplyTarget();
 			})
 			.catch((error) => {
 				// User cancelled: drop the optimistic bubble silently (no error state,
@@ -668,6 +676,9 @@
 			.then(() => {
 				removeOptimisticMessage(optimisticId);
 				URL.revokeObjectURL(previewUrl);
+				// The voice note carried the reply (first-and-only message): consume
+				// the chip now that it landed — never a newer reply armed meanwhile.
+				if (currentReplyTarget && replyTarget?.id === currentReplyTarget.id) clearReplyTarget();
 			})
 			.catch((error) => {
 				if (controller.signal.aborted) {
@@ -697,9 +708,6 @@
 		sendVoiceMessage(result, serialized.content, serialized.tags);
 		draft = '';
 		selectedMentions = [];
-		// Consume the reply like the text/media sends do — the voice note carries
-		// it (first-and-only message), so the chip must not stay armed.
-		clearReplyTarget();
 	}
 
 	async function handleRetrySend(message: ChatMessage) {
@@ -742,16 +750,17 @@
 		replyTargetAuthor = '';
 	}
 
-	/** Bubble-shaped reply view for optimistic messages (mirrors the confirmed
-	 *  mapping in `messages`); shared by the media and voice sends. */
+	/** Bubble-shaped reply view for optimistic messages (same builder as the
+	 *  confirmed mapping in `messages`); shared by the media and voice sends. */
 	function buildOptimisticReplyView(): ChatMessage['replyTo'] {
 		if (!replyTarget) return undefined;
-		return {
+		return buildReplyQuote({
 			id: replyTarget.id,
 			author: replyTarget.pubkey,
 			authorLabel: replyTargetAuthor || replyTarget.pubkey,
-			text: replyTarget.content
-		};
+			content: replyTarget.content,
+			tags: replyTarget.tags
+		});
 	}
 
 	function clearEditTarget() {
