@@ -16,6 +16,12 @@ const ME = '1'.repeat(64);
 const ALICE = 'a'.repeat(64);
 const BOB = 'b'.repeat(64);
 
+// StoredChatMessage.createdAt is unix MILLISECONDS (coordinator `at`); poll
+// `endsAt` is NIP-88 unix SECONDS. Fixtures mirror that split on purpose — a
+// unit regression here is exactly the bug that once zeroed every tally.
+const POLL_AT_MS = 1_750_000_000_000;
+const POLL_AT_S = POLL_AT_MS / 1000;
+
 function draft(overrides: Partial<PollDraft> = {}): PollDraft {
 	return {
 		question: 'Pineapple on pizza?',
@@ -30,7 +36,7 @@ let cursor = 0;
 function message(overrides: Partial<StoredChatMessage> & { id: string }): StoredChatMessage {
 	return {
 		cursor: ++cursor,
-		createdAt: 1000,
+		createdAt: POLL_AT_MS,
 		direction: 'inbound',
 		sender: ALICE,
 		kind: ChatKinds.Text,
@@ -45,7 +51,7 @@ function pollMessage(id: string, overrides: Partial<StoredChatMessage> = {}): St
 		id,
 		kind: ChatKinds.Poll,
 		content: 'Pineapple on pizza?',
-		createdAt: 100,
+		createdAt: POLL_AT_MS,
 		tags: createPollMessageTags(draft()),
 		...overrides
 	});
@@ -61,7 +67,7 @@ function voteMessage(
 		id,
 		sender,
 		kind: ChatKinds.PollResponse,
-		createdAt: 150,
+		createdAt: POLL_AT_MS + 50_000,
 		tags: createPollResponseTags({ id: 'poll1', pubkey: ALICE, kind: ChatKinds.Poll }, optionIds),
 		...overrides
 	});
@@ -166,13 +172,13 @@ describe('buildPollTally', () => {
 		const tally = buildPollTally(
 			[
 				pollMessage('poll1'),
-				voteMessage('v1', ALICE, ['0'], { createdAt: 150 }),
-				voteMessage('v2', ALICE, ['1'], { createdAt: 160 }), // re-vote
-				voteMessage('v3', BOB, ['1'], { createdAt: 155 })
+				voteMessage('v1', ALICE, ['0'], { createdAt: POLL_AT_MS + 150_000 }),
+				voteMessage('v2', ALICE, ['1'], { createdAt: POLL_AT_MS + 160_000 }), // re-vote
+				voteMessage('v3', BOB, ['1'], { createdAt: POLL_AT_MS + 155_000 })
 			],
 			'poll1',
 			ME,
-			170
+			POLL_AT_S + 200
 		);
 		expect(tally?.options).toEqual([
 			{ id: '0', label: 'Yay', votes: 0 },
@@ -186,12 +192,12 @@ describe('buildPollTally', () => {
 		const tally = buildPollTally(
 			[
 				pollMessage('poll1'),
-				voteMessage('v1', ME, ['0'], { createdAt: 150, cursor: 5 }),
-				voteMessage('v2', ME, ['1'], { createdAt: 150, cursor: 9 })
+				voteMessage('v1', ME, ['0'], { createdAt: POLL_AT_MS + 50_000, cursor: 5 }),
+				voteMessage('v2', ME, ['1'], { createdAt: POLL_AT_MS + 50_000, cursor: 9 })
 			],
 			'poll1',
 			ME,
-			170
+			POLL_AT_S + 200
 		);
 		expect(tally?.participants).toBe(1);
 		expect(tally?.selection).toEqual(['1']);
@@ -200,23 +206,40 @@ describe('buildPollTally', () => {
 
 	it('ignores responses outside the poll window or with invalid selections', () => {
 		const withDeadline = pollMessage('poll1', {
-			tags: createPollMessageTags(draft({ endsAt: 200 }), 100)
+			tags: createPollMessageTags(draft({ endsAt: POLL_AT_S + 200 }), POLL_AT_S)
 		});
 		const tally = buildPollTally(
 			[
 				withDeadline,
-				voteMessage('early', ALICE, ['0'], { createdAt: 99 }), // before the poll
-				voteMessage('late', BOB, ['0'], { createdAt: 201 }), // after endsAt
-				voteMessage('multi', ME, ['0', '1'], { createdAt: 150 }), // singlechoice violation
-				voteMessage('unknown', 'c'.repeat(64), ['7'], { createdAt: 150 }) // no such option
+				voteMessage('early', ALICE, ['0'], { createdAt: POLL_AT_MS - 1_000 }), // before the poll
+				voteMessage('late', BOB, ['0'], { createdAt: POLL_AT_MS + 201_000 }), // after endsAt
+				voteMessage('multi', ME, ['0', '1'], { createdAt: POLL_AT_MS + 150_000 }), // singlechoice violation
+				voteMessage('unknown', 'c'.repeat(64), ['7'], { createdAt: POLL_AT_MS + 150_000 }) // no such option
 			],
 			'poll1',
 			ME,
-			250
+			POLL_AT_S + 250
 		);
 		expect(tally?.participants).toBe(0);
 		expect(tally?.selection).toEqual([]);
 		expect(tally?.open).toBe(false);
+	});
+
+	it('counts millisecond createdAt votes against a seconds deadline (unit regression)', () => {
+		const tally = buildPollTally(
+			[
+				pollMessage('poll1', {
+					tags: createPollMessageTags(draft({ endsAt: POLL_AT_S + 100 }), POLL_AT_S)
+				}),
+				voteMessage('v1', ALICE, ['0'], { createdAt: POLL_AT_MS + 50_000 })
+			],
+			'poll1',
+			ME,
+			POLL_AT_S + 50
+		);
+		expect(tally?.participants).toBe(1);
+		expect(tally?.options.map((option) => option.votes)).toEqual([1, 0]);
+		expect(tally?.open).toBe(true);
 	});
 
 	it('accepts multi selections for multiplechoice polls and orders votes deterministically', () => {
@@ -225,12 +248,12 @@ describe('buildPollTally', () => {
 				pollMessage('poll1', {
 					tags: createPollMessageTags(draft({ pollType: 'multiplechoice' }))
 				}),
-				voteMessage('v1', BOB, ['0', '1'], { createdAt: 150 }),
-				voteMessage('v2', ALICE, ['1'], { createdAt: 150 })
+				voteMessage('v1', BOB, ['0', '1'], { createdAt: POLL_AT_MS + 150_000 }),
+				voteMessage('v2', ALICE, ['1'], { createdAt: POLL_AT_MS + 150_000 })
 			],
 			'poll1',
 			ME,
-			170
+			POLL_AT_S + 200
 		);
 		expect(tally?.options.map((option) => option.votes)).toEqual([1, 2]);
 		expect(tally?.votes.map((vote) => vote.voter)).toEqual([ALICE, BOB]);

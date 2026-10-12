@@ -75,6 +75,8 @@ export interface PollOptionResult {
 export interface PollVote {
 	voter: string;
 	optionIds: string[];
+	/** Effective response time, unix milliseconds (StoredChatMessage.createdAt
+	 *  units — the coordinator `at`, NOT the event's `created_at`). */
 	votedAt: number;
 }
 
@@ -310,10 +312,11 @@ export function buildPollTally(
 		const reference = getMessagePollResponseReference(message.kind, message.tags);
 		if (!reference || reference.targetId !== pollId) continue;
 		// Valid only "within the poll limits": never before the poll, never after
-		// the deadline (checked against the event's own timestamp — wall-clock
-		// enforcement at send time is the sender's business).
+		// the deadline. Stored `createdAt` is unix MILLISECONDS (coordinator `at`)
+		// while `endsAt` is NIP-88 unix SECONDS — convert at this compare.
 		if (message.createdAt < pollMessage.createdAt) continue;
-		if (definition.endsAt !== null && message.createdAt > definition.endsAt) continue;
+		const votedAtSeconds = Math.floor(message.createdAt / 1000);
+		if (definition.endsAt !== null && votedAtSeconds > definition.endsAt) continue;
 		if (!isValidSelection(definition, reference.optionIds)) continue;
 
 		const voter = safeNormalizePubKey(message.sender);

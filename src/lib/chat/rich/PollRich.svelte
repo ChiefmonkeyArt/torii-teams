@@ -75,7 +75,7 @@
 			<p class="text-base font-semibold break-words whitespace-pre-wrap">{definition.question}</p>
 			<p class="mt-1 text-xs text-muted-foreground">
 				{#if definition.endsAt !== null}
-					{open ? 'Ends' : 'Ended'} {formatUnixTimestamp(definition.endsAt, true, true)}
+					{open ? 'Ends' : 'Ended'} {formatUnixTimestamp(definition.endsAt * 1000, true, true)}
 				{:else}
 					No end date
 				{/if}
