@@ -33,6 +33,10 @@ import {
 	markCoordinatorDegraded
 } from '$lib/services/coordinatorHealth.svelte';
 import {
+	maybeRefreshCoordinatorRelaysOnOutage,
+	sweepStaleCoordinatorRelays
+} from '$lib/services/coordinatorRelayRefresh';
+import {
 	awaitMultiDeviceReconciled,
 	resetMultiDeviceSession
 } from '$lib/services/multiDevice.svelte';
@@ -182,6 +186,13 @@ const DELIVERY_STALE_MS = 30_000 + 20_000 + STALE_STREAM_MARGIN_MS;
 const COORDINATOR_BACKOFF_MS = [
 	1_000, 2_000, 5_000, 10_000, 15_000, 30_000, 60_000, 120_000, 300_000
 ];
+/**
+ * Ladder rung at which a failing coordinator counts as plausibly DOWN because
+ * it MOVED relays (≈ 3 consecutive failures with the degraded-doubling, 6
+ * without) — trigger the bounded opportunistic relay-list refresh there. A
+ * blip must never pay for kind:10002 discovery.
+ */
+const OUTAGE_RUNG_MS = 30_000;
 /** Min spacing between foreground rebuilds (resume fires several events). */
 const REBUILD_DEBOUNCE_MS = 5_000;
 const WATCH_INGEST_BATCH_SIZE = 50;
@@ -370,6 +381,21 @@ function recordCoordinatorFailure(coordinatorKey: string) {
 		COORDINATOR_BACKOFF_MS[COORDINATOR_BACKOFF_MS.length - 1];
 	entry.notBefore = Date.now() + delay;
 	coordinatorBackoff.set(coordinatorKey, entry);
+	// Opportunistic heal: a coordinator stuck at a long rung may have moved to a
+	// new relay set — re-resolve its relays (bounded inside: one attempt per
+	// interval per coordinator, no-throw). On adoption, clear ONLY this
+	// coordinator's ladder and re-tick so the watch lands on fresh relays;
+	// every other coordinator is untouched.
+	if (delay >= OUTAGE_RUNG_MS) {
+		void maybeRefreshCoordinatorRelaysOnOutage(coordinatorKey)
+			.then((adopted) => {
+				if (adopted) {
+					clearCoordinatorBackoff(coordinatorKey);
+					void requestTick('coordinator relays refreshed', { catchUp: true });
+				}
+			})
+			.catch(() => undefined);
+	}
 }
 
 function clearCoordinatorBackoff(coordinatorKey: string) {
@@ -1159,6 +1185,10 @@ if (browser) {
 		const missedHeartbeat = now - lastHeartbeatAt > HEARTBEAT_MISSED_MS;
 		lastHeartbeatAt = now;
 		if (!warmed) return;
+		// Staleness sweep for coordinator relay lists (no-throw inside, visible
+		// only): rides the existing heartbeat so no extra timer exists. Each
+		// coordinator is checked and refreshed independently.
+		void sweepStaleCoordinatorRelays();
 		// OS sleep can leave a page visible throughout, with no visibility event.
 		if (
 			missedHeartbeat &&

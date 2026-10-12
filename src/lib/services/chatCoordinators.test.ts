@@ -16,6 +16,7 @@ import { defaultRelays } from '$lib/services/relay-pool';
 import {
 	ensureDefaultCoordinatorRelays,
 	getChatCoordinator,
+	markCoordinatorRelaysChecked,
 	markCoordinatorRelaysResolved,
 	markCoordinatorUsed,
 	upsertChatCoordinator
@@ -118,5 +119,37 @@ describe('upsertChatCoordinator label semantics', () => {
 		// getCoordinatorLabel can prefer the server-announced name again.
 		upsertChatCoordinator({ pubkey: key, label: '   ' });
 		expect(getChatCoordinator(key)?.label).toBe(`Coordinator ${key.slice(0, 8)}`);
+	});
+});
+
+describe('relaysResolvedAt staleness marker', () => {
+	test('stamped on relay writes, preserved on unrelated upserts, bumped by checks', () => {
+		const key = '12'.repeat(32);
+		const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1000);
+		// No relays → no marker (auto-resolving coordinators are never "stale").
+		upsertChatCoordinator({ pubkey: key });
+		expect(getChatCoordinator(key)?.relaysResolvedAt).toBeUndefined();
+		// Relay write → stamped.
+		upsertChatCoordinator({ pubkey: key, relays: ['wss://one.example.com'] });
+		expect(getChatCoordinator(key)?.relaysResolvedAt).toBe(1000);
+		// Unrelated label-only upsert must not silence the refresh sweep.
+		nowSpy.mockReturnValue(2000);
+		upsertChatCoordinator({ pubkey: key, label: 'Renamed' });
+		expect(getChatCoordinator(key)?.relaysResolvedAt).toBe(1000);
+		// A check bumps the marker without touching the relay set.
+		nowSpy.mockReturnValue(3000);
+		markCoordinatorRelaysChecked(key);
+		expect(getChatCoordinator(key)?.relaysResolvedAt).toBe(3000);
+		expect(getChatCoordinator(key)?.relays).toEqual(['wss://one.example.com']);
+		// A fresh relay write re-stamps.
+		nowSpy.mockReturnValue(4000);
+		upsertChatCoordinator({ pubkey: key, relays: ['wss://two.example.com'] });
+		expect(getChatCoordinator(key)?.relaysResolvedAt).toBe(4000);
+		nowSpy.mockRestore();
+	});
+
+	test('markCoordinatorRelaysChecked is a no-op for unknown coordinators', () => {
+		markCoordinatorRelaysChecked('34'.repeat(32));
+		expect(getChatCoordinator('34'.repeat(32))).toBeUndefined();
 	});
 });
