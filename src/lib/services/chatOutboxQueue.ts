@@ -100,7 +100,7 @@ function outboxEntryToChatMessage(entry: StoredChatOutboxRecord): UiChatMessage 
 		eventId: entry.attemptedEventId ?? bubbleId(entry),
 		author: entry.ownerPubkey,
 		text: entry.content,
-		kind: ChatKinds.Text,
+		kind: entry.kind ?? ChatKinds.Text,
 		createdAt: entry.createdAt,
 		timeLabel: formatUnixTimestamp(entry.createdAt, true, false),
 		dayLabel: formatUnixTimestamp(entry.createdAt, false, true),
@@ -175,6 +175,9 @@ export function enqueueTextMessage(input: {
 	content: string;
 	tags?: string[][];
 	replyTo?: ChatMessageReplyTarget;
+	/** Resolved event kind (polls enqueue as kind 1068 with their option tags);
+	 *  absent keeps the legacy Text resolution. */
+	kind?: number;
 }): void {
 	const ownerPubkey = activePubkey();
 	if (!ownerPubkey) return;
@@ -185,6 +188,7 @@ export function enqueueTextMessage(input: {
 		content: input.content,
 		tags: input.tags ?? [],
 		replyTo: input.replyTo,
+		kind: input.kind,
 		createdAt: Date.now(),
 		state: 'queued',
 		attempts: 0
@@ -234,6 +238,7 @@ async function attemptEntry(entry: StoredChatOutboxRecord): Promise<AttemptOutco
 			content: entry.content,
 			tags: entry.tags,
 			replyTo: entry.replyTo,
+			kind: entry.kind,
 			// Frozen at enqueue: every retry re-seals against the group's CURRENT
 			// MLS state (epoch changes stay a no-op) but derives the SAME event id,
 			// so whichever attempt lands is confirmed by id everywhere — no more

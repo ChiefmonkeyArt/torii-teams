@@ -61,6 +61,7 @@
 
 	let {
 		message,
+		groupId = '',
 		showAuthor = true,
 		showAvatar = true,
 		showDayLabel = false,
@@ -74,9 +75,11 @@
 		onNavigateToMessage = () => {},
 		onOpenRich = () => {},
 		onPin = () => {},
+		onVote = () => Promise.resolve(false),
 		highlighted = false
 	}: {
 		message: ChatMessage;
+		groupId?: string;
 		showAuthor?: boolean;
 		showAvatar?: boolean;
 		showDayLabel?: boolean;
@@ -93,6 +96,8 @@
 		onNavigateToMessage?: (messageId: string) => void;
 		onOpenRich?: (eventId: string) => void;
 		onPin?: (message: ChatMessage) => void;
+		/** Cast a poll vote (kind 1018): complete selection of option ids. */
+		onVote?: (message: ChatMessage, optionIds: string[]) => void | Promise<boolean>;
 		highlighted?: boolean;
 	} = $props();
 	let reactionMenuOpen = $state(false);
@@ -926,7 +931,7 @@
 
 							{#if !message.deleted}
 								<ChatMessageMedia {message} />
-								<ChatInlineBody {message} {onOpenRich} />
+								<ChatInlineBody {message} {groupId} {onVote} {onOpenRich} />
 							{/if}
 						</div>
 					</div>

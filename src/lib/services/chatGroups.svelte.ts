@@ -52,6 +52,7 @@ import {
 	type MessageTarget,
 	type PinOp
 } from '$lib/chat/references';
+import type { PollDraft } from '$lib/chat/polls';
 import {
 	createGroupPendingEpochStore,
 	dropPendingAddMemberForTarget,
@@ -2281,6 +2282,12 @@ export async function sendChatGroupMessage(input: {
 	deleteTo?: MessageTarget;
 	pinTo?: MessageTarget;
 	pinOp?: PinOp;
+	/** Kind-1068 poll send (question in `content`; tags built from the draft). */
+	poll?: PollDraft;
+	/** Kind-1018 poll response: complete option-id selection for the poll. */
+	voteTo?: { target: MessageTarget; optionIds: string[] };
+	/** Explicit kind for outbox replays of an already-resolved intent. */
+	kind?: number;
 	/** Pre-derived media key (base64) for messages carrying an imeta tag.
 	 *  sendChatMediaMessage derives once at the encryption epoch and threads it
 	 *  through so the stashed key matches the ciphertext even if the group state
@@ -2309,7 +2316,13 @@ export async function sendChatGroupMessage(input: {
 		// message is a valid sealed payload carrying the encrypted-media reference
 		// and no body, so don't reject it as "content required".
 		const hasMediaAttachment = outboundShape.tags.some((tag) => tag[0] === 'imeta');
-		if (!outboundShape.content && !hasMediaAttachment && !input.deleteTo && !input.pinTo) {
+		if (
+			!outboundShape.content &&
+			!hasMediaAttachment &&
+			!input.deleteTo &&
+			!input.pinTo &&
+			!input.voteTo
+		) {
 			throw new Error('Message content is required');
 		}
 
