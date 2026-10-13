@@ -20,6 +20,12 @@
 	import { metadataRelays } from '$lib/services/relay-pool';
 	import { normalizePubKey } from '$lib/utils';
 
+	let {
+		groupId
+	}: {
+		/** When set, the search is scoped to this chat (its people and messages only). */
+		groupId?: string;
+	} = $props();
 	let open = $state(false);
 	let searchQuery = $state('');
 	let debouncedSearchQuery = $state('');
@@ -48,6 +54,7 @@
 	const searchResults = $derived.by(() =>
 		isSearching
 			? searchChatContent(resolvedSearchQuery, {
+					groupId,
 					activePubkey: $activeAccount?.pubkey,
 					profileHints
 				})
@@ -82,7 +89,7 @@
 			type="button"
 			variant="outline"
 			class="h-10 gap-2 rounded-xl px-3"
-			aria-label="Search messages, groups and people"
+			aria-label={groupId ? 'Search this chat' : 'Search messages, groups and people'}
 			title="Search"
 		>
 			<Search class="size-4" />
@@ -92,7 +99,9 @@
 	<Dialog.Content class="sm:max-w-2xl">
 		<Dialog.Header>
 			<Dialog.Title>Search</Dialog.Title>
-			<Dialog.Description>Find people, groups and messages.</Dialog.Description>
+			<Dialog.Description>
+				{groupId ? 'Find people and messages in this chat.' : 'Find people, groups and messages.'}
+			</Dialog.Description>
 		</Dialog.Header>
 
 		<InputGroup.Root>
@@ -100,8 +109,8 @@
 				bind:value={searchQuery}
 				type="search"
 				autofocus
-				placeholder="Search messages, groups and people…"
-				aria-label="Search messages, groups and people"
+				placeholder={groupId ? 'Search this chat…' : 'Search messages, groups and people…'}
+				aria-label={groupId ? 'Search this chat' : 'Search messages, groups and people'}
 			/>
 			<InputGroup.Addon>
 				<Search class="size-4" />

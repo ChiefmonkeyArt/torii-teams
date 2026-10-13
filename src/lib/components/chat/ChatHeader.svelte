@@ -138,7 +138,7 @@
 			</button>
 		</div>
 
-		<ChatSearchBar />
+		<ChatSearchBar {groupId} />
 
 		{#if groupId}
 			<div class="hidden items-center gap-2 sm:flex">

@@ -6,6 +6,7 @@ import {
 	type ChatGroupProfileHints
 } from '$lib/components/chat/chatGroupDisplay';
 import { normalizePubKey } from '$lib/utils';
+import { isChatGroupPinned } from '$lib/services/chatGroupPins.svelte';
 import { searchChatMessages, type ChatMessageSearchResult } from '$lib/services/chatMessageSearch';
 import {
 	listChatGroupMembers,
@@ -30,6 +31,8 @@ export interface ChatContentSearchResults {
 }
 
 export interface SearchChatContentOptions {
+	/** Scope people and messages to one group (the in-chat search); no Groups section. */
+	groupId?: string;
 	activePubkey?: string;
 	profileHints: ChatGroupProfileHints;
 }
@@ -41,11 +44,13 @@ const GROUP_LIMIT = 10;
  * Versatile search over local chat state: people (group members by name,
  * display name, NIP-05 or npub), groups (by display title) and messages (the
  * existing `searchChatMessages` — untouched). People dedupe across groups and
- * sort by display name; groups sort by recent activity, matching the chat list.
+ * sort by display name; groups sort pinned-first then by recent activity,
+ * matching the chat list. With `groupId` the search narrows to one chat: its members and its messages,
+ * and no Groups section.
  */
 export function searchChatContent(
 	query: string | string[],
-	{ activePubkey, profileHints }: SearchChatContentOptions
+	{ groupId, activePubkey, profileHints }: SearchChatContentOptions
 ): ChatContentSearchResults {
 	const normalizedQueries = [
 		...new Set(
@@ -61,6 +66,7 @@ export function searchChatContent(
 	const groupResults: ChatGroupSearchResult[] = [];
 
 	for (const group of listChatGroups()) {
+		if (groupId && group.id !== groupId) continue;
 		const memberPubkeys = [
 			...new Set(
 				listChatGroupMembers(group.id)
@@ -69,7 +75,7 @@ export function searchChatContent(
 			)
 		];
 		const title = getChatGroupDisplayTitle({ group, activePubkey, profileHints, memberPubkeys });
-		if (normalizedQueries.some((q) => title.toLocaleLowerCase().includes(q))) {
+		if (!groupId && normalizedQueries.some((q) => title.toLocaleLowerCase().includes(q))) {
 			groupResults.push({ group, title });
 		}
 		for (const pubkey of memberPubkeys) {
@@ -90,8 +96,14 @@ export function searchChatContent(
 			.sort((a, b) => a.displayName.localeCompare(b.displayName))
 			.slice(0, PEOPLE_LIMIT),
 		groups: groupResults
-			.sort((a, b) => getGroupActivityAt(b.group) - getGroupActivityAt(a.group))
+			.sort(
+				(a, b) =>
+					// Pinned chats hold the top here too — same order as the chat list
+					// and the share picker.
+					Number(isChatGroupPinned(b.group.id)) - Number(isChatGroupPinned(a.group.id)) ||
+					getGroupActivityAt(b.group) - getGroupActivityAt(a.group)
+			)
 			.slice(0, GROUP_LIMIT),
-		messages: searchChatMessages(normalizedQueries, { activePubkey, profileHints })
+		messages: searchChatMessages(normalizedQueries, { groupId, activePubkey, profileHints })
 	};
 }
