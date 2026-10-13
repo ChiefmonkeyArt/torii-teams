@@ -279,7 +279,8 @@ export interface OutboundMessageInput {
 	/** Kind-1068 poll send: question in `content`, option/polltype/endsAt tags
 	 *  built (and validated) here from the draft. */
 	poll?: PollDraft;
-	/** Kind-1018 poll response: complete selection of option ids for the poll. */
+	/** Kind-1018 poll response: complete selection of option ids for the poll.
+	 *  `content` is the human-readable fallback for clients without polls. */
 	voteTo?: { target: MessageTarget; optionIds: string[] };
 	/** Explicit kind for replays of an already-resolved intent (offline outbox):
 	 *  the plain branch preserves it instead of re-deriving Text/ThreadReply. */
@@ -312,7 +313,9 @@ export function resolveOutboundMessage(input: OutboundMessageInput): OutboundMes
 	if (input.voteTo) {
 		return {
 			kind: ChatKinds.PollResponse,
-			content: '',
+			// Bubble text for pre-poll clients; the NIP-31 `alt` tag in the tags
+			// covers future clients that know to fall back to it.
+			content: input.content,
 			tags: createPollResponseTags(input.voteTo.target, input.voteTo.optionIds)
 		};
 	}

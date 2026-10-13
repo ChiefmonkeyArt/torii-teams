@@ -150,6 +150,17 @@ describe('resolveOutboundMessage', () => {
 		expect(resolveOutboundMessage({ content: '🔥', reactionTo: target }).kind).toBe(7);
 	});
 
+	test('poll vote → kind 1018, readable content fallback, alt tag last', () => {
+		const out = resolveOutboundMessage({
+			content: 'Voted: Yay',
+			voteTo: { target, optionIds: ['0'] }
+		});
+		expect(out.kind).toBe(1018);
+		expect(out.content).toBe('Voted: Yay');
+		expect(out.tags.find((t) => t[0] === 'response')?.[1]).toBe('0');
+		expect(out.tags.at(-1)).toEqual(['alt', 'Poll vote']);
+	});
+
 	test('edit → kind 1010, trimmed, with extra tags appended', () => {
 		const out = resolveOutboundMessage({
 			content: ' edited ',

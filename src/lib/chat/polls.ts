@@ -14,6 +14,8 @@
  * Kind 1018 (response): `e` tag → poll, `response` tags = selected option ids.
  * A response is a complete-selection replacement, never a delta: exactly one id
  * for singlechoice, 1..N unique ids for multiplechoice. Empty is not an unvote.
+ * `content` ("Voted: …") and an NIP-31 `alt` tag are readable fallbacks for
+ * clients without poll support, which would otherwise render empty bubbles.
  * One vote per account (stable pubkey) — latest (createdAt, cursor) wins, so
  * multi-device responses by the same account collapse to one vote.
  *
@@ -183,6 +185,8 @@ export function createPollMessageTags(
 	const tags = draft.optionLabels.map((label, index) => ['option', String(index), label]);
 	tags.push(['polltype', draft.pollType]);
 	if (draft.endsAt !== null) tags.push(['endsAt', String(Math.trunc(draft.endsAt))]);
+	// NIP-31 plaintext summary for clients that cannot render kind 1068.
+	tags.push(['alt', `Poll: ${draft.question}`]);
 	return tags;
 }
 
@@ -199,8 +203,20 @@ export function createPollResponseTags(
 		['e', target.id, '', target.pubkey],
 		['p', target.pubkey],
 		['k', String(target.kind)],
-		...optionIds.map((id) => ['response', id])
+		...optionIds.map((id) => ['response', id]),
+		// NIP-31 plaintext summary for clients that cannot render kind 1018.
+		['alt', 'Poll vote']
 	];
+}
+
+/** Human-readable vote summary for the kind-1018 `content`: clients without
+ *  poll support render it as the bubble text (they ignore the response tags).
+ *  Falls back to a bare "Voted" when the definition or ids are unknown. */
+export function describePollVote(definition: PollDefinition | null, optionIds: string[]): string {
+	const labels = optionIds
+		.map((id) => definition?.options.find((option) => option.id === id)?.label)
+		.filter((label): label is string => Boolean(label));
+	return labels.length > 0 ? `Voted: ${labels.join(', ')}` : 'Voted';
 }
 
 // ---------------------------------------------------------------------------

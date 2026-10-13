@@ -267,16 +267,16 @@ export async function sendGroupMessageAction(
 }
 
 /** Cast (or re-cast) a poll vote: a complete-selection replacement for the
- *  poll targeted by `target`, one event per account — latest wins. */
+ *  poll targeted by `target`, one event per account — latest wins. `content` is
+ *  the readable fallback bubble text for clients without poll support. */
 export async function castPollVoteAction(
 	groupId: string | undefined,
 	target: MessageTarget,
-	optionIds: string[]
+	optionIds: string[],
+	content = ''
 ): Promise<StoredChatMessage | false> {
 	if (!groupId || optionIds.length === 0) return false;
-	return runSend(() =>
-		sendChatGroupMessage({ groupId, content: '', voteTo: { target, optionIds } })
-	);
+	return runSend(() => sendChatGroupMessage({ groupId, content, voteTo: { target, optionIds } }));
 }
 
 export async function startChatWithKeyPackageAction(keyPackage: {

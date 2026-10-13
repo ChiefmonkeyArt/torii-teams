@@ -39,7 +39,12 @@
 	} from '$lib/chat/references';
 	import { buildReplyQuote, unavailableReplyQuote } from '$lib/chat/replyQuote';
 	import { ChatKinds, SYSTEM_MESSAGE_KIND, isStreamHiddenKind } from '$lib/chat/kinds';
-	import { createPollMessageTags, type PollDraft } from '$lib/chat/polls';
+	import {
+		createPollMessageTags,
+		describePollVote,
+		getMessagePollDefinition,
+		type PollDraft
+	} from '$lib/chat/polls';
 	import { mergeAdjacentReactionMarkers, pruneAdjacentReactionTargets } from './reactionMarkers';
 	import { getShowReactionMarkers } from '$lib/services/chatComposerSettings.svelte';
 	import { type StoredChatSystemMessageData } from '$lib/services/chatGroupMessages.svelte';
@@ -844,7 +849,19 @@
 			pubkey: storedMessage.sender,
 			kind: storedMessage.kind
 		};
-		const sent = await castPollVoteAction(groupId, voteTarget, optionIds);
+		// Pre-poll clients render `content` as the bubble text, so send the voted
+		// labels along (updated clients ignore it — the tally reads tags only).
+		const definition = getMessagePollDefinition(
+			storedMessage.kind,
+			storedMessage.content,
+			storedMessage.tags
+		);
+		const sent = await castPollVoteAction(
+			groupId,
+			voteTarget,
+			optionIds,
+			describePollVote(definition, optionIds)
+		);
 		sendError = chatComposerActionsStore.error;
 		return Boolean(sent);
 	}

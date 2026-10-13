@@ -5,6 +5,7 @@ import {
 	buildPollTally,
 	createPollMessageTags,
 	createPollResponseTags,
+	describePollVote,
 	getMessagePollDefinition,
 	getMessagePollResponseReference,
 	validatePollDraft,
@@ -164,6 +165,26 @@ describe('poll responses', () => {
 				['response', 'bad id!']
 			])
 		).toBeNull();
+	});
+});
+
+describe('unsupported-client fallbacks (NIP-31 alt + content)', () => {
+	it('appends alt summaries for clients that cannot render the kinds', () => {
+		expect(createPollMessageTags(draft()).at(-1)).toEqual(['alt', 'Poll: Pineapple on pizza?']);
+		expect(
+			createPollResponseTags({ id: 'poll1', pubkey: ALICE, kind: ChatKinds.Poll }, ['0']).at(-1)
+		).toEqual(['alt', 'Poll vote']);
+	});
+
+	it('describes votes from the definition when it can, plainly when not', () => {
+		const definition = getMessagePollDefinition(
+			ChatKinds.Poll,
+			'Pineapple on pizza?',
+			createPollMessageTags(draft())
+		);
+		expect(describePollVote(definition, ['1', '0'])).toBe('Voted: Nay, Yay');
+		expect(describePollVote(definition, ['7'])).toBe('Voted');
+		expect(describePollVote(null, ['0'])).toBe('Voted');
 	});
 });
 
