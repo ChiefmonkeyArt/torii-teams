@@ -6,12 +6,21 @@
 	import ChatGroupListItem from '$lib/components/chat/ChatGroupListItem.svelte';
 	import ChatMobileSidebarButton from '$lib/components/chat/ChatMobileSidebarButton.svelte';
 	import * as Card from '$lib/components/ui/card';
+	import * as InputGroup from '$lib/components/ui/input-group';
 	import { Button } from '$lib/components/ui/button';
+	import Search from '@lucide/svelte/icons/search';
 	import Share2 from '@lucide/svelte/icons/share-2';
 	import { activeAccount } from '$lib/services/accountManager.svelte';
-	import { listChatGroups } from '$lib/services/chatGroups.svelte';
+	import { listChatGroupMembers, listChatGroups } from '$lib/services/chatGroups.svelte';
 	import { getChatGroupSummary } from '$lib/services/chatGroupPresence.svelte';
-	import { getGroupActivityAt } from '$lib/components/chat/chatGroupDisplay';
+	import {
+		getChatGroupDisplayTitle,
+		getGroupActivityAt
+	} from '$lib/components/chat/chatGroupDisplay';
+	import { matchesProfileSearch } from '$lib/components/chat/profileSearch';
+	import { useProfileHints } from '$lib/services/useProfileHints.svelte';
+	import { metadataRelays } from '$lib/services/relay-pool';
+	import { normalizePubKey } from '$lib/utils';
 	import { setChatDraft } from '$lib/services/chatDrafts.svelte';
 	import { consumeStashedShare, isNativePlatform } from '$lib/services/nativeBridge';
 
@@ -46,6 +55,46 @@
 	const sortedGroups = $derived.by(() =>
 		[...groups].sort((a, b) => getGroupActivityAt(b) - getGroupActivityAt(a))
 	);
+	let filterQuery = $state('');
+
+	const shareProfileHints = useProfileHints(
+		() => {
+			const activePubkey = $activeAccount ? normalizePubKey($activeAccount.pubkey) : '';
+			return [
+				...new Set(
+					groups.flatMap((group) =>
+						listChatGroupMembers(group.id)
+							.map((member) => normalizePubKey(member.stablePubkey))
+							.filter((pubkey): pubkey is string => Boolean(pubkey) && pubkey !== activePubkey)
+					)
+				)
+			];
+		},
+		{ relays: metadataRelays }
+	);
+
+	// The search bar filters the picker's own list: by group title (direct chats
+	// title by peer name) or by any member's name, so "the group with Alice"
+	// finds the right row even when the title says nothing.
+	const visibleGroups = $derived.by(() => {
+		const query = filterQuery.trim().toLocaleLowerCase();
+		if (!query) return sortedGroups;
+		return sortedGroups.filter((group) => {
+			const memberPubkeys = listChatGroupMembers(group.id)
+				.map((member) => normalizePubKey(member.stablePubkey))
+				.filter((pubkey): pubkey is string => Boolean(pubkey));
+			const title = getChatGroupDisplayTitle({
+				group,
+				activePubkey: $activeAccount?.pubkey,
+				profileHints: shareProfileHints,
+				memberPubkeys
+			});
+			if (title.toLocaleLowerCase().includes(query)) return true;
+			return memberPubkeys.some((pubkey) =>
+				matchesProfileSearch({ pubkey, profileHints: shareProfileHints, search: query })
+			);
+		});
+	});
 
 	function getGroupHref(groupId: string) {
 		return resolve('/chat/[id]', { id: groupRouteId(groupId) });
@@ -120,17 +169,36 @@
 							</Card.Description>
 						</Card.Header>
 						<Card.Content class="space-y-3">
-							{#each sortedGroups as group (group.id)}
-								{@const summary = getChatGroupSummary(group.id, $activeAccount?.pubkey)}
-								<ChatGroupListItem
-									{group}
-									href={getGroupHref(group.id)}
-									preview={summary.preview}
-									unreadCount={summary.unreadCount}
-									unreadReferenceCount={summary.unreadReferenceCount}
-									onclick={(event) => selectGroup(event, group.id)}
+							<InputGroup.Root>
+								<InputGroup.Input
+									bind:value={filterQuery}
+									type="search"
+									placeholder="Search groups or people…"
+									aria-label="Search groups or people"
 								/>
-							{/each}
+								<InputGroup.Addon>
+									<Search class="size-4" />
+								</InputGroup.Addon>
+							</InputGroup.Root>
+							{#if visibleGroups.length === 0}
+								<p
+									class="rounded-xl border border-dashed border-border px-3 py-4 text-sm text-muted-foreground"
+								>
+									No groups match “{filterQuery.trim()}”.
+								</p>
+							{:else}
+								{#each visibleGroups as group (group.id)}
+									{@const summary = getChatGroupSummary(group.id, $activeAccount?.pubkey)}
+									<ChatGroupListItem
+										{group}
+										href={getGroupHref(group.id)}
+										preview={summary.preview}
+										unreadCount={summary.unreadCount}
+										unreadReferenceCount={summary.unreadReferenceCount}
+										onclick={(event) => selectGroup(event, group.id)}
+									/>
+								{/each}
+							{/if}
 						</Card.Content>
 					</Card.Root>
 				{/if}
