@@ -13,6 +13,7 @@
 	import { activeAccount } from '$lib/services/accountManager.svelte';
 	import { listChatGroupMembers, listChatGroups } from '$lib/services/chatGroups.svelte';
 	import { getChatGroupSummary } from '$lib/services/chatGroupPresence.svelte';
+	import { isChatGroupPinned } from '$lib/services/chatGroupPins.svelte';
 	import {
 		getChatGroupDisplayTitle,
 		getGroupActivityAt
@@ -53,7 +54,14 @@
 
 	const groups = $derived.by(() => listChatGroups());
 	const sortedGroups = $derived.by(() =>
-		[...groups].sort((a, b) => getGroupActivityAt(b) - getGroupActivityAt(a))
+		[...groups].sort(
+			(a, b) =>
+				// Pinned groups hold the very top (activity order within the tier) —
+				// same rule as the sidebar chat list. Pin state is $state in chatGroupPins,
+				// so long-pressing a pin in the picker re-sorts live.
+				Number(isChatGroupPinned(b.id)) - Number(isChatGroupPinned(a.id)) ||
+				getGroupActivityAt(b) - getGroupActivityAt(a)
+		)
 	);
 	let filterQuery = $state('');
 
