@@ -1,7 +1,17 @@
 import type { ChatMessage } from './chat.types';
 
 /**
- * Post-sort pass for reaction markers: merges ADJACENT reaction-marker rows
+ * The full reaction-marker pipeline, in order: prune first (per-row, so a
+ * burst that touches the adjacent message only loses those rows), then merge
+ * (so one sender's surviving burst rows collapse into one). Order matters —
+ * merging first lets an adjacent first target swallow a whole run.
+ */
+export function foldReactionMarkers(rows: ChatMessage[]): ChatMessage[] {
+	return mergeAdjacentReactionMarkers(pruneAdjacentReactionTargets(rows));
+}
+
+/**
+ * Post-prune pass for reaction markers: merges ADJACENT reaction-marker rows
  * that share the same target into one row ("Alice, Bob +3 reacted 👍 ❤️ — See"),
  * and rows from the SAME SENDER even across different targets (one user's
  * burst of reactions on several messages collapses to one row), so a burst of
@@ -46,14 +56,14 @@ export function mergeAdjacentReactionMarkers(rows: ChatMessage[]): ChatMessage[]
 }
 
 /**
- * Post-merge pass: drops a reaction row when its target is the nearest
+ * First pipeline pass: drops a reaction row when its target is the nearest
  * preceding MESSAGE in the list — the reaction chips on that message are
- * right there, so the row only duplicates them. Runs must be evaluated as a
- * unit, which is why this runs AFTER the merge. Non-system entries advance
- * the tracker (pending `outbox:` ids can never match a reaction target, so
- * they are harmless); other system rows are skipped — they can't be targets.
- * Row fate depends only on its neighborhood: appending newer messages never
- * resurrects dropped rows.
+ * right there, so the row only duplicates them. Fate depends only on a row's
+ * neighborhood (appending newer messages never resurrects dropped rows),
+ * which is why the merge runs after this pass and only sees survivors.
+ * Non-system entries advance the tracker (pending `outbox:` ids can never
+ * match a reaction target, so they are harmless); other system rows are
+ * skipped — they can't be targets.
  */
 export function pruneAdjacentReactionTargets(rows: ChatMessage[]): ChatMessage[] {
 	let lastMessageId: string | undefined;

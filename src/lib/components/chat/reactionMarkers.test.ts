@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { mergeAdjacentReactionMarkers, pruneAdjacentReactionTargets } from './reactionMarkers';
+import {
+	foldReactionMarkers,
+	mergeAdjacentReactionMarkers,
+	pruneAdjacentReactionTargets
+} from './reactionMarkers';
 import type { ChatMessage } from './chat.types';
 
 function row(partial: Partial<ChatMessage>): ChatMessage {
@@ -112,7 +116,7 @@ describe('pruneAdjacentReactionTargets', () => {
 		expect(result.map((entry) => entry.id)).toEqual(['t']);
 	});
 
-	it('drops a merged run as a unit', () => {
+	it('drops consecutive rows targeting the adjacent message', () => {
 		const result = pruneAdjacentReactionTargets([
 			chat('x'),
 			chat('t'),
@@ -139,5 +143,29 @@ describe('pruneAdjacentReactionTargets', () => {
 	it('keeps rows with unresolvable targets', () => {
 		const result = pruneAdjacentReactionTargets([chat('t'), marker('r1', undefined, 10)]);
 		expect(result.map((entry) => entry.id)).toEqual(['t', 'r1']);
+	});
+});
+
+describe('foldReactionMarkers', () => {
+	it('keeps older targets of a burst when the first target is the adjacent message', () => {
+		const result = foldReactionMarkers([
+			message('t'),
+			{ ...marker('r1', 't', 10), reactionSenders: ['pk-bob'] },
+			{ ...marker('r2', 'x', 11), reactionSenders: ['pk-bob'] }
+		]);
+		// The run must not swallow r2 just because r1 targets the adjacent message.
+		expect(result.map((entry) => entry.id)).toEqual(['t', 'r2']);
+	});
+
+	it('collapses surviving same-sender rows and drops adjacent-target rows', () => {
+		const result = foldReactionMarkers([
+			message('t'),
+			{ ...marker('r1', 'x', 10), reactionSenders: ['pk-bob'] },
+			{ ...marker('r2', 'y', 11), reactionSenders: ['pk-bob'] },
+			{ ...marker('r3', 't', 12), reactionSenders: ['pk-bob'] }
+		]);
+		expect(result.map((entry) => entry.id)).toEqual(['t', 'r1']);
+		expect(result[1].reactionTarget).toBe('x');
+		expect(result[1].reactionSenders).toEqual(['pk-bob']);
 	});
 });

@@ -45,7 +45,7 @@
 		getMessagePollDefinition,
 		type PollDraft
 	} from '$lib/chat/polls';
-	import { mergeAdjacentReactionMarkers, pruneAdjacentReactionTargets } from './reactionMarkers';
+	import { foldReactionMarkers } from './reactionMarkers';
 	import { getShowReactionMarkers } from '$lib/services/chatComposerSettings.svelte';
 	import { type StoredChatSystemMessageData } from '$lib/services/chatGroupMessages.svelte';
 	import { formatUnixTimestamp, normalizePubKey, samePubKey } from '$lib/utils';
@@ -311,6 +311,10 @@
 				// Malformed references (no e/p/k tags) drop out here, mirroring the
 				// chip fold. The jump target is the composite row id of the target.
 				if (message.kind === ChatKinds.Reaction) {
+					// Your own reactions never become timeline rows — you know what you
+					// reacted to, and the chips on the message already show it. Rows are
+					// for other people's activity.
+					if (samePubKey(message.sender, activePubkey)) return null;
 					if (deletedIds.has(message.id)) return null; // un-reacted
 					const reference = getMessageReactionReference(
 						message.kind,
@@ -430,12 +434,10 @@
 		const pending = getPendingMessages(groupId).filter(
 			(message) => !byEventId.has(message.eventId)
 		);
-		return pruneAdjacentReactionTargets(
-			mergeAdjacentReactionMarkers(
-				[...confirmedMessages, ...pending]
-					.filter((message): message is ChatMessage => message !== null)
-					.sort(compareChatMessages)
-			)
+		return foldReactionMarkers(
+			[...confirmedMessages, ...pending]
+				.filter((message): message is ChatMessage => message !== null)
+				.sort(compareChatMessages)
 		);
 	});
 
