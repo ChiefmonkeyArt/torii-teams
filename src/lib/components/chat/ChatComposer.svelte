@@ -451,11 +451,14 @@
 	}
 
 	function selectMention(candidate: ChatMentionCandidate) {
-		if (!textareaRef || mentionStart < 0) return;
+		if (mentionStart < 0) return;
 		const label = getMentionLabel(candidate).replace(/\s+/g, '');
-		const caret = textareaRef.selectionStart;
+		// Splice at the end of the tracked @query instead of the caret: the caret
+		// goes stale when the Android keyboard collapses (it can reset to 0 and
+		// duplicate or truncate the draft).
+		const queryEnd = mentionStart + 1 + mentionQuery.length;
 		const beforeMention = value.slice(0, mentionStart);
-		const afterMention = value.slice(caret).replace(/^\s*/, '');
+		const afterMention = value.slice(queryEnd).replace(/^\s*/, '');
 		const nextValue = `${beforeMention}@${label} ${afterMention}`;
 		value = nextValue;
 		selectedMentions = [
