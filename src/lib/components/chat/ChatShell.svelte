@@ -65,7 +65,11 @@
 		getChatDraft,
 		setChatDraft,
 		getChatDraftReply,
-		setChatDraftReply
+		setChatDraftReply,
+		getChatDraftEdit,
+		setChatDraftEdit,
+		getChatDraftMentions,
+		setChatDraftMentions
 	} from '$lib/services/chatDrafts.svelte';
 	import {
 		addPendingMessage,
@@ -92,19 +96,26 @@
 
 	$effect(() => {
 		draft = getChatDraft(groupId);
-		// The armed reply is per-group like the draft: switching away and back
-		// must not drop it (the reset effect below handles the other composer
-		// state).
+		// The armed reply, the in-progress edit and the picked mentions are
+		// per-group like the draft: switching away and back must not drop them,
+		// and a mid-composition remount must not silently turn an edit into a new
+		// message (the reset effect below handles the other composer state).
 		replyTarget = getChatDraftReply(groupId);
+		const edit = getChatDraftEdit(groupId);
+		editTarget = edit?.target ?? null;
+		editPreview = edit?.preview ?? '';
+		selectedMentions = getChatDraftMentions(groupId);
 	});
 
 	$effect(() => {
-		setChatDraft(groupId, draft);
-		setChatDraftReply(groupId, replyTarget);
-		return () => {
+		const saveComposerState = () => {
 			setChatDraft(groupId, draft);
 			setChatDraftReply(groupId, replyTarget);
+			setChatDraftEdit(groupId, editTarget ? { target: editTarget, preview: editPreview } : null);
+			setChatDraftMentions(groupId, selectedMentions);
 		};
+		saveComposerState();
+		return saveComposerState;
 	});
 	let sendError = $state('');
 	let replyTarget = $state<ChatMessageReplyTarget | null>(null);
@@ -257,17 +268,15 @@
 	// SvelteKit reuses this component across group navigation (only params.id
 	// changes), so the composer's transient state would otherwise bleed into
 	// the newly opened group (e.g. group A's send error shown in group B).
-	// Reset it on group change. The draft text and the armed reply are exempt:
-	// the effects above save and restore them per group, like any other text.
+	// Reset it on group change. The draft text, armed reply, in-progress edit
+	// and picked mentions are exempt: the effects above save and restore them
+	// per group, like any other text.
 	// In-flight outgoing MESSAGES are not touched here: they live in the
 	// per-group outbox (chatOutbox.svelte) so they stay attached to their own
 	// group while you navigate and reappear when you come back.
 	$effect(() => {
 		void groupId;
 		sendError = '';
-		editTarget = null;
-		editPreview = '';
-		selectedMentions = [];
 		optimisticEdits = {};
 		optimisticDeletes = {};
 		optimisticReactions = {};
