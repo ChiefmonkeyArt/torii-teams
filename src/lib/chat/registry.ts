@@ -15,7 +15,9 @@ import type { Component } from 'svelte';
 
 import { ChatKinds } from '$lib/chat/kinds';
 import TextInline from '$lib/chat/inline/TextInline.svelte';
+import PollInline from '$lib/chat/inline/PollInline.svelte';
 import DefaultRich from '$lib/chat/rich/DefaultRich.svelte';
+import PollRich from '$lib/chat/rich/PollRich.svelte';
 
 // ---------------------------------------------------------------------------
 // Inline (compact) bodies — rendered inside the chat stream row.
@@ -23,6 +25,14 @@ import DefaultRich from '$lib/chat/rich/DefaultRich.svelte';
 
 export interface InlineBodyProps {
 	message: import('$lib/components/chat/chat.types').ChatMessage;
+	/** Group the message belongs to — sparse-aggregate kinds (polls) self-query
+	 *  their group's message store from here. */
+	groupId?: string;
+	/** Cast a poll vote (kind 1018): complete selection of option ids. */
+	onVote?: (
+		message: import('$lib/components/chat/chat.types').ChatMessage,
+		optionIds: string[]
+	) => void | Promise<boolean>;
 	/** Open the rich view for this event (sidebar / dedicated route). */
 	onOpenRich?: (eventId: string) => void;
 }
@@ -32,7 +42,8 @@ export type InlineBody = Component<InlineBodyProps>;
  *  primary kinds until they gain a dedicated compact renderer. */
 export const inlineBodies: Record<number, InlineBody> = {
 	[ChatKinds.Text]: TextInline,
-	[ChatKinds.ThreadReply]: TextInline
+	[ChatKinds.ThreadReply]: TextInline,
+	[ChatKinds.Poll]: PollInline
 };
 
 export const defaultInlineBody: InlineBody = TextInline;
@@ -51,8 +62,10 @@ export interface RichBodyProps {
 }
 export type RichBody = Component<RichBodyProps>;
 
-/** Kind → rich body. Empty until kinds gain dedicated rich renderers; until
- *  then DefaultRich (the lifted message-info view) handles everything. */
-export const richBodies: Record<number, RichBody> = {};
+/** Kind → rich body. PollRich shares one presentational surface between the
+ *  detail sidebar and /chat/[id]/e/[eventId] (README § Rich context). */
+export const richBodies: Record<number, RichBody> = {
+	[ChatKinds.Poll]: PollRich
+};
 
 export const defaultRichBody: RichBody = DefaultRich;

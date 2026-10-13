@@ -30,6 +30,8 @@
 	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import ChatComposerActions from './ChatComposerActions.svelte';
 	import GifPicker from './GifPicker.svelte';
+	import PollComposerDialog from './PollComposerDialog.svelte';
+	import type { PollDraft } from '$lib/chat/polls';
 	import { Spinner } from '$lib/components/ui/spinner';
 	import { isHeicMime } from '$lib/services/mediaSniff';
 	import { Metadata } from 'nostr-tools/kinds';
@@ -57,7 +59,8 @@
 		mentionCandidates = [],
 		selectedMentions = $bindable([]),
 		onSendMedia = () => {},
-		onSendVoice = () => {}
+		onSendVoice = () => {},
+		onSendPoll = () => {}
 	}: {
 		value?: string;
 		onSubmit: () => void;
@@ -75,6 +78,8 @@
 		 *  fires on release, on a locked-recording send tap, or on a silence-VAD
 		 *  auto-stop. */
 		onSendVoice?: (result: RecordingResult) => void;
+		/** Send a poll created in the poll composer dialog. */
+		onSendPoll?: (draft: PollDraft) => void;
 	} = $props();
 
 	let textareaRef: HTMLTextAreaElement | null = $state(null);
@@ -551,6 +556,7 @@
 	}
 
 	let gifPickerOpen = $state(false);
+	let pollDialogOpen = $state(false);
 
 	/** Insert a picked GIF's URL at the caret (a leading space unless already separated). */
 	function insertGifUrl(url: string) {
@@ -875,8 +881,10 @@
 					onPickImage={pickImage}
 					onPickDocument={pickDocument}
 					onPickGif={() => (gifPickerOpen = true)}
+					onCreatePoll={() => (pollDialogOpen = true)}
 				/>
 				<GifPicker bind:open={gifPickerOpen} onPick={insertGifUrl} />
+				<PollComposerDialog bind:open={pollDialogOpen} onCreate={onSendPoll} />
 				<div class="flex min-w-0 flex-1 flex-col gap-2">
 					{#if activeMention && mentionMatches.length > 0}
 						<div class="rounded-xl border border-border bg-popover p-1 shadow-lg">

@@ -44,6 +44,7 @@
 	import { resolve } from '$app/paths';
 	import type { ChatMessage } from './chat.types';
 	import ChatInlineBody from '$lib/chat/ChatInlineBody.svelte';
+	import { ChatKinds } from '$lib/chat/kinds';
 	import ChatMessageMedia from './ChatMessageMedia.svelte';
 	import { peekMessageMedia, resolveMessageMedia } from '$lib/services/chatMediaStorage.svelte';
 	import {
@@ -61,6 +62,7 @@
 
 	let {
 		message,
+		groupId = '',
 		showAuthor = true,
 		showAvatar = true,
 		showDayLabel = false,
@@ -74,9 +76,11 @@
 		onNavigateToMessage = () => {},
 		onOpenRich = () => {},
 		onPin = () => {},
+		onVote = () => Promise.resolve(false),
 		highlighted = false
 	}: {
 		message: ChatMessage;
+		groupId?: string;
 		showAuthor?: boolean;
 		showAvatar?: boolean;
 		showDayLabel?: boolean;
@@ -93,6 +97,8 @@
 		onNavigateToMessage?: (messageId: string) => void;
 		onOpenRich?: (eventId: string) => void;
 		onPin?: (message: ChatMessage) => void;
+		/** Cast a poll vote (kind 1018): complete selection of option ids. */
+		onVote?: (message: ChatMessage, optionIds: string[]) => void | Promise<boolean>;
 		highlighted?: boolean;
 	} = $props();
 	let reactionMenuOpen = $state(false);
@@ -772,7 +778,9 @@
 											</DropdownMenuItem>
 										{/if}
 
-										{#if isOwn && !message.deleted && canEdit}
+										{#if isOwn && !message.deleted && canEdit && message.kind !== ChatKinds.Poll}
+											<!-- Polls are immutable once cast: an edit would swap the question
+											     under standing votes. -->
 											<DropdownMenuItem onSelect={startEditing} class="gap-2">
 												<Pencil class="size-4" />
 												<span>Edit</span>
@@ -933,7 +941,7 @@
 
 							{#if !message.deleted}
 								<ChatMessageMedia {message} />
-								<ChatInlineBody {message} {onOpenRich} />
+								<ChatInlineBody {message} {groupId} {onVote} {onOpenRich} />
 							{/if}
 						</div>
 					</div>
@@ -1093,7 +1101,7 @@
 									<Info class="size-4 shrink-0 text-muted-foreground" />
 									<span>Message info</span>
 								</button>
-								{#if isOwn && !message.deleted && canEdit}
+								{#if isOwn && !message.deleted && canEdit && message.kind !== ChatKinds.Poll}
 									<button
 										type="button"
 										class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors hover:bg-muted/40"

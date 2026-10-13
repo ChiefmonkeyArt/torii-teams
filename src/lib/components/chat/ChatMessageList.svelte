@@ -12,6 +12,7 @@
 
 	let {
 		messages,
+		groupId = '',
 		initialFocusMessageId = '',
 		onReply = () => {},
 		onReact = () => Promise.resolve(),
@@ -23,10 +24,13 @@
 		onVisibleRead = () => {},
 		onOpenRich = () => {},
 		onPin = () => {},
+		onVote = () => Promise.resolve(false),
 		unreadReferenceCount = 0,
 		onNavigateToReference = () => {}
 	}: {
 		messages: ChatMessage[];
+		/** Group the rows belong to — poll rows self-query their votes from here. */
+		groupId?: string;
 		/** Unread @-mentions of the viewer: shown as a floating jump button
 		 *  stacked above scroll-to-bottom (moved out of the composer). */
 		unreadReferenceCount?: number;
@@ -48,6 +52,8 @@
 		onVisibleRead?: (report: { cursor: number; atBottom: boolean }) => void;
 		onOpenRich?: (eventId: string) => void;
 		onPin?: (message: ChatMessage) => void;
+		/** Cast a poll vote (kind 1018): complete selection of option ids. */
+		onVote?: (message: ChatMessage, optionIds: string[]) => void | Promise<boolean>;
 	} = $props();
 	let container: HTMLDivElement | null = $state(null);
 	let highlightedMessageId = $state('');
@@ -435,6 +441,7 @@
 						>
 							<ChatMessageItem
 								{message}
+								{groupId}
 								showAuthor={runHead}
 								showAvatar={runTail}
 								showDayLabel={previousMessage?.dayLabel !== message.dayLabel}
@@ -448,6 +455,7 @@
 								onNavigateToMessage={navigateToMessage}
 								{onOpenRich}
 								{onPin}
+								{onVote}
 								highlighted={highlightedMessageId === message.id}
 							/>
 						</div>

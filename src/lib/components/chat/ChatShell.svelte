@@ -18,6 +18,7 @@
 	} from '$lib/services/chatGroupPresence.svelte';
 	import {
 		chatComposerActionsStore,
+		castPollVoteAction,
 		sendGroupMessageAction
 	} from '$lib/services/chatUiActions.svelte';
 	import {
@@ -37,7 +38,13 @@
 		type MessageTarget
 	} from '$lib/chat/references';
 	import { buildReplyQuote, unavailableReplyQuote } from '$lib/chat/replyQuote';
-	import { ChatKinds, SYSTEM_MESSAGE_KIND, isAnnotationKind } from '$lib/chat/kinds';
+	import { ChatKinds, SYSTEM_MESSAGE_KIND, isStreamHiddenKind } from '$lib/chat/kinds';
+	import {
+		createPollMessageTags,
+		describePollVote,
+		getMessagePollDefinition,
+		type PollDraft
+	} from '$lib/chat/polls';
 	import { mergeAdjacentReactionMarkers, pruneAdjacentReactionTargets } from './reactionMarkers';
 	import { getShowReactionMarkers } from '$lib/services/chatComposerSettings.svelte';
 	import { type StoredChatSystemMessageData } from '$lib/services/chatGroupMessages.svelte';
@@ -296,7 +303,7 @@
 		const reactionMarkers = getShowReactionMarkers();
 		const confirmedMessages = storedMessages
 			.filter((message) =>
-				message.kind === ChatKinds.Reaction ? reactionMarkers : !isAnnotationKind(message.kind)
+				message.kind === ChatKinds.Reaction ? reactionMarkers : !isStreamHiddenKind(message.kind)
 			)
 			.map((message) => {
 				// Kind-7 reactions render as marker rows in the linear timeline
@@ -514,6 +521,27 @@
 		// UX). The scroll + re-render above can blur the textarea and dismiss the keyboard; bumping
 		// focusKey here re-focuses it before the network send resolves, minimizing flicker (also
 		// keeps the cursor in the composer on desktop).
+		composerFocusKey += 1;
+	}
+
+	/** Poll sends enqueue like text (durable outbox-first) with their validated
+	 *  option tags and the resolved kind; the dialog has already validated the
+	 *  draft so createPollMessageTags cannot throw here. */
+	function handleSendPoll(pollDraft: PollDraft) {
+		// Re-validate on send: the draft's deadline is checked against the clock at
+		// enqueue time too, so surface that (rare) failure like any other send error.
+		try {
+			enqueueTextMessage({
+				groupId,
+				content: pollDraft.question,
+				tags: createPollMessageTags(pollDraft),
+				kind: ChatKinds.Poll
+			});
+		} catch (error) {
+			sendError = error instanceof Error ? error.message : 'Failed to create poll';
+			return;
+		}
+		void messageListRef?.scrollToBottom();
 		composerFocusKey += 1;
 	}
 
@@ -811,6 +839,35 @@
 		}
 	}
 
+	/** Poll votes mirror reactions: best-effort send, error surfaced to the
+	 *  composer error row. The poll row keeps its optimistic selection until the
+	 *  confirmed kind-1018 ingests (one vote per account, latest wins). */
+	async function handleVote(message: ChatMessage, optionIds: string[]) {
+		const storedMessage = messageMaps.byEventId.get(message.eventId);
+		if (!storedMessage || storedMessage.kind !== ChatKinds.Poll) return false;
+
+		const voteTarget: MessageTarget = {
+			id: storedMessage.id,
+			pubkey: storedMessage.sender,
+			kind: storedMessage.kind
+		};
+		// Pre-poll clients render `content` as the bubble text, so send the voted
+		// labels along (updated clients ignore it — the tally reads tags only).
+		const definition = getMessagePollDefinition(
+			storedMessage.kind,
+			storedMessage.content,
+			storedMessage.tags
+		);
+		const sent = await castPollVoteAction(
+			groupId,
+			voteTarget,
+			optionIds,
+			describePollVote(definition, optionIds)
+		);
+		sendError = chatComposerActionsStore.error;
+		return Boolean(sent);
+	}
+
 	async function handleUnreact(message: ChatMessage, emoji: string) {
 		if (message.deleted) return;
 		const storedMessage = messageMaps.byEventId.get(message.eventId);
@@ -1005,7 +1062,7 @@
 						(message) =>
 							message.cursor > getChatGroupLastReadCursor(groupId) &&
 							message.kind !== SYSTEM_MESSAGE_KIND &&
-							!isAnnotationKind(message.kind)
+							!isStreamHiddenKind(message.kind)
 					);
 			snapshotFocusId = firstUnread ? `${firstUnread.id}:${firstUnread.cursor}` : '';
 		}
@@ -1081,6 +1138,7 @@
 				<ChatMessageList
 					bind:this={messageListRef}
 					{messages}
+					{groupId}
 					{initialFocusMessageId}
 					unreadReferenceCount={unreadReferenceTargets.length}
 					onNavigateToReference={navigateToNextReference}
@@ -1094,6 +1152,7 @@
 					onVisibleRead={handleVisibleRead}
 					onOpenRich={handleOpenRich}
 					onPin={handlePin}
+					onVote={handleVote}
 				/>
 			{/if}
 		</div>
@@ -1124,6 +1183,7 @@
 			onSubmit={handleSubmit}
 			onSendMedia={handleSendMedia}
 			onSendVoice={handleSendVoice}
+			onSendPoll={handleSendPoll}
 			disabled={isRemoved || isPoisoned}
 			replyTo={composerReplyPreview}
 			editTo={editTarget

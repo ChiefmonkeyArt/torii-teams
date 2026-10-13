@@ -9,6 +9,7 @@
  */
 import { safeNormalizePubKey, samePubKey } from '$lib/utils';
 import { ChatKinds } from '$lib/chat/kinds';
+import { createPollMessageTags, createPollResponseTags, type PollDraft } from '$lib/chat/polls';
 import type { StoredChatMessage } from '$lib/services/chatGroupMessages.svelte';
 
 // ---------------------------------------------------------------------------
@@ -275,6 +276,15 @@ export interface OutboundMessageInput {
 	deleteTo?: MessageTarget;
 	pinTo?: MessageTarget;
 	pinOp?: PinOp;
+	/** Kind-1068 poll send: question in `content`, option/polltype/endsAt tags
+	 *  built (and validated) here from the draft. */
+	poll?: PollDraft;
+	/** Kind-1018 poll response: complete selection of option ids for the poll.
+	 *  `content` is the human-readable fallback for clients without polls. */
+	voteTo?: { target: MessageTarget; optionIds: string[] };
+	/** Explicit kind for replays of an already-resolved intent (offline outbox):
+	 *  the plain branch preserves it instead of re-deriving Text/ThreadReply. */
+	kind?: number;
 }
 
 export interface OutboundMessageShape {
@@ -291,6 +301,24 @@ export function resolveOutboundMessage(input: OutboundMessageInput): OutboundMes
 	const isEdit = Boolean(input.editTo);
 	const isDelete = Boolean(input.deleteTo);
 	const isPin = Boolean(input.pinTo);
+
+	if (input.poll) {
+		return {
+			kind: ChatKinds.Poll,
+			content: input.poll.question,
+			tags: createPollMessageTags(input.poll)
+		};
+	}
+
+	if (input.voteTo) {
+		return {
+			kind: ChatKinds.PollResponse,
+			// Bubble text for pre-poll clients; the NIP-31 `alt` tag in the tags
+			// covers future clients that know to fall back to it.
+			content: input.content,
+			tags: createPollResponseTags(input.voteTo.target, input.voteTo.optionIds)
+		};
+	}
 
 	if (isPin) {
 		return {
@@ -325,7 +353,7 @@ export function resolveOutboundMessage(input: OutboundMessageInput): OutboundMes
 	}
 
 	return {
-		kind: input.replyTo ? ChatKinds.ThreadReply : ChatKinds.Text,
+		kind: input.kind ?? (input.replyTo ? ChatKinds.ThreadReply : ChatKinds.Text),
 		content: input.content.trim(),
 		tags: [...(input.replyTo ? createReplyMessageTags(input.replyTo) : []), ...(input.tags ?? [])]
 	};

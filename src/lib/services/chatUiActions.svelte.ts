@@ -217,6 +217,27 @@ export async function refreshAvailableKeyPackagesAction(coordinatorKey?: string)
 	await fetchCoordinatorAvailableKeyPackages(undefined, { force: true });
 }
 
+/** Shared send wrapper: waits for any in-flight chat rebuild OUTSIDE the
+ *  per-group operation lock (the rebuild's backlog ingestion takes that same
+ *  lock, so awaiting it from inside would deadlock; rejection is swallowed so a
+ *  failed rebuild still gives the send its own error path) and mirrors failures
+ *  to the composer error store. */
+async function runSend(send: () => Promise<StoredChatMessage>): Promise<StoredChatMessage | false> {
+	chatComposerActionsStore.error = '';
+	const resumePromise = getChatGroupResumePromise();
+	if (resumePromise) {
+		await resumePromise.catch(() => undefined);
+	}
+	try {
+		return await send();
+	} catch (error) {
+		console.error('Failed to send chat message:', error);
+		chatComposerActionsStore.error =
+			error instanceof Error ? error.message : 'Failed to send message';
+		return false;
+	}
+}
+
 export async function sendGroupMessageAction(
 	groupId: string | undefined,
 	content: string,
@@ -230,19 +251,8 @@ export async function sendGroupMessageAction(
 ): Promise<StoredChatMessage | false> {
 	const text = content.trim();
 	if ((!text && !reactionTo && !deleteTo && !pinTo) || !groupId) return false;
-	chatComposerActionsStore.error = '';
-	// If a chat rebuild (the "Updating chats…" resume flow) is in flight, wait
-	// for it to settle before sending. This is awaited OUTSIDE the per-group
-	// operation lock (acquired inside sendChatGroupMessage): the rebuild's
-	// backlog ingestion takes that same lock, so awaiting it from inside would
-	// deadlock. The rejection is swallowed so a failed rebuild still gives the
-	// send (and its own error path) a chance rather than aborting outright.
-	const resumePromise = getChatGroupResumePromise();
-	if (resumePromise) {
-		await resumePromise.catch(() => undefined);
-	}
-	try {
-		return await sendChatGroupMessage({
+	return runSend(() =>
+		sendChatGroupMessage({
 			groupId,
 			content: reactionTo ? content : text,
 			replyTo,
@@ -252,13 +262,21 @@ export async function sendGroupMessageAction(
 			deleteTo,
 			pinTo,
 			pinOp
-		});
-	} catch (error) {
-		console.error('Failed to send chat message:', error);
-		chatComposerActionsStore.error =
-			error instanceof Error ? error.message : 'Failed to send message';
-		return false;
-	}
+		})
+	);
+}
+
+/** Cast (or re-cast) a poll vote: a complete-selection replacement for the
+ *  poll targeted by `target`, one event per account — latest wins. `content` is
+ *  the readable fallback bubble text for clients without poll support. */
+export async function castPollVoteAction(
+	groupId: string | undefined,
+	target: MessageTarget,
+	optionIds: string[],
+	content = ''
+): Promise<StoredChatMessage | false> {
+	if (!groupId || optionIds.length === 0) return false;
+	return runSend(() => sendChatGroupMessage({ groupId, content, voteTo: { target, optionIds } }));
 }
 
 export async function startChatWithKeyPackageAction(keyPackage: {
