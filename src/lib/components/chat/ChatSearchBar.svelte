@@ -88,12 +88,11 @@
 		<Button
 			type="button"
 			variant="outline"
-			class="h-10 gap-2 rounded-xl px-3"
+			class="h-10 w-10 rounded-xl"
 			aria-label={groupId ? 'Search this chat' : 'Search messages, groups and people'}
 			title="Search"
 		>
 			<Search class="size-4" />
-			<span class="hidden text-muted-foreground md:inline">Search…</span>
 		</Button>
 	</Dialog.Trigger>
 	<Dialog.Content class="sm:max-w-2xl">
