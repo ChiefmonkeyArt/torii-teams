@@ -285,24 +285,19 @@
 		// shrink observer (soft keyboard) only.
 
 		// Re-pin to the bottom when the scroll container itself shrinks — most importantly the soft
-		// keyboard opening on mobile — so the latest messages stay visible instead of being clipped
-		// off the new bottom edge. Guarded by wasAtBottom (never yank someone reading history) and
-		// rAF-batched so the multi-frame keyboard animation collapses to one cheap scrollTo.
-		let resizeFrame: number | null = null;
+		// keyboard opening on mobile, and the composer growing a line on desktop — so the latest
+		// messages stay visible instead of being clipped off the new bottom edge. Guarded by
+		// wasAtBottom (never yank someone reading history). The scroll runs synchronously inside the
+		// RO callback, which fires before paint in the same rendering update as the resize — a
+		// deferred pin left one painted frame sitting off-bottom, and the correction read as the
+		// chat "jumping" on every composer line change.
 		const ro = new ResizeObserver(() => {
 			if (!container || !wasAtBottom || suppressNextAutoScroll) return;
-			if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
-			resizeFrame = requestAnimationFrame(() => {
-				resizeFrame = null;
-				if (container && wasAtBottom && !suppressNextAutoScroll) {
-					container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
-				}
-			});
+			container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
 		});
 		if (container) ro.observe(container);
 		return () => {
 			ro.disconnect();
-			if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
 		};
 	});
 
