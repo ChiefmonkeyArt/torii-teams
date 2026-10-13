@@ -410,7 +410,9 @@
 								author: replySource.sender,
 								content: deletedIds.has(replySource.id)
 									? ''
-									: (editMap.get(replySource.id)?.content ?? replySource.content),
+									: (optimisticEdits[replySource.id] ??
+										editMap.get(replySource.id)?.content ??
+										replySource.content),
 								deleted: deletedIds.has(replySource.id),
 								tags: replySource.tags
 							})
