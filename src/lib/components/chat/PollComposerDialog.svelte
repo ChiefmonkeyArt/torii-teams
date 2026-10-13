@@ -37,13 +37,9 @@
 		}
 	});
 
-	// Trailing empty rows are placeholders (Signal's "a third appears once the
-	// second is filled"); only non-empty trailing-trimmed labels are sent.
-	const activeLabels = $derived.by(() => {
-		const labels = [...optionLabels];
-		while (labels.length > 0 && labels[labels.length - 1].trim() === '') labels.pop();
-		return labels.map((label) => label.trim());
-	});
+	// Only non-empty labels are sent, in any position: an accidentally-cleared
+	// middle row never blocks creation (Signal grows option rows the same way).
+	const activeLabels = $derived(optionLabels.map((label) => label.trim()).filter(Boolean));
 
 	// Grow the visible rows one ahead of typing, up to the NIP-88 bound.
 	$effect(() => {
