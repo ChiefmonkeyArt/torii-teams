@@ -163,6 +163,9 @@ class CordnBackgroundPlugin : Plugin() {
         intent.data = Uri.parse("package:${getContext().packageName}")
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         getContext().startActivity(intent)
+        // Resolve after launching the dialog (not after the user answers) — the caller's await
+        // must settle or it hangs forever and any post-request bookkeeping never runs.
+        call.resolve()
     }
 
     /**
