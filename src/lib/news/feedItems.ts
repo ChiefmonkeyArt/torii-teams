@@ -91,6 +91,13 @@ export const DEFAULT_DONATION: DonationConfig = {
  */
 const newsReleases: NewsRelease[] = [
 	{
+		id: 'cordn-news-2026-10-13-reliable-notifications',
+		createdAt: Date.UTC(2026, 9, 13),
+		version: 1,
+		title: 'Notifications that keep coming, and a steadier chat',
+		body: "- 🐛 Notifications arrive more reliably on Android. Many phones pause apps in the background to save battery, and that is what made Cordn's notifications stop or come late. Cordn now asks just once, at launch, for permission to keep running in the background — answering “Allow” is all it takes. You can still change your mind later in Settings → Notifications.\n- ✨ If notifications are turned on but that background permission is still missing, a small reminder now appears above your chats. Tap “Allow background” to fix it in one step, or dismiss the reminder once and it never comes back.\n- 🐛 Writing a message with several lines no longer makes the chat above jump around as you type.\n- 🐛 Sharing into a group and pressing back no longer bounces you between the “Share to…” screen and the chat over and over — back now leaves the app, like you expect.\n- 🐛 The image preview on desktop is usable again: the zoom buttons zoom instead of closing the preview, and clicking the photo no longer closes it either."
+	},
+	{
 		id: 'cordn-news-2026-10-12-coordinator-relay-refresh',
 		createdAt: Date.UTC(2026, 9, 12),
 		version: 4,
