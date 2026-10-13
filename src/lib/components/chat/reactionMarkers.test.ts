@@ -71,6 +71,37 @@ describe('mergeAdjacentReactionMarkers', () => {
 		expect(result[0].reactionEmojis).toEqual(['👍']);
 		expect(result[0].reactionSenders).toEqual(['pk-r1']);
 	});
+
+	it('collapses a same-sender burst across different targets', () => {
+		const result = mergeAdjacentReactionMarkers([
+			message('m1'),
+			{ ...marker('r1', 't1', 10), reactionSenders: ['pk-bob'] },
+			{ ...marker('r2', 't2', 11), reactionSenders: ['pk-bob'] },
+			{ ...marker('r3', 't3', 12, '❤️'), reactionSenders: ['pk-bob'] }
+		]);
+		expect(result).toHaveLength(2);
+		expect(result[1].id).toBe('r1'); // stable key from the first member
+		expect(result[1].reactionTarget).toBe('t1'); // See keeps the first member's target
+		expect(result[1].createdAt).toBe(12); // recency from the last member
+		expect(result[1].reactionSenders).toEqual(['pk-bob']);
+		expect(result[1].reactionEmojis).toEqual(['👍', '❤️']);
+	});
+
+	it('keeps different senders on different targets as separate rows', () => {
+		const result = mergeAdjacentReactionMarkers([
+			{ ...marker('r1', 't1', 10), reactionSenders: ['pk-bob'] },
+			{ ...marker('r2', 't2', 11), reactionSenders: ['pk-alice'] }
+		]);
+		expect(result.map((entry) => entry.id)).toEqual(['r1', 'r2']);
+	});
+
+	it('never merges targetless markers from the same sender', () => {
+		const result = mergeAdjacentReactionMarkers([
+			{ ...marker('r1', undefined, 10), reactionSenders: ['pk-bob'] },
+			{ ...marker('r2', undefined, 11), reactionSenders: ['pk-bob'] }
+		]);
+		expect(result).toHaveLength(2);
+	});
 });
 
 describe('pruneAdjacentReactionTargets', () => {

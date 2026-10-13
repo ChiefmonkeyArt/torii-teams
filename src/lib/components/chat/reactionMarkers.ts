@@ -3,11 +3,14 @@ import type { ChatMessage } from './chat.types';
 /**
  * Post-sort pass for reaction markers: merges ADJACENT reaction-marker rows
  * that share the same target into one row ("Alice, Bob +3 reacted 👍 ❤️ — See"),
- * so a burst of reactions on one message doesn't flood the timeline with
- * near-identical marker rows. Rows keep the span position the run occupied in
- * the sorted array; the merged row's id/createdAt come from the FIRST member
- * (stable virtualizer key when the run grows at its end) while timeLabel
- * reflects the LAST member (most recent activity).
+ * and rows from the SAME SENDER even across different targets (one user's
+ * burst of reactions on several messages collapses to one row), so a burst of
+ * reactions doesn't flood the timeline with near-identical marker rows. Rows
+ * keep the span position the run occupied in the sorted array; the merged
+ * row's id comes from the FIRST member (stable virtualizer key when the run
+ * grows at its end) while createdAt and timeLabel reflect the LAST member
+ * (most recent activity), and the See target stays the FIRST member's so a
+ * growing run keeps its jump target.
  *
  * Rows without a target never merge — each keeps its own row (no See button).
  */
@@ -20,7 +23,9 @@ export function mergeAdjacentReactionMarkers(rows: ChatMessage[]): ChatMessage[]
 			row.systemKind === 'reaction' &&
 			previous.systemKind === 'reaction' &&
 			row.reactionTarget &&
-			row.reactionTarget === previous.reactionTarget
+			previous.reactionTarget &&
+			(row.reactionTarget === previous.reactionTarget ||
+				(row.reactionSenders ?? []).some((sender) => previous.reactionSenders?.includes(sender)))
 		) {
 			out[out.length - 1] = {
 				...previous,
