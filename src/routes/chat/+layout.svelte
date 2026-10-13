@@ -5,6 +5,7 @@
 	import LastResortConflictDialog from '$lib/components/chat/LastResortConflictDialog.svelte';
 	import MigrationBanner from '$lib/components/chat/MigrationBanner.svelte';
 	import SignerCapabilityBanner from '$lib/components/chat/SignerCapabilityBanner.svelte';
+	import BatteryOptimizationBanner from '$lib/components/chat/BatteryOptimizationBanner.svelte';
 	import NativeGroupMetaSync from '$lib/components/chat/NativeGroupMetaSync.svelte';
 	import { isNativePlatform, initBackButtonHandler } from '$lib/services/nativeBridge';
 	import { onMount, untrack } from 'svelte';
@@ -170,6 +171,7 @@
 
 		<MigrationBanner />
 		<SignerCapabilityBanner />
+		<BatteryOptimizationBanner />
 		<div class="min-h-0 flex-1">
 			{@render children()}
 		</div>

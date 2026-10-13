@@ -286,8 +286,12 @@ export async function ensureNotificationPermission(): Promise<boolean> {
 	return (await Notification.requestPermission()) === 'granted';
 }
 
-/** Marks the one-time Doze-exemption ask at launch (mirrors the `cordn.deliveryMode` convention). */
-const BATTERY_EXEMPTION_ASKED_KEY = 'cordn.batteryPromptShown';
+/**
+ * Marks the one-time Doze-exemption ask at launch (mirrors the `cordn.deliveryMode` convention).
+ * Stores the ask time so the chat-page reminder banner can tell "asked earlier" from "asked this
+ * session" and stay quiet right after the system dialog.
+ */
+export const BATTERY_EXEMPTION_ASKED_KEY = 'cordn.batteryPromptShown';
 
 /**
  * One-time Doze-exemption ask at launch (Android only). Aggressive OEM battery management silently
@@ -303,7 +307,7 @@ async function requestBatteryExemptionOnce(): Promise<void> {
 		if (localStorage.getItem(BATTERY_EXEMPTION_ASKED_KEY)) return;
 		if ((await CordnBackground.isBatteryExempted()).exempted) return;
 		await CordnBackground.requestBatteryExemption();
-		localStorage.setItem(BATTERY_EXEMPTION_ASKED_KEY, '1');
+		localStorage.setItem(BATTERY_EXEMPTION_ASKED_KEY, String(Date.now()));
 	} catch {
 		// plugin unavailable or the dialog failed to open — retry on a later launch
 	}
