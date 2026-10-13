@@ -17,6 +17,8 @@ export interface ChatMessageSearchResult {
 }
 
 export interface SearchChatMessagesOptions {
+	/** Scope to a single group's messages (the in-chat search). */
+	groupId?: string;
 	limit?: number;
 	activePubkey?: string;
 	profileHints?: ChatGroupProfileHints;
@@ -27,7 +29,12 @@ const SNIPPET_RADIUS = 56;
 
 export function searchChatMessages(
 	query: string | string[],
-	{ limit = DEFAULT_RESULT_LIMIT, activePubkey, profileHints }: SearchChatMessagesOptions = {}
+	{
+		groupId,
+		limit = DEFAULT_RESULT_LIMIT,
+		activePubkey,
+		profileHints
+	}: SearchChatMessagesOptions = {}
 ): ChatMessageSearchResult[] {
 	const queries = Array.isArray(query) ? query : [query];
 	const normalizedQueries = [
@@ -51,6 +58,7 @@ export function searchChatMessages(
 	const results: ChatMessageSearchResult[] = [];
 
 	for (const group of listChatGroups()) {
+		if (groupId && group.id !== groupId) continue;
 		const searchableMessages = getSearchableMessages(group.messages);
 		const messageById = new Map(searchableMessages.map((message) => [message.id, message]));
 		const groupTitle = getChatGroupDisplayTitle({

@@ -8,8 +8,9 @@
 	import { addressLoader } from '$lib/services/loaders.svelte';
 	import { metadataRelays } from '$lib/services/relay-pool';
 	import { ProfileModel } from 'applesauce-core/models';
+	import { nip19 } from 'nostr-tools';
 	import { Metadata } from 'nostr-tools/kinds';
-	import ChatGroupAvatar from '$lib/components/chat/ChatGroupAvatar.svelte';
+	import ChatSearchResults from '$lib/components/chat/ChatSearchResults.svelte';
 	import ChatGroupListItem from '$lib/components/chat/ChatGroupListItem.svelte';
 	import * as InputGroup from '$lib/components/ui/input-group';
 	import AccountLoginDialog from '$lib/components/AccountLoginDialog.svelte';
@@ -25,7 +26,7 @@
 	import { useProfileHints } from '$lib/services/useProfileHints.svelte';
 	import { getGroupActivityAt } from '$lib/components/chat/chatGroupDisplay';
 	import { isChatGroupPinned } from '$lib/services/chatGroupPins.svelte';
-	import { searchChatMessages } from '$lib/services/chatMessageSearch';
+	import { searchChatContent } from '$lib/services/chatContentSearch';
 	import NewsListItem from '$lib/components/news/NewsListItem.svelte';
 	import { getUnreadNewsCount } from '$lib/news/newsReadState.svelte';
 	import { Button } from '$lib/components/ui/button';
@@ -78,11 +79,13 @@
 		resolveSearchQuery(debouncedSearchQuery, $activeAccount?.pubkey, profileNames)
 	);
 	const searchResults = $derived.by(() =>
-		searchChatMessages(resolvedSearchQuery, {
-			limit: 50,
+		searchChatContent(resolvedSearchQuery, {
 			activePubkey: $activeAccount?.pubkey,
 			profileHints: groupProfileHints
 		})
+	);
+	const searchResultCount = $derived(
+		searchResults.people.length + searchResults.groups.length + searchResults.messages.length
 	);
 	const isSearching = $derived(debouncedSearchQuery.trim().length >= 2);
 	const activeKeyword = $derived(keywordStart >= 0);
@@ -154,17 +157,14 @@
 		$mobileSidebarOpen = false;
 	}
 
-	function getGroupById(groupId: string) {
-		return chats.find((chat) => chat.id === groupId);
+	function navigateToPerson(pubkey: string) {
+		closeMobileSidebar();
+		void goto(resolve('/p/[identifier]', { identifier: nip19.npubEncode(pubkey) }));
 	}
 
-	function formatSearchResultTime(createdAt: number) {
-		return new Date(createdAt).toLocaleString(undefined, {
-			month: 'short',
-			day: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit'
-		});
+	function navigateToGroup(groupId: string) {
+		closeMobileSidebar();
+		void goto(resolve('/chat/[id]', { id: groupRouteId(groupId) }));
 	}
 
 	function handleSearchInput(event: Event) {
@@ -367,8 +367,8 @@
 						bind:ref={searchInputRef}
 						bind:value={searchQuery}
 						type="search"
-						placeholder="Search messages…"
-						aria-label="Search messages"
+						placeholder="Search messages, groups and people…"
+						aria-label="Search messages, groups and people"
 						oninput={handleSearchInput}
 						onkeydown={handleSearchKeydown}
 					/>
@@ -377,7 +377,7 @@
 					</InputGroup.Addon>
 					{#if isSearching}
 						<InputGroup.Addon align="inline-end">
-							<InputGroup.Text>{searchResults.length} results</InputGroup.Text>
+							<InputGroup.Text>{searchResultCount} results</InputGroup.Text>
 						</InputGroup.Addon>
 					{/if}
 				</InputGroup.Root>
@@ -425,58 +425,13 @@
 		class="no-scrollbar flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto pb-4"
 	>
 		{#if isSearching && !collapsed}
-			<div class="space-y-2">
-				<div class="flex items-center justify-between px-1">
-					<p class="text-xs font-semibold tracking-[0.18em] text-muted-foreground uppercase">
-						Search results
-					</p>
-					<p class="text-xs text-muted-foreground">Max 50</p>
-				</div>
-
-				{#if searchResults.length === 0}
-					<div
-						class="rounded-xl border border-dashed border-border px-3 py-4 text-sm text-muted-foreground"
-					>
-						No messages found for “{debouncedSearchQuery.trim()}”.
-					</div>
-				{:else}
-					<div class="space-y-1">
-						{#each searchResults as result (result.messageKey)}
-							{@const group = getGroupById(result.groupId)}
-							<button
-								type="button"
-								onclick={() => navigateToMessage(result.groupId, result.messageKey)}
-								class="block w-full rounded-xl border border-transparent px-3 py-2.5 text-left text-sm text-muted-foreground transition-colors hover:border-border hover:bg-background hover:text-foreground"
-							>
-								<div class="flex items-start justify-between gap-2">
-									<div class="flex min-w-0 items-center gap-2">
-										{#if group}
-											<ChatGroupAvatar
-												{group}
-												class="h-5 w-5 shrink-0"
-												fallbackClass="text-[9px] font-medium"
-											/>
-										{/if}
-										<p class="truncate font-medium text-foreground">{result.groupTitle}</p>
-									</div>
-									<p class="shrink-0 text-[10px] text-muted-foreground">
-										{formatSearchResultTime(result.createdAt)}
-									</p>
-								</div>
-								<p class="mt-1 line-clamp-2 text-xs leading-5">{result.snippet}</p>
-								<div class="mt-1 min-w-0 truncate">
-									<ProfileCard
-										pubkey={result.sender}
-										mode="inline"
-										showInlineAvatar={true}
-										profileLink={false}
-									/>
-								</div>
-							</button>
-						{/each}
-					</div>
-				{/if}
-			</div>
+			<ChatSearchResults
+				results={searchResults}
+				query={debouncedSearchQuery.trim()}
+				onSelectPerson={navigateToPerson}
+				onSelectGroup={navigateToGroup}
+				onSelectMessage={(result) => navigateToMessage(result.groupId, result.messageKey)}
+			/>
 		{:else if chats.length === 0 && !collapsed}
 			<div
 				class="rounded-xl border border-dashed border-border px-3 py-4 text-sm text-muted-foreground"

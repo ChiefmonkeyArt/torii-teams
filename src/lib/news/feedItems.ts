@@ -98,6 +98,13 @@ const newsReleases: NewsRelease[] = [
 		body: "- ✨ Press + next to the message box and choose Poll to ask the group anything: write a question, add two to ten options, decide whether people pick just one or as many as they like, and set an end time — from an hour up to a week, or no deadline at all.\n- ✨ Voting is one tap on an option, and the poll fills in its own results as they come in: every option grows a bar with its count, and opening the poll's details shows exactly who picked what.\n- 🔄 Changed your mind? Tap a different option while the poll is open — your latest pick is the one that counts, one vote per person. When the deadline passes, the poll marks itself closed and its options lock."
 	},
 	{
+		id: 'cordn-news-2026-10-13-search-people-and-groups',
+		createdAt: Date.UTC(2026, 9, 13),
+		version: 1,
+		title: 'Search people and groups, and quieter reactions',
+		body: "- ✨ Search is no longer just for messages: type a person's name to jump to their profile, a group title to open the chat, or message text as before — all from one box. It is in the sidebar and at the top right of the Chats screen, and inside an open chat it narrows down to just that chat.\n- ✨ The share picker has a search bar of its own: type a group title or a person's name to narrow the list before sharing.\n- 🐛 Pinned groups stay on top in the share picker and in search results, the same as in the chat list.\n- 🐛 Reaction lines in the chat now tell you about other people: your own reactions no longer show up as lines (they still appear on the message itself), and one person's burst of reactions collapses into a single line you can open to see each reaction and jump to the message it is about."
+	},
+	{
 		id: 'cordn-news-2026-10-13-reliable-notifications',
 		createdAt: Date.UTC(2026, 9, 13),
 		version: 1,

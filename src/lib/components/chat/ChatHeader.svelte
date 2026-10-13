@@ -7,6 +7,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import QrShareDialog from '$lib/components/QrShareDialog.svelte';
 	import ChatMobileSidebarButton from '$lib/components/chat/ChatMobileSidebarButton.svelte';
+	import ChatSearchBar from '$lib/components/chat/ChatSearchBar.svelte';
 	import AvailableKeyPackageDirectory from '$lib/components/chat/AvailableKeyPackageDirectory.svelte';
 	import type { AvailableKeyPackageWithCoordinator } from '$lib/queries/chatKeyPackageQueries';
 	import * as Dialog from '$lib/components/ui/dialog';
@@ -136,6 +137,8 @@
 				<h1 class="truncate text-lg font-semibold tracking-tight">{title}</h1>
 			</button>
 		</div>
+
+		<ChatSearchBar {groupId} />
 
 		{#if groupId}
 			<div class="hidden items-center gap-2 sm:flex">

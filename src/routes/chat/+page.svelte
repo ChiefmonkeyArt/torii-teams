@@ -2,6 +2,7 @@
 	import AccountLoginDialog from '$lib/components/AccountLoginDialog.svelte';
 	import ChatGroupListItem from '$lib/components/chat/ChatGroupListItem.svelte';
 	import ChatMobileSidebarButton from '$lib/components/chat/ChatMobileSidebarButton.svelte';
+	import ChatSearchBar from '$lib/components/chat/ChatSearchBar.svelte';
 	import NewsListItem from '$lib/components/news/NewsListItem.svelte';
 	import * as Card from '$lib/components/ui/card';
 	import { browser } from '$app/environment';
@@ -184,19 +185,22 @@
 			<ChatMobileSidebarButton />
 			{#if hasAccount}
 				<h1 class="text-lg font-semibold tracking-tight">Chats</h1>
-				{#if hasUnreadChats}
-					<Button
-						type="button"
-						variant="ghost"
-						size="icon"
-						class="ml-auto h-9 w-9 shrink-0 rounded-lg"
-						aria-label="Mark all chats read"
-						title="Mark all chats read"
-						onclick={markAllChatGroupsRead}
-					>
-						<CheckCheck class="size-4" />
-					</Button>
-				{/if}
+				<div class="ml-auto flex items-center gap-2">
+					{#if hasUnreadChats}
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							class="h-9 w-9 shrink-0 rounded-lg"
+							aria-label="Mark all chats read"
+							title="Mark all chats read"
+							onclick={markAllChatGroupsRead}
+						>
+							<CheckCheck class="size-4" />
+						</Button>
+					{/if}
+					<ChatSearchBar />
+				</div>
 			{/if}
 		</div>
 	</header>
