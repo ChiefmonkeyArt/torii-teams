@@ -91,6 +91,13 @@ export const DEFAULT_DONATION: DonationConfig = {
  */
 const newsReleases: NewsRelease[] = [
 	{
+		id: 'cordn-news-2026-10-13-polls',
+		createdAt: Date.UTC(2026, 9, 13),
+		version: 1,
+		title: 'Ask the group: polls are here',
+		body: "- ✨ Press + next to the message box and choose Poll to ask the group anything: write a question, add two to ten options, decide whether people pick just one or as many as they like, and set an end time — from an hour up to a week, or no deadline at all.\n- ✨ Voting is one tap on an option, and the poll fills in its own results as they come in: every option grows a bar with its count, and opening the poll's details shows exactly who picked what.\n- 🔄 Changed your mind? Tap a different option while the poll is open — your latest pick is the one that counts, one vote per person. When the deadline passes, the poll marks itself closed and its options lock."
+	},
+	{
 		id: 'cordn-news-2026-10-12-coordinator-relay-refresh',
 		createdAt: Date.UTC(2026, 9, 12),
 		version: 4,
