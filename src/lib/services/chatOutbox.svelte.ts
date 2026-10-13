@@ -51,3 +51,54 @@ export function updatePendingMessage(
 		message.id === messageId ? updater(message) : message
 	);
 }
+
+/** Pending outgoing edits, keyed by groupId. They project onto their TARGET
+ *  message — the entry IS the optimistic text swap plus the usual delivery
+ *  clock (queued/sending/error + tooltip), so an edit behaves exactly like a
+ *  queued send instead of vanishing when the post fails. Several queued edits
+ *  for one target stay in order and the newest content wins in the fold. */
+export interface PendingEdit {
+	/** `outbox:${seq}` entry id — retry plumbing (retryOutboxEntry). */
+	id: string;
+	targetId: string;
+	content: string;
+	deliveryState: ChatMessage['deliveryState'];
+	deliveryDetail?: string;
+}
+
+const pendingEdits = $state<Record<string, PendingEdit[]>>({});
+
+export function getPendingEdits(groupId: string): PendingEdit[] {
+	return pendingEdits[groupId] ?? [];
+}
+
+/** Replace the whole edit projection (hydration / account switch). */
+export function replaceAllPendingEdits(record: Record<string, PendingEdit[]>): void {
+	for (const key of Object.keys(pendingEdits)) {
+		delete pendingEdits[key];
+	}
+	for (const [key, value] of Object.entries(record)) {
+		pendingEdits[key] = value;
+	}
+}
+
+export function addPendingEdit(groupId: string, edit: PendingEdit): void {
+	const current = pendingEdits[groupId] ?? [];
+	pendingEdits[groupId] = [...current, edit].slice(-MAX_PENDING_PER_GROUP);
+}
+
+export function removePendingEdit(groupId: string, editId: string): void {
+	const current = pendingEdits[groupId];
+	if (!current) return;
+	pendingEdits[groupId] = current.filter((edit) => edit.id !== editId);
+}
+
+export function updatePendingEdit(
+	groupId: string,
+	editId: string,
+	updater: (edit: PendingEdit) => PendingEdit
+): void {
+	const current = pendingEdits[groupId];
+	if (!current) return;
+	pendingEdits[groupId] = current.map((edit) => (edit.id === editId ? updater(edit) : edit));
+}

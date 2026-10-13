@@ -13,14 +13,23 @@ import {
 } from './chatGroups.svelte';
 import { getChatStorage, type StoredChatOutboxRecord } from '$lib/storage/chatStorage';
 import {
+	addPendingEdit,
 	addPendingMessage,
 	replaceAllPending,
+	replaceAllPendingEdits,
+	removePendingEdit,
 	removePendingMessage,
-	updatePendingMessage
+	updatePendingEdit,
+	updatePendingMessage,
+	type PendingEdit
 } from './chatOutbox.svelte';
 import { getChatGroupResumePromise } from './chatGroupWatchStatus.svelte';
 import { ChatKinds } from '$lib/chat/kinds';
-import type { ChatMessageReplyTarget } from '$lib/chat/references';
+import {
+	createEditMessageTags,
+	type ChatMessageReplyTarget,
+	type MessageTarget
+} from '$lib/chat/references';
 import { buildReplyQuote } from '$lib/chat/replyQuote';
 import type { ChatMessage as UiChatMessage } from '$lib/components/chat/chat.types';
 import { errorMessage, formatUnixTimestamp, normalizePubKey } from '$lib/utils';
@@ -45,8 +54,8 @@ export { OUTBOX_ID_PREFIX };
  * at enqueue), so even a duplicate that slips through collapses everywhere via
  * ingestion's event-id dedupe.
  *
- * Scope: text/reply/mention sends only. Media (upload-first), reactions,
- * edits, deletes, and pins keep their direct fail-fast paths.
+ * Scope: text/reply/mention sends and edits. Media (upload-first), reactions,
+ * deletes, and pins keep their direct fail-fast paths.
  */
 
 const OUTBOX_ID_PREFIX = 'outbox:';
@@ -121,6 +130,54 @@ function outboxEntryToChatMessage(entry: StoredChatOutboxRecord): UiChatMessage 
 }
 
 /** Was this intent's last attempt actually delivered? (Backlog check.) */
+function isEditEntry(entry: Pick<StoredChatOutboxRecord, 'kind'>): boolean {
+	return entry.kind === ChatKinds.Edit;
+}
+
+/** The edited message's id for an edit intent (its `e` tag, set at enqueue). */
+function editTargetOf(entry: Pick<StoredChatOutboxRecord, 'tags'>): string {
+	return entry.tags.find((tag) => tag[0] === 'e')?.[1] ?? '';
+}
+
+function outboxEntryToPendingEdit(entry: StoredChatOutboxRecord): PendingEdit {
+	return {
+		id: bubbleId(entry),
+		targetId: editTargetOf(entry),
+		content: entry.content,
+		deliveryState: entry.state === 'failed' ? 'error' : 'queued',
+		deliveryDetail: entry.lastError
+	};
+}
+
+/** Reflect an entry's delivery state in its UI projection: the pending bubble
+ *  for text sends, the target's optimistic edit for kind-1010 intents. */
+function projectDeliveryState(
+	entry: StoredChatOutboxRecord,
+	patch: {
+		deliveryState: UiChatMessage['deliveryState'];
+		deliveryDetail?: string;
+		eventId?: string;
+	}
+) {
+	if (isEditEntry(entry)) {
+		updatePendingEdit(entry.groupId, bubbleId(entry), (edit) => ({
+			...edit,
+			deliveryState: patch.deliveryState,
+			deliveryDetail: patch.deliveryDetail
+		}));
+		return;
+	}
+	updatePendingMessage(entry.groupId, bubbleId(entry), (message) => ({ ...message, ...patch }));
+}
+
+function dropProjection(entry: StoredChatOutboxRecord) {
+	if (isEditEntry(entry)) {
+		removePendingEdit(entry.groupId, bubbleId(entry));
+		return;
+	}
+	removePendingMessage(entry.groupId, bubbleId(entry));
+}
+
 function isConfirmedDelivered(entry: StoredChatOutboxRecord): boolean {
 	if (!entry.attemptedEventId) return false;
 	return listChatGroupMessages(entry.groupId).some(
@@ -157,7 +214,7 @@ async function dropEntry(entry: StoredChatOutboxRecord): Promise<void> {
 	// UI removal BEFORE the awaited storage delete: the confirmed copy is
 	// already reactive in the message store at this point, and any await in
 	// between renders both rows (visible jump) before the bubble disappears.
-	removePendingMessage(entry.groupId, bubbleId(entry));
+	dropProjection(entry);
 	const storage = await getChatStorage();
 	await storage.deleteOutboxEntry(entry.seq);
 }
@@ -197,6 +254,34 @@ export function enqueueTextMessage(input: {
 	void persistEntry(entry).then(() => requestDrain());
 }
 
+/** Queue an edit of an existing message. Same durable intent as text sends:
+ *  persisted BEFORE any network attempt, drains FIFO with the group's other
+ *  sends (MLS order), retries with the same event id. Unlike text it projects
+ *  as the optimistic text swap + delivery clock on the TARGET message instead
+ *  of a pending bubble. */
+export function enqueueEditMessage(input: {
+	groupId: string;
+	target: MessageTarget;
+	content: string;
+	tags?: string[][];
+}): void {
+	const ownerPubkey = activePubkey();
+	if (!ownerPubkey) return;
+	const entry: StoredChatOutboxRecord = {
+		seq: nextSeq(),
+		groupId: input.groupId,
+		ownerPubkey,
+		content: input.content,
+		tags: createEditMessageTags(input.target, input.tags),
+		kind: ChatKinds.Edit,
+		createdAt: Date.now(),
+		state: 'queued',
+		attempts: 0
+	};
+	addPendingEdit(input.groupId, outboxEntryToPendingEdit(entry));
+	void persistEntry(entry).then(() => requestDrain());
+}
+
 /** User tapped a failed pending bubble: reset backoff and retry immediately. */
 export function retryOutboxEntry(id: string): void {
 	if (!id.startsWith(OUTBOX_ID_PREFIX)) return;
@@ -206,11 +291,7 @@ export function retryOutboxEntry(id: string): void {
 	entry.attempts = 0;
 	entry.lastAttemptAt = undefined;
 	entry.lastError = undefined;
-	updatePendingMessage(entry.groupId, bubbleId(entry), (message) => ({
-		...message,
-		deliveryState: 'queued',
-		deliveryDetail: undefined
-	}));
+	projectDeliveryState(entry, { deliveryState: 'queued', deliveryDetail: undefined });
 	void persistEntry(entry).then(() => requestDrain());
 }
 
@@ -228,10 +309,7 @@ export function discardOutboxEntry(id: string): void {
 type AttemptOutcome = 'sent' | 'transient' | 'definitive' | 'abort';
 
 async function attemptEntry(entry: StoredChatOutboxRecord): Promise<AttemptOutcome> {
-	updatePendingMessage(entry.groupId, bubbleId(entry), (message) => ({
-		...message,
-		deliveryState: 'sending'
-	}));
+	projectDeliveryState(entry, { deliveryState: 'sending' });
 	try {
 		await sendChatGroupMessage({
 			groupId: entry.groupId,
@@ -253,11 +331,7 @@ async function attemptEntry(entry: StoredChatOutboxRecord): Promise<AttemptOutco
 				entry.attemptedEventId = eventId;
 				entry.state = 'ambiguous';
 				await persistEntry(entry);
-				updatePendingMessage(entry.groupId, bubbleId(entry), (message) => ({
-					...message,
-					eventId,
-					deliveryState: 'sending'
-				}));
+				projectDeliveryState(entry, { deliveryState: 'sending', eventId });
 			}
 		});
 		return 'sent';
@@ -266,10 +340,7 @@ async function attemptEntry(entry: StoredChatOutboxRecord): Promise<AttemptOutco
 		if (isDefinitiveFailure(error)) {
 			entry.state = 'failed';
 			await persistEntry(entry);
-			updatePendingMessage(entry.groupId, bubbleId(entry), (message) => ({
-				...message,
-				deliveryState: 'error'
-			}));
+			projectDeliveryState(entry, { deliveryState: 'error' });
 			return 'definitive';
 		}
 		// ponytail: a transient failure where the per-group confirm could not
@@ -282,11 +353,7 @@ async function attemptEntry(entry: StoredChatOutboxRecord): Promise<AttemptOutco
 		entry.state = isAmbiguousTimeout(error) ? 'ambiguous' : 'queued';
 		entry.lastError = errorMessage(error);
 		await persistEntry(entry);
-		updatePendingMessage(entry.groupId, bubbleId(entry), (message) => ({
-			...message,
-			deliveryState: 'queued',
-			deliveryDetail: entry.lastError
-		}));
+		projectDeliveryState(entry, { deliveryState: 'queued', deliveryDetail: entry.lastError });
 		return 'transient';
 	}
 }
@@ -308,10 +375,7 @@ async function drainGroupLane(
 		for (const entry of groupEntries) {
 			entry.state = 'failed';
 			await persistEntry(entry);
-			updatePendingMessage(groupId, bubbleId(entry), (message) => ({
-				...message,
-				deliveryState: 'error'
-			}));
+			projectDeliveryState(entry, { deliveryState: 'error' });
 		}
 		return;
 	}
@@ -488,6 +552,7 @@ export async function hydrateOutbox(): Promise<void> {
 	const storage = await getChatStorage();
 	if (!ownerPubkey) {
 		replaceAllPending({});
+		replaceAllPendingEdits({});
 		entriesBySeq.clear();
 		return;
 	}
@@ -497,10 +562,16 @@ export async function hydrateOutbox(): Promise<void> {
 	entriesBySeq.clear();
 	for (const entry of entries) entriesBySeq.set(entry.seq, entry);
 	const record: Record<string, UiChatMessage[]> = {};
+	const editRecord: Record<string, PendingEdit[]> = {};
 	for (const entry of entries) {
+		if (isEditEntry(entry)) {
+			(editRecord[entry.groupId] ??= []).push(outboxEntryToPendingEdit(entry));
+			continue;
+		}
 		(record[entry.groupId] ??= []).push(outboxEntryToChatMessage(entry));
 	}
 	replaceAllPending(record);
+	replaceAllPendingEdits(editRecord);
 }
 
 if (browser) {

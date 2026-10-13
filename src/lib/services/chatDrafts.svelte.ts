@@ -27,9 +27,12 @@ export function setChatDraftEdit(
 	groupId: string,
 	edit: { target: MessageTarget; preview: string } | null
 ): void {
+	const current = draftEdits.get(groupId);
 	if (edit === null) {
 		draftEdits.delete(groupId);
-	} else {
+	} else if (current?.target !== edit.target || current.preview !== edit.preview) {
+		// Same value must not dirty the map — the save effect re-wraps in a fresh
+		// object every run, and an unconditional set here fed an effect loop.
 		draftEdits.set(groupId, edit);
 	}
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import ChatComposer from './ChatComposer.svelte';
 	import ChatHeader from './ChatHeader.svelte';
 	import ChatMessageList from './ChatMessageList.svelte';
@@ -73,12 +74,15 @@
 	} from '$lib/services/chatDrafts.svelte';
 	import {
 		addPendingMessage,
+		getPendingEdits,
 		getPendingMessages,
 		removePendingMessage,
-		updatePendingMessage
+		updatePendingMessage,
+		type PendingEdit
 	} from '$lib/services/chatOutbox.svelte';
 	import {
 		discardOutboxEntry,
+		enqueueEditMessage,
 		enqueueTextMessage,
 		OUTBOX_ID_PREFIX,
 		retryOutboxEntry
@@ -94,17 +98,26 @@
 
 	let draft = $state('');
 
+	// Restore per-group composer state on mount and group change ONLY — the map
+	// reads are untracked on purpose. The save effect below writes these maps on
+	// every state change, and a restore that re-ran on those writes would assign
+	// fresh references (e.g. the empty mentions array) straight back into the
+	// saved state: a save→restore→save effect loop that froze the UI whenever an
+	// edit was armed.
 	$effect(() => {
-		draft = getChatDraft(groupId);
-		// The armed reply, the in-progress edit and the picked mentions are
-		// per-group like the draft: switching away and back must not drop them,
-		// and a mid-composition remount must not silently turn an edit into a new
-		// message (the reset effect below handles the other composer state).
-		replyTarget = getChatDraftReply(groupId);
-		const edit = getChatDraftEdit(groupId);
-		editTarget = edit?.target ?? null;
-		editPreview = edit?.preview ?? '';
-		selectedMentions = getChatDraftMentions(groupId);
+		void groupId;
+		untrack(() => {
+			draft = getChatDraft(groupId);
+			// The armed reply, the in-progress edit and the picked mentions are
+			// per-group like the draft: switching away and back must not drop them,
+			// and a mid-composition remount must not silently turn an edit into a new
+			// message (the reset effect below handles the other composer state).
+			replyTarget = getChatDraftReply(groupId);
+			const edit = getChatDraftEdit(groupId);
+			editTarget = edit?.target ?? null;
+			editPreview = edit?.preview ?? '';
+			selectedMentions = getChatDraftMentions(groupId);
+		});
 	});
 
 	$effect(() => {
@@ -121,10 +134,9 @@
 	let replyTarget = $state<ChatMessageReplyTarget | null>(null);
 	let editTarget = $state<MessageTarget | null>(null);
 	let editPreview = $state('');
-	let optimisticEdits = $state<Record<string, string>>({});
 	let optimisticDeletes = $state<Record<string, boolean>>({});
 	// Pending reactions, keyed by target eventId → emojis (optimistic overlay, like
-	// optimisticEdits/Deletes: cleared on failure, superseded by the stored
+	// optimisticDeletes: cleared on failure, superseded by the stored
 	// kind-Reaction message on success — the fold's author-set union makes the
 	// overlap window a no-op). Not a row, so the outbox is the wrong home.
 	let optimisticReactions = $state<Record<string, string[]>>({});
@@ -239,19 +251,6 @@
 		updatePendingMessage(groupId, messageId, updater);
 	}
 
-	function setOptimisticEdit(messageId: string, content: string) {
-		optimisticEdits = {
-			...optimisticEdits,
-			[messageId]: content
-		};
-	}
-
-	function clearOptimisticEdit(messageId: string) {
-		const next = { ...optimisticEdits };
-		delete next[messageId];
-		optimisticEdits = next;
-	}
-
 	function setOptimisticDelete(messageId: string) {
 		optimisticDeletes = {
 			...optimisticDeletes,
@@ -277,7 +276,6 @@
 	$effect(() => {
 		void groupId;
 		sendError = '';
-		optimisticEdits = {};
 		optimisticDeletes = {};
 		optimisticReactions = {};
 		optimisticReactionRemovals = {};
@@ -310,6 +308,13 @@
 
 		// Reads reactive module state, so toggling the setting applies instantly.
 		const reactionMarkers = getShowReactionMarkers();
+		// Queued edits (durable outbox intents) overlay their target message: the
+		// newest one's content is the optimistic text swap, its delivery state the
+		// clock/tooltip/retry affordance on that message.
+		const pendingEditByTarget = new Map<string, PendingEdit>();
+		for (const pendingEdit of getPendingEdits(groupId)) {
+			pendingEditByTarget.set(pendingEdit.targetId, pendingEdit);
+		}
 		const confirmedMessages = storedMessages
 			.filter((message) =>
 				message.kind === ChatKinds.Reaction ? reactionMarkers : !isStreamHiddenKind(message.kind)
@@ -356,9 +361,11 @@
 				const threadReference = getMessageThreadReference(message.tags);
 				const replySource = threadReference ? byEventId.get(threadReference.parentId) : undefined;
 				const reactions = reactionMap.get(message.id);
-				const optimisticEdit = optimisticEdits[message.id];
-				const edit = editMap.get(message.id);
 				const deleted = Boolean(deletedIds.has(message.id) || optimisticDeletes[message.id]);
+				// Deleted rows hide their content, so their overlays go silent too —
+				// a pending edit's clock has no business on a removed message.
+				const pendingEdit = deleted ? undefined : pendingEditByTarget.get(message.id);
+				const edit = editMap.get(message.id);
 				const pinEntry = !deleted ? pinSet.get(message.id) : undefined;
 				const pinned = Boolean(pinEntry && pinEntry.op === 'add');
 
@@ -409,13 +416,16 @@
 					}
 				}
 
+				const view = toChatMessage(message);
 				return {
-					...toChatMessage(message),
-					text: deleted ? '' : (optimisticEdit ?? edit?.content ?? message.content),
+					...view,
+					deliveryState: pendingEdit?.deliveryState ?? view.deliveryState,
+					deliveryDetail: pendingEdit?.deliveryDetail,
+					text: deleted ? '' : (pendingEdit?.content ?? edit?.content ?? message.content),
 					deleted,
 					pinned,
 					pinnedBy: pinned ? pinEntry?.pinnedBy : undefined,
-					edited: !deleted && Boolean(optimisticEdit || edit),
+					edited: !deleted && Boolean(pendingEdit || edit),
 					reactions: reactionEntries,
 					replyTo: replySource
 						? buildReplyQuote({
@@ -423,7 +433,7 @@
 								author: replySource.sender,
 								content: deletedIds.has(replySource.id)
 									? ''
-									: (optimisticEdits[replySource.id] ??
+									: (pendingEditByTarget.get(replySource.id)?.content ??
 										editMap.get(replySource.id)?.content ??
 										replySource.content),
 								deleted: deletedIds.has(replySource.id),
@@ -491,21 +501,19 @@
 		if (editTarget) {
 			const serialized = serializeChatProfileMentions(draft.trim(), selectedMentions);
 			const currentEditTarget = editTarget;
-			setOptimisticEdit(currentEditTarget.id, serialized.content);
 			draft = '';
 			selectedMentions = [];
 			clearEditTarget();
 
-			await sendGroupMessageAction(
+			// Edits ride the durable outbox like text sends: the intent is
+			// persisted before any network attempt and drained when back online,
+			// projected as the optimistic text swap + clock on the target message.
+			enqueueEditMessage({
 				groupId,
-				serialized.content,
-				undefined,
-				undefined,
-				serialized.tags,
-				currentEditTarget
-			);
-			sendError = chatComposerActionsStore.error;
-			clearOptimisticEdit(currentEditTarget.id);
+				target: currentEditTarget,
+				content: serialized.content,
+				tags: serialized.tags
+			});
 			return;
 		}
 
@@ -763,6 +771,17 @@
 
 	async function handleRetrySend(message: ChatMessage) {
 		if (!group) return;
+
+		// A failed queued edit rides on its confirmed target message — retry its
+		// intent like any other failed send. Several failed edits on one target
+		// retry together (drained FIFO, so the newest content lands last).
+		const failedEdits = getPendingEdits(groupId).filter(
+			(edit) => edit.targetId === message.eventId && edit.deliveryState === 'error'
+		);
+		if (failedEdits.length > 0) {
+			for (const edit of failedEdits) retryOutboxEntry(edit.id);
+			return;
+		}
 
 		// Media sends can't be retried from the bubble: the original File isn't
 		// retained (only a preview URL), so a text-path retry would fire an empty

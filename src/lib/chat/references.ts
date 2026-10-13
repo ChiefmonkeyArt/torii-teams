@@ -108,7 +108,7 @@ function createReactionMessageTags(target: MessageTarget): string[][] {
 	];
 }
 
-function createEditMessageTags(target: MessageTarget, tags: string[][] = []): string[][] {
+export function createEditMessageTags(target: MessageTarget, tags: string[][] = []): string[][] {
 	return [
 		['e', target.id, '', target.pubkey],
 		['p', target.pubkey],

@@ -488,4 +488,54 @@ describe('offline outbox queue', () => {
 		expect(projection.getPendingMessages('g1')[0]?.text).toBe('offline-1');
 		expect(projection.getPendingMessages('g1')[0]?.deliveryState).toBe('queued');
 	});
+
+	test('queued edits survive a failed attempt and land as kind-1010 intents', async () => {
+		const { queue, storage, projection } = await freshModules();
+		mocks.sendMock.mockRejectedValue(new TypeError('fetch failed'));
+
+		queue.enqueueEditMessage({
+			groupId: 'g1',
+			target: { id: 'evt-target', pubkey: mocks.pubkey, kind: 9 },
+			content: 'new text',
+			tags: [['p', 'bb'.repeat(32)]]
+		});
+		await settleDrain(queue);
+
+		// The failed attempt must not lose the edit: the intent stays durable and
+		// the optimistic swap on its TARGET keeps the delivery state (no bubble).
+		const entries = await listEntries(storage);
+		expect(entries).toHaveLength(1);
+		expect(entries[0]).toMatchObject({ kind: 1010, content: 'new text', state: 'queued' });
+		expect(projection.getPendingMessages('g1')).toHaveLength(0);
+		expect(projection.getPendingEdits('g1')[0]).toMatchObject({
+			targetId: 'evt-target',
+			content: 'new text',
+			deliveryState: 'queued'
+		});
+
+		// Reload: the pending edit re-hydrates onto its target from storage.
+		projection.replaceAllPendingEdits({});
+		await queue.hydrateOutbox();
+		expect(projection.getPendingEdits('g1')[0]?.targetId).toBe('evt-target');
+
+		// User-tap retry posts the resolved edit event and drops the intent.
+		mocks.sendMock.mockImplementation(
+			async (input: { onSealed?: (id: string) => Promise<void> }) => {
+				if (input.onSealed) await input.onSealed('evt-edit-1');
+				return { cursor: 1, at: Date.now() };
+			}
+		);
+		queue.retryOutboxEntry(projection.getPendingEdits('g1')[0].id);
+		await settleDrain(queue);
+
+		expect(mocks.sendMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				kind: 1010,
+				content: 'new text',
+				tags: expect.arrayContaining([['e', 'evt-target', '', mocks.pubkey]])
+			})
+		);
+		expect(await listEntries(storage)).toHaveLength(0);
+		expect(projection.getPendingEdits('g1')).toHaveLength(0);
+	});
 });
