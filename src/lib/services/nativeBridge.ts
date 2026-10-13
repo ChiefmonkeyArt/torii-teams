@@ -90,7 +90,11 @@ export async function initNativeShell(): Promise<void> {
 
 	// Ask for notification permission once at launch through the check-first helper, so an earlier
 	// denial isn't re-prompted every cold start. Later notify attempts gate on the same helper.
-	void ensureNotificationPermission();
+	// The one-time battery-exemption ask chains behind it — never stack two system dialogs, and
+	// background reliability only matters once notifications are usable.
+	void ensureNotificationPermission().then((granted) => {
+		if (granted) void requestBatteryExemptionOnce();
+	});
 
 	// --- Phase 2/3: background delivery + sidecar ---
 	void applyDeliveryConfig();
@@ -280,6 +284,33 @@ export async function ensureNotificationPermission(): Promise<boolean> {
 	if (!('Notification' in window)) return false;
 	if (Notification.permission !== 'default') return Notification.permission === 'granted';
 	return (await Notification.requestPermission()) === 'granted';
+}
+
+/**
+ * Marks the one-time Doze-exemption ask at launch (mirrors the `cordn.deliveryMode` convention).
+ * Stores the ask time so the chat-page reminder banner can tell "asked earlier" from "asked this
+ * session" and stay quiet right after the system dialog.
+ */
+export const BATTERY_EXEMPTION_ASKED_KEY = 'cordn.batteryPromptShown';
+
+/**
+ * One-time Doze-exemption ask at launch (Android only). Aggressive OEM battery management silently
+ * pauses the background poll — the main source of "notifications aren't reliable" reports — and
+ * `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` is a single system dialog that opts Cordn out.
+ * Asked at most once ever (flag set once the dialog opens), so a denial is never re-nagged and the
+ * Settings → Notifications page stays the manual path. Already-exempted devices skip without
+ * setting the flag, so a later revocation can prompt again on the next launch.
+ */
+async function requestBatteryExemptionOnce(): Promise<void> {
+	if (!isAndroidNative()) return;
+	try {
+		if (localStorage.getItem(BATTERY_EXEMPTION_ASKED_KEY)) return;
+		if ((await CordnBackground.isBatteryExempted()).exempted) return;
+		await CordnBackground.requestBatteryExemption();
+		localStorage.setItem(BATTERY_EXEMPTION_ASKED_KEY, String(Date.now()));
+	} catch {
+		// plugin unavailable or the dialog failed to open — retry on a later launch
+	}
 }
 
 export async function showLocalNotification(n: ChatLocalNotification): Promise<void> {

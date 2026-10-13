@@ -39,6 +39,7 @@
 	let panStart: { x: number; y: number; tx: number; ty: number } | null = null;
 	let gestureMoved = false;
 	let gestureOnImage = false;
+	let pressStartedOnBackdrop = false;
 	let gestureStartX = 0;
 	let gestureStartY = 0;
 	let lastTap: { at: number; x: number; y: number } | null = null;
@@ -133,6 +134,13 @@
 	}
 
 	function onPointerDown(event: PointerEvent) {
+		// Toolbar presses keep their native click: the pointer capture below retargets pointerup
+		// (and thus click) to the backdrop, which swallowed the button's own handler and made every
+		// toolbar press look like an outside click that closed the overlay.
+		if ((event.target as HTMLElement).closest('.lightbox-btn')) return;
+		// Pre-capture target is honest about where the press landed — later pointerup/click events
+		// are retargeted to the backdrop for captured gestures.
+		pressStartedOnBackdrop = event.target === event.currentTarget;
 		pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
 		(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
 		if (pointers.size === 1) {
@@ -189,6 +197,9 @@
 	}
 
 	function onPointerUp(event: PointerEvent) {
+		// Untracked pointers (toolbar presses skip onPointerDown) must not touch gesture state:
+		// their release would otherwise reach the double-tap bookkeeping with stale state.
+		if (!pointers.has(event.pointerId)) return;
 		pointers.delete(event.pointerId);
 		gestureStart = null;
 
@@ -241,8 +252,10 @@
 		aria-label="Image preview"
 		tabindex="-1"
 		onclick={(event) => {
-			// Only the backdrop itself closes; clicks on the image/toolbar are not it.
-			if (event.target === event.currentTarget) closeMediaLightbox();
+			// Only the backdrop itself closes; clicks on the image/toolbar are not it. The press must
+			// also have STARTED on the backdrop — pointer capture retargets the click here even for
+			// presses on the image, which must not close either.
+			if (pressStartedOnBackdrop && event.target === event.currentTarget) closeMediaLightbox();
 		}}
 		onkeydown={(event) => {
 			if (event.key === 'Escape') closeMediaLightbox();

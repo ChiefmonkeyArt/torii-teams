@@ -98,6 +98,13 @@ const newsReleases: NewsRelease[] = [
 		body: "- ✨ Press + next to the message box and choose Poll to ask the group anything: write a question, add two to ten options, decide whether people pick just one or as many as they like, and set an end time — from an hour up to a week, or no deadline at all.\n- ✨ Voting is one tap on an option, and the poll fills in its own results as they come in: every option grows a bar with its count, and opening the poll's details shows exactly who picked what.\n- 🔄 Changed your mind? Tap a different option while the poll is open — your latest pick is the one that counts, one vote per person. When the deadline passes, the poll marks itself closed and its options lock."
 	},
 	{
+		id: 'cordn-news-2026-10-13-reliable-notifications',
+		createdAt: Date.UTC(2026, 9, 13),
+		version: 1,
+		title: 'Notifications that keep coming, and a steadier chat',
+		body: "- 🐛 Notifications arrive more reliably on Android. Many phones pause apps in the background to save battery, and that is what made Cordn's notifications stop or come late. Cordn now asks just once, at launch, for permission to keep running in the background — answering “Allow” is all it takes. You can still change your mind later in Settings → Notifications.\n- ✨ If notifications are turned on but that background permission is still missing, a small reminder now appears above your chats. Tap “Allow background” to fix it in one step, or dismiss the reminder once and it never comes back.\n- 🐛 Writing a message with several lines no longer makes the chat above jump around as you type.\n- 🐛 Sharing into a group and pressing back no longer bounces you between the “Share to…” screen and the chat over and over — back now leaves the app, like you expect.\n- 🐛 The image preview on desktop is usable again: the zoom buttons zoom instead of closing the preview, and clicking the photo no longer closes it either."
+	},
+	{
 		id: 'cordn-news-2026-10-12-coordinator-relay-refresh',
 		createdAt: Date.UTC(2026, 9, 12),
 		version: 4,

@@ -35,7 +35,10 @@
 		// a same-URL goto is a no-op so onMount won't re-run. Rare enough for v1; re-share works
 		// on cold start and on foreground-from-any-other-page.
 		if (!shareText?.trim()) {
-			void goto(resolve('/chat'));
+			// replaceState (not push): the picker is a transient handoff and must never stay in the
+			// back stack. A pushed entry makes hardware back re-mount the picker, which redirects
+			// again — and the pushed redirect bounces picker ↔ chat forever instead of leaving the app.
+			void goto(resolve('/chat'), { replaceState: true });
 		}
 	});
 
@@ -48,11 +51,16 @@
 		return resolve('/chat/[id]', { id: groupRouteId(groupId) });
 	}
 
-	// Drop the shared text into the target group's draft. The <a href> then navigates; ChatShell
-	// reads getChatDraft(groupId) on mount, so the shared text lands in the composer for review.
-	function selectGroup(groupId: string) {
+	// Drop the shared text into the target group's draft, then open the group with a history REPLACE
+	// (ChatShell reads getChatDraft(groupId) on mount, so the shared text lands in the composer for
+	// review). Same invariant as the redirect above: the picker never sits behind the chat in the
+	// back stack, so back from the opened group heads out of the app instead of returning to a
+	// stale "Share to…" screen.
+	function selectGroup(event: MouseEvent, groupId: string) {
+		event.preventDefault();
 		if (!shareText) return;
 		setChatDraft(groupId, shareText);
+		void goto(getGroupHref(groupId), { replaceState: true });
 	}
 </script>
 
@@ -120,7 +128,7 @@
 									preview={summary.preview}
 									unreadCount={summary.unreadCount}
 									unreadReferenceCount={summary.unreadReferenceCount}
-									onclick={() => selectGroup(group.id)}
+									onclick={(event) => selectGroup(event, group.id)}
 								/>
 							{/each}
 						</Card.Content>
