@@ -18,7 +18,13 @@ export const ChatKinds = {
 	Deletion: 5,
 	/** Group-scoped pin/unpin of an existing message. Carries an `op` tag
 	 *  (`add` | `remove`); the active pin set is derived last-write-wins. */
-	Pin: 1011
+	Pin: 1011,
+	/** NIP-88 poll: `content` = question, `option`/`polltype`/`endsAt` tags.
+	 *  See `src/lib/chat/polls.ts`. */
+	Poll: 1068,
+	/** NIP-88 poll response: `response` tags select option ids of the poll in
+	 *  its `e` tag. Never renders as a row — it is the poll's sparse aggregate. */
+	PollResponse: 1018
 } as const;
 
 /** Annotation kinds never render as a row — they mutate a primary message
@@ -36,4 +42,11 @@ export function isAnnotationKind(kind: number): boolean {
 
 export function isSystemKind(kind: number): boolean {
 	return kind === SYSTEM_MESSAGE_KIND;
+}
+
+/** Kinds that never render as a stream row: annotation kinds plus
+ *  kind-specific sparse aggregates (poll responses) that only feed their
+ *  owning kind's renderer via a self-query. */
+export function isStreamHiddenKind(kind: number): boolean {
+	return isAnnotationKind(kind) || kind === ChatKinds.PollResponse;
 }

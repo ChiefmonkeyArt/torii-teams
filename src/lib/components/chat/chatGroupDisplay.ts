@@ -4,7 +4,7 @@ import type {
 	StoredChatMessage,
 	StoredChatSystemMessageData
 } from '$lib/services/chatGroupMessages.svelte';
-import { SYSTEM_MESSAGE_KIND } from '$lib/chat/kinds';
+import { ChatKinds, SYSTEM_MESSAGE_KIND } from '$lib/chat/kinds';
 import { findImetaTag, type MediaReference } from '$lib/services/chatMediaCipher';
 import { parseChatProfileMentions } from '$lib/services/chatMentions';
 import { normalizePubKey } from '$lib/utils';
@@ -53,6 +53,12 @@ export function getChatMessagePreviewText(message: StoredChatMessage): string {
 	const body = message.content?.replace(/\s+/g, ' ').trim() ?? '';
 	if (message.kind === SYSTEM_MESSAGE_KIND) {
 		return getSystemMessagePreviewText(message.content);
+	}
+	if (message.kind === ChatKinds.Poll) {
+		return `📊 Poll: ${body}`;
+	}
+	if (message.kind === ChatKinds.PollResponse) {
+		return '🗳️ Voted';
 	}
 	const media = findImetaTag(message.tags ?? []);
 	if (!media) return body;

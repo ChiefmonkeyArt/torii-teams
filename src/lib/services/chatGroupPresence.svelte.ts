@@ -6,7 +6,7 @@ import {
 	listChatGroups,
 	type StoredChatGroup
 } from '$lib/services/chatGroups.svelte';
-import { SYSTEM_MESSAGE_KIND, isAnnotationKind } from '$lib/chat/kinds';
+import { SYSTEM_MESSAGE_KIND, isStreamHiddenKind } from '$lib/chat/kinds';
 import type { StoredChatMessage } from '$lib/services/chatGroupMessages.svelte';
 import { chatMessageReferencesPubkey } from '$lib/services/chatMentions';
 import { getChatMessagePreviewText } from '$lib/components/chat/chatGroupDisplay';
@@ -189,15 +189,18 @@ export function listUnreadChatGroupReferenceTargets(groupId: string, pubkey: str
 			message.sender !== pubkey &&
 			chatMessageReferencesPubkey(message.tags, pubkey)
 	);
-	// Resolving reply/reaction targets needs the byEventId map (a full-history
-	// allocation); plain mentions don't, and they are the common case.
-	if (!references.some((message) => isAnnotationKind(message.kind))) {
+	// Resolving annotation/poll-response targets needs the byEventId map (a
+	// full-history allocation); plain mentions don't, and they are the common
+	// case. Hidden aggregate kinds (poll votes) attach to their `e`-tagged row
+	// like annotations do — their own rows never render, so a self-target would
+	// never clear via the visibility pass.
+	if (!references.some((message) => isStreamHiddenKind(message.kind))) {
 		return references.map((message) => ({ reference: message, target: message }));
 	}
 	const byEventId = new Map(messages.map((message) => [message.id, message]));
 
 	return references.map((message) => {
-		if (!isAnnotationKind(message.kind)) {
+		if (!isStreamHiddenKind(message.kind)) {
 			return { reference: message, target: message };
 		}
 

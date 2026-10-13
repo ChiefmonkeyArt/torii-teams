@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
+import { ChatKinds } from '$lib/chat/kinds';
 import type { StoredChatGroup } from './chatGroups.svelte';
 
 const groups = vi.hoisted(() => new Map<string, StoredChatGroup>());
@@ -253,5 +254,53 @@ describe('chat group presence unread scans', () => {
 		expect(targets).toHaveLength(1);
 		expect(targets[0]?.reference.id).toBe(`${id}-reaction`);
 		expect(targets[0]?.target.id).toBe(`${id}-target`);
+	});
+
+	test('unread reference targets attach poll votes to the poll row', () => {
+		// Vote rows are hidden aggregates (never rendered), so their references
+		// must resolve to the poll row — that is what the visibility pass clears.
+		const id = 'presence-poll';
+		groups.set(id, {
+			id,
+			coordinatorKey: 'aa'.repeat(32),
+			createdAt: 1,
+			stateBase64: '',
+			lastCursor: 20,
+			fetchCursor: 20,
+			messages: [
+				{
+					cursor: 10,
+					createdAt: 10,
+					direction: 'inbound' as const,
+					sender: MEMBER,
+					id: `${id}-poll`,
+					kind: ChatKinds.Poll,
+					tags: [['option', '0', 'Yay']],
+					content: 'Pineapple on pizza?'
+				},
+				{
+					cursor: 20,
+					createdAt: 20,
+					direction: 'inbound' as const,
+					sender: MEMBER,
+					id: `${id}-vote`,
+					kind: ChatKinds.PollResponse,
+					tags: [
+						['e', `${id}-poll`],
+						['p', MENTIONED],
+						['response', '0']
+					],
+					content: ''
+				}
+			],
+			syncIssues: [],
+			snapshots: [],
+			joinEpoch: 0n,
+			status: 'active'
+		});
+		const targets = listUnreadChatGroupReferenceTargets(id, MENTIONED);
+		expect(targets).toHaveLength(1);
+		expect(targets[0]?.reference.id).toBe(`${id}-vote`);
+		expect(targets[0]?.target.id).toBe(`${id}-poll`);
 	});
 });

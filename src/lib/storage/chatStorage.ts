@@ -138,6 +138,9 @@ export interface StoredChatOutboxRecord {
 	content: string;
 	tags: string[][];
 	replyTo?: ChatMessageReplyTarget;
+	/** Resolved event kind of the intent (polls enqueue as kind 1068).
+	 *  Absent = resolve as Text/ThreadReply from content + replyTo, as before. */
+	kind?: number;
 	createdAt: number;
 	state: StoredChatOutboxState;
 	/** Event id of the most recent MLS sealing of this intent (set before post). */
