@@ -45,6 +45,7 @@ describe('mergeAdjacentReactionMarkers', () => {
 		expect(result[1].id).toBe('r1'); // stable key from the first member
 		expect(result[1].createdAt).toBe(12); // recency from the last member
 		expect(result[1].reactionSenders).toEqual(['pk-r1', 'pk-r2', 'pk-r3']);
+		expect(result[1].reactionItems?.map((entry) => entry.id)).toEqual(['r1', 'r2', 'r3']);
 	});
 
 	it('does not merge across a message or across targets', () => {
@@ -89,6 +90,7 @@ describe('mergeAdjacentReactionMarkers', () => {
 		expect(result[1].createdAt).toBe(12); // recency from the last member
 		expect(result[1].reactionSenders).toEqual(['pk-bob']);
 		expect(result[1].reactionEmojis).toEqual(['👍', '❤️']);
+		expect(result[1].reactionItems?.map((entry) => entry.id)).toEqual(['r1', 'r2', 'r3']);
 	});
 
 	it('keeps different senders on different targets as separate rows', () => {
@@ -167,5 +169,6 @@ describe('foldReactionMarkers', () => {
 		expect(result.map((entry) => entry.id)).toEqual(['t', 'r1']);
 		expect(result[1].reactionTarget).toBe('x');
 		expect(result[1].reactionSenders).toEqual(['pk-bob']);
+		expect(result[1].reactionItems?.map((entry) => entry.id)).toEqual(['r1', 'r2']);
 	});
 });

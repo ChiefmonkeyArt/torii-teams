@@ -44,6 +44,9 @@ export interface ChatMessage {
 	reactionEmojis?: string[];
 	/** Reaction marker only: distinct reactor pubkeys, in arrival order. */
 	reactionSenders?: string[];
+	/** Reaction marker only: the member rows folded into this summary (merged
+	 *  rows only). Each keeps its own target for its honest see icon. */
+	reactionItems?: ChatMessage[];
 	/** Media attachment. Optimistic/draft messages carry a local plaintext
 	 *  `previewUrl` (shown immediately during upload); confirmed messages leave
 	 *  this undefined and resolve the `imeta` lazily via the encrypted-media

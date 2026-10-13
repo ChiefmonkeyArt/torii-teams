@@ -27,6 +27,9 @@
 	import { profileDisplayName } from '$lib/utils/profileName';
 	import { nip19 } from 'nostr-tools';
 	import Check from '@lucide/svelte/icons/check';
+	import ChevronDown from '@lucide/svelte/icons/chevron-down';
+	import ChevronUp from '@lucide/svelte/icons/chevron-up';
+	import Eye from '@lucide/svelte/icons/eye';
 	import Clock from '@lucide/svelte/icons/clock';
 	import Copy from '@lucide/svelte/icons/copy';
 	import Download from '@lucide/svelte/icons/download';
@@ -102,6 +105,7 @@
 		highlighted?: boolean;
 	} = $props();
 	let reactionMenuOpen = $state(false);
+	let reactionGroupOpen = $state(false);
 	let actionsMenuOpen = $state(false);
 	let customReactionOpen = $state(false);
 	let customReaction = $state('');
@@ -564,14 +568,29 @@
 					reacted
 					{#each emojis.slice(0, 3) as emoji (emoji)}{emoji}{/each}
 					{#if emojis.length > 3}…{/if}
-					{#if message.reactionTarget}
+					{#if (message.reactionItems?.length ?? 0) > 1}
 						<button
 							type="button"
-							class="ml-1 rounded-sm text-xs font-medium text-primary hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+							class="ml-1 inline-flex items-center rounded-sm text-primary hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+							onclick={() => (reactionGroupOpen = !reactionGroupOpen)}
+							aria-expanded={reactionGroupOpen}
+							aria-label={reactionGroupOpen ? 'Hide grouped reactions' : 'Show grouped reactions'}
+						>
+							{#if reactionGroupOpen}
+								<ChevronUp class="size-3" />
+							{:else}
+								<ChevronDown class="size-3" />
+							{/if}
+						</button>
+					{:else if message.reactionTarget}
+						<button
+							type="button"
+							class="ml-1 inline-flex items-center rounded-sm text-primary hover:underline focus-visible:ring-2 focus-visible:ring-ring"
 							onclick={() => onNavigateToMessage(message.reactionTarget!)}
 							aria-label="See the reacted message"
+							title="See the reacted message"
 						>
-							See
+							<Eye class="size-3" />
 						</button>
 					{/if}
 				{/if}
@@ -580,6 +599,30 @@
 				</span>
 			</Marker.Content>
 		</Marker.Root>
+		{#if reactionGroupOpen && (message.reactionItems?.length ?? 0) > 1}
+			<div class="flex flex-col gap-0.5 py-0.5 pl-10">
+				{#each message.reactionItems ?? [] as item (item.id)}
+					<div class="flex items-center gap-1.5 text-xs text-muted-foreground">
+						<MarkerName pubkey={item.reactionSenders?.[0] ?? item.author} />
+						<span>reacted {item.reactionEmojis?.[0] ?? ''}</span>
+						{#if item.reactionTarget}
+							<button
+								type="button"
+								class="inline-flex items-center rounded-sm text-primary hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+								onclick={() => onNavigateToMessage(item.reactionTarget!)}
+								aria-label="See the reacted message"
+								title="See the reacted message"
+							>
+								<Eye class="size-3" />
+							</button>
+						{/if}
+						<span class="text-[10px] whitespace-nowrap text-muted-foreground/50">
+							{item.timeLabel}
+						</span>
+					</div>
+				{/each}
+			</div>
+		{/if}
 	{:else}
 		<article class="flex min-w-0 items-end gap-2 sm:gap-3" class:flex-row-reverse={isOwn}>
 			<div class="flex h-8 w-8 shrink-0 items-end" class:justify-end={isOwn}>

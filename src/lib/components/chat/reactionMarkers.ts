@@ -19,10 +19,11 @@ export function foldReactionMarkers(rows: ChatMessage[]): ChatMessage[] {
  * keep the span position the run occupied in the sorted array; the merged
  * row's id comes from the FIRST member (stable virtualizer key when the run
  * grows at its end) while createdAt and timeLabel reflect the LAST member
- * (most recent activity), and the See target stays the FIRST member's so a
- * growing run keeps its jump target.
+ * (most recent activity). The merged row keeps its members in `reactionItems`
+ * (first to last) so the UI can expand the summary and give each member its
+ * own jump to its own target.
  *
- * Rows without a target never merge — each keeps its own row (no See button).
+ * Rows without a target never merge — each keeps its own row (no jump offered).
  */
 export function mergeAdjacentReactionMarkers(rows: ChatMessage[]): ChatMessage[] {
 	const out: ChatMessage[] = [];
@@ -46,7 +47,8 @@ export function mergeAdjacentReactionMarkers(rows: ChatMessage[]): ChatMessage[]
 				],
 				reactionSenders: [
 					...new Set([...(previous.reactionSenders ?? []), ...(row.reactionSenders ?? [])])
-				]
+				],
+				reactionItems: [...(previous.reactionItems ?? [previous]), row]
 			};
 			continue;
 		}
