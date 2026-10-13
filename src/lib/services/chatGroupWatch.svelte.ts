@@ -447,6 +447,21 @@ function groupWatchableGroupsByCoordinator(groups: WatchableGroup[]) {
 	return groupsByCoordinator;
 }
 
+/**
+ * Stable identity of the watchable set (account + group ids + coordinators).
+ * The chat layout's ensure-watch effect keys on this, so the per-ingest store
+ * writes that refresh its `groups` derived don't each schedule an ensure tick.
+ * Cursor changes are excluded on purpose: a start reads the live cursor, and a
+ * suppressed ensure is healed by the heartbeat / foreground / failure ticks.
+ */
+export function watchableGroupsSignature(): string {
+	const account = manager.getActive();
+	const groups = getWatchableGroups({ includeCurrentWatches: true });
+	if (!account || groups.length === 0) return '';
+	const parts = groups.map((group) => `${group.id}:${group.coordinatorKey}`);
+	return `${account.id}|${parts.join(',')}`;
+}
+
 function createWatchBuffer(input: {
 	groupId: string;
 	isClosing: () => boolean;

@@ -24,7 +24,10 @@
 	import { chatReconnectStatusStore } from '$lib/services/chatReconnectStatus.svelte';
 	import { signerReadinessStore } from '$lib/services/signerReadiness.svelte';
 	import { listChatGroups } from '$lib/services/chatGroups.svelte';
-	import { startWatchingAllGroups } from '$lib/services/chatGroupWatch.svelte';
+	import {
+		startWatchingAllGroups,
+		watchableGroupsSignature
+	} from '$lib/services/chatGroupWatch.svelte';
 	import {
 		reconcilePublishedKeyPackagesForActiveAccount as reconcileKeyPackages,
 		shouldReconcilePublishedKeyPackages
@@ -57,10 +60,13 @@
 	let startupSyncedFor = $state('');
 
 	// Steady-state watch driver: ensure every watchable group is watched whenever
-	// the account or the group set changes (initial load, new/accepted groups).
-	// Reconnection and recovery are owned by chatGroupWatch.svelte's reconciler.
+	// the account or the watchable set changes (initial load, new/accepted groups).
+	// Keyed on the set's signature so the per-ingest store writes behind `groups`
+	// don't each schedule an ensure tick. Reconnection and recovery are owned by
+	// chatGroupWatch.svelte's reconciler.
+	const watchableKey = $derived(watchableGroupsSignature());
 	$effect(() => {
-		if (!$activeAccount || groups.length === 0) return;
+		if (!$activeAccount || !watchableKey) return;
 		void untrack(() => startWatchingAllGroups());
 	});
 

@@ -29,7 +29,8 @@ import { getUnreadNewsCount } from '$lib/news/newsReadState.svelte';
 import {
 	getChatGroup,
 	listChatGroupMembers,
-	listChatGroups
+	listChatGroups,
+	type StoredChatGroup
 } from '$lib/services/chatGroups.svelte';
 import { samePubKey } from '$lib/utils';
 import { activeGroupId } from '$lib/utils/groupShareLink';
@@ -173,9 +174,13 @@ async function resolveProfileHint(pubkey: string): Promise<ProfileContent | unde
 
 export async function notifyForUnreadChatMessages() {
 	if (!browser) return;
-	if (!(await ensureNotificationPermission())) return;
 
 	const activePubkey = manager.active?.pubkey;
+	// Cheap pre-pass: seed never-seen groups and collect the ones with new
+	// cursors. This runs per ingested batch (the chat layout effect), so the
+	// permission gate — a native bridge call — must not run when there is
+	// nothing to notify.
+	const pending: Array<{ group: StoredChatGroup; previousCursor: number }> = [];
 	for (const group of listChatGroups()) {
 		const previousCursor = notificationState.lastProcessedCursorByGroup.get(group.id);
 		if (previousCursor === undefined) {
@@ -183,14 +188,19 @@ export async function notifyForUnreadChatMessages() {
 			continue;
 		}
 
-		if (group.lastCursor <= previousCursor) continue;
+		if (group.lastCursor > previousCursor) pending.push({ group, previousCursor });
+	}
+	if (pending.length === 0) return;
+	if (!(await ensureNotificationPermission())) return;
 
-		const nextMessages = group.messages.filter((message) => message.cursor > previousCursor);
+	for (const { group, previousCursor } of pending) {
 		notificationState.lastProcessedCursorByGroup.set(group.id, group.lastCursor);
 
 		// Attended tab (visible + focused) → the in-app badge/dots already surface attention, so a
 		// toast is just noise. Mirrors native's appActive suppression; fires only when backgrounded.
 		if (document.visibilityState === 'visible' && document.hasFocus()) continue;
+
+		const nextMessages = group.messages.filter((message) => message.cursor > previousCursor);
 
 		const memberPubkeys = listChatGroupMembers(group.id).map((member) => member.stablePubkey);
 		const profileHints: ChatGroupProfileHints = {};

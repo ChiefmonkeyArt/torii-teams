@@ -107,6 +107,9 @@ export async function initNativeShell(): Promise<void> {
 	try {
 		await App.addListener('appStateChange', ({ isActive }) => {
 			appActive = isActive;
+			// Settings can change while backgrounded — drop the memo so the next
+			// notify re-checks instead of trusting the cached grant.
+			nativeNotificationPermission = undefined;
 			// Background → seed the poll set with the latest cursors.
 			// Foreground → drain staged bytes (catch-up) then re-seed.
 			if (isActive) {
@@ -266,24 +269,41 @@ export interface ChatLocalNotification {
 	groupId: string;
 }
 
+/**
+ * Memoized native permission: the check is a Capacitor bridge call and
+ * `notifyForUnreadChatMessages` runs per ingested batch, so re-checking per call
+ * was pure bridge traffic. Permission only changes through the system
+ * dialog/settings — cleared on resume (the appStateChange listener above),
+ * never trusted across a backgrounding.
+ */
+let nativeNotificationPermission: Promise<boolean> | undefined;
+
 export async function ensureNotificationPermission(): Promise<boolean> {
 	if (!browser) return false;
 	if (isNativePlatform()) {
-		try {
-			// Check first: requestPermissions() re-shows the system prompt on Android whenever the
-			// state isn't 'granted', which would re-prompt on every unread message. Only ask when the
-			// user has never been prompted ('prompt'); respect an explicit 'denied'.
-			const { display } = await LocalNotifications.checkPermissions();
-			if (display !== 'prompt') return display === 'granted';
-			const after = await LocalNotifications.requestPermissions();
-			return after.display === 'granted';
-		} catch {
-			return false;
-		}
+		nativeNotificationPermission ??= checkNativeNotificationPermission();
+		return nativeNotificationPermission;
 	}
 	if (!('Notification' in window)) return false;
 	if (Notification.permission !== 'default') return Notification.permission === 'granted';
 	return (await Notification.requestPermission()) === 'granted';
+}
+
+async function checkNativeNotificationPermission(): Promise<boolean> {
+	try {
+		// Check first: requestPermissions() re-shows the system prompt on Android whenever the
+		// state isn't 'granted', which would re-prompt on every unread message. Only ask when the
+		// user has never been prompted ('prompt'); respect an explicit 'denied'.
+		const { display } = await LocalNotifications.checkPermissions();
+		if (display !== 'prompt') return display === 'granted';
+		const after = await LocalNotifications.requestPermissions();
+		return after.display === 'granted';
+	} catch {
+		// A transient plugin failure must not poison the memo — clear so the
+		// next call retries.
+		nativeNotificationPermission = undefined;
+		return false;
+	}
 }
 
 /**
