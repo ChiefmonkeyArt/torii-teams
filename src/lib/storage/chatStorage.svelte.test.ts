@@ -57,6 +57,17 @@ describe('getGroupMessagesPage (indexeddb)', () => {
 		await storage.deleteGroup(id);
 	});
 
+	test('windowed group reads return the newest rows in ascending order', async () => {
+		const storage = await getChatStorage();
+		const id = `window-${crypto.randomUUID()}`;
+		await storage.putGroup(makeGroup(id, [1, 2, 3, 5, 8]));
+
+		const group = await storage.getGroup(id, { messageLimit: 2 });
+		expect(cursorsOf(group?.messages ?? [])).toEqual([5, 8]);
+
+		await storage.deleteGroup(id);
+	});
+
 	test('putGroup writes ledger rows only for newly written messages', async () => {
 		const storage = await getChatStorage();
 		const id = `ledger-${crypto.randomUUID()}`;

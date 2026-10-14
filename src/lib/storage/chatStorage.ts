@@ -658,7 +658,12 @@ class IndexedDbChatStorage implements ChatStorage {
 				const walk = messageIndex.openCursor(IDBKeyRange.only(groupId), 'prev');
 				walk.onsuccess = () => {
 					const cursor = walk.result;
-					if (!cursor || messageRecords.length >= (options.messageLimit ?? 0)) return;
+					if (!cursor || messageRecords.length >= (options.messageLimit ?? 0)) {
+						// The 'prev' walk collects newest-first; the store contract is
+						// ascending like the unbounded getAll path and the memory backend.
+						messageRecords.reverse();
+						return;
+					}
 					messageRecords.push(cursor.value as StoredChatMessageRecord);
 					cursor.continue();
 				};

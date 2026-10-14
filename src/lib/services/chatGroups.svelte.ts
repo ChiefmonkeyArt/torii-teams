@@ -248,10 +248,17 @@ function toWindowList(messages: StoredChatMessage[]): StoredChatMessageList {
 	return list;
 }
 
-/** Window-only store update: history pages change nothing durable. */
-function updateGroupMessagesWindow(groupId: string, messages: StoredChatMessage[]) {
-	if (!chatGroupsStore.groups.some((group) => group.id === groupId)) return;
-	const window = toWindowList(messages);
+/** Window-only store update: history pages change nothing durable. Merges with
+ *  the CURRENT store rows in one synchronous step — a page fetch must never
+ *  write back the window captured before its await, or rows that arrived during
+ *  the fetch get erased (and the persisted-cursor dedupe then hides them until
+ *  reload). */
+function updateGroupMessagesWindow(groupId: string, incoming: StoredChatMessage[]) {
+	const current = chatGroupsStore.groups.find((group) => group.id === groupId);
+	if (!current) return;
+	const window = toWindowList(
+		capWindowRows(mergeWindowMessages(current.messages, incoming), 'high')
+	);
 	chatGroupsStore.groups = chatGroupsStore.groups.map((group) =>
 		group.id === groupId ? { ...group, messages: window } : group
 	);
@@ -264,10 +271,7 @@ export async function ensureChatGroupWindow(groupId: string): Promise<void> {
 	const storage = await getChatStorage();
 	const page = await storage.getGroupMessagesPage(groupId, { limit: TAIL_WINDOW_ROWS });
 	if (page.length === 0) return;
-	updateGroupMessagesWindow(
-		groupId,
-		capWindowRows(mergeWindowMessages(group.messages, page), 'high')
-	);
+	updateGroupMessagesWindow(groupId, page);
 }
 
 /** Load the next history page below the window (scroll-up). Returns the rows
@@ -284,17 +288,14 @@ export async function loadOlderChatGroupMessages(
 		limit
 	});
 	if (page.length === 0) return 0;
-	updateGroupMessagesWindow(
-		groupId,
-		capWindowRows(mergeWindowMessages(group.messages, page), 'high')
-	);
+	updateGroupMessagesWindow(groupId, page);
 	return page.length;
 }
 
 /** Jump support (docs/long-history.md decision 5): load a page centered on
- *  `cursor`, keeping the tail window and dropping older loaded regions — jumps
- *  create holes on purpose (Discord-style), and unread counts are hole-safe
- *  because the ledger covers what the window does not hold. */
+ *  `cursor`. The page merges into the window; the MAX_WINDOW_ROWS cap bounds
+ *  memory, and unread counts are hole-safe because the ledger covers what the
+ *  window does not hold. */
 export async function loadChatGroupMessagesAround(
 	groupId: string,
 	cursor: number,
@@ -307,11 +308,7 @@ export async function loadChatGroupMessagesAround(
 		storage.getGroupMessagesPage(groupId, { before: cursor + 1, limit: radius + 1 }),
 		storage.getGroupMessagesPage(groupId, { after: cursor, limit: radius })
 	]);
-	const tail = group.messages.slice(Math.max(0, group.messages.length - TAIL_WINDOW_ROWS));
-	updateGroupMessagesWindow(
-		groupId,
-		capWindowRows(mergeWindowMessages(tail, [...atOrBelow, ...above]), 'high')
-	);
+	updateGroupMessagesWindow(groupId, [...atOrBelow, ...above]);
 }
 
 function toStoredGroupData(group: StoredChatGroup): StoredChatGroupData {

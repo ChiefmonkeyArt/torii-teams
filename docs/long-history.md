@@ -42,8 +42,10 @@ render layer becomes windowed.
    `getChatGroupMessageSummary`) gives badge counts by binary search, updated O(1) at
    ingest. Existing installs get a one-time backfill scan at first load. Previews
    stay tail-derived (`messages.at(-1)`).
-5. **One load primitive.** `loadMessagesAround(groupId, cursor, before, after)` is
-   the only way older history enters a window. Call sites: `?message=` deep links,
+5. **One load primitive.** `loadChatGroupMessagesAround(groupId, cursor, radius)` (and
+   the scroll-up `loadOlderChatGroupMessages`) is the only way older history enters a
+   window; pages merge into the window and the `MAX_WINDOW_ROWS` cap bounds memory.
+   Call sites: `?message=` deep links,
    search-result jumps, reaction/mention reference jumps, reaction marker rows whose
    target is unloaded, first-unread focus. `ChatMessageList.scrollToMessage()` keeps
    its measured-row convergence; an unloaded target loads its page first, then scrolls.
