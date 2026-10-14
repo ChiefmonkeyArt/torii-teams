@@ -165,6 +165,15 @@ export interface ChatStorage {
 	init(): Promise<void>;
 	listGroups(ownerPubkey?: string): Promise<StoredChatGroupRecord[]>;
 	getGroup(groupId: string): Promise<StoredChatGroupData | undefined>;
+	/** Paginated history reads — the windowed-rendering seam (docs/long-history.md).
+	 *  Ascending cursor order, boundaries exclusive: without bounds the newest
+	 *  `limit` messages (tail page); with `before` the newest `limit` below it
+	 *  (prepend page); with `after` (optionally capped by `before`) the oldest
+	 *  `limit` above it (append page). */
+	getGroupMessagesPage(
+		groupId: string,
+		options: { after?: number; before?: number; limit: number }
+	): Promise<StoredChatMessage[]>;
 	putGroup(group: StoredChatGroupData): Promise<void>;
 	deleteGroup(groupId: string): Promise<void>;
 	deleteGroupsByOwner(ownerPubkey: string): Promise<void>;
@@ -328,6 +337,26 @@ class MemoryChatStorage implements ChatStorage {
 		return group ? cloneGroup(group) : undefined;
 	}
 
+	async getGroupMessagesPage(
+		groupId: string,
+		{ after, before, limit }: { after?: number; before?: number; limit: number }
+	): Promise<StoredChatMessage[]> {
+		const group = this.groups.get(groupId);
+		if (!group || limit <= 0) return [];
+		const eligible = group.messages
+			.filter(
+				(message) =>
+					(after === undefined || message.cursor > after) &&
+					(before === undefined || message.cursor < before)
+			)
+			.sort((a, b) => a.cursor - b.cursor);
+		const page =
+			after === undefined
+				? eligible.slice(Math.max(0, eligible.length - limit))
+				: eligible.slice(0, limit);
+		return page.map(cloneMessage);
+	}
+
 	async putGroup(group: StoredChatGroupData): Promise<void> {
 		const stored = cloneGroup(group);
 		if (stored.snapshots && stored.snapshots.length === 0) {
@@ -406,6 +435,15 @@ class IndexedDbChatStorage implements ChatStorage {
 	};
 
 	private database: IDBDatabase | null = null;
+
+	/** Cursors already written to the message store this session, per group —
+	 *  `putGroup`'s write-diff memo (see the writeMissing loop). Rows are only
+	 *  ever deleted with their whole group, so `deleteGroup` drops the entry.
+	 *  shortcut: a concurrent deleteGroup from ANOTHER tab resurrects the group
+	 *  row without its message rows (today it resurrects both); harmless while
+	 *  the app is effectively single-tab (Capacitor) — switch to write-through
+	 *  at ingest if shared multi-tab IDB ever matters. */
+	private durableMessageCursors = new Map<string, Set<number>>();
 
 	async init(): Promise<void> {
 		if (!browser) return;
@@ -549,6 +587,44 @@ class IndexedDbChatStorage implements ChatStorage {
 		});
 	}
 
+	async getGroupMessagesPage(
+		groupId: string,
+		{ after, before, limit }: { after?: number; before?: number; limit: number }
+	): Promise<StoredChatMessage[]> {
+		const db = this.requireDatabase();
+		return new Promise<StoredChatMessage[]>((resolve, reject) => {
+			const transaction = db.transaction([MESSAGE_STORE], 'readonly');
+			const store = transaction.objectStore(MESSAGE_STORE);
+			// Compound-key range over ['groupId', cursor]; ±Infinity opens a side to
+			// the group's full span (Infinity is a valid number key).
+			const range = IDBKeyRange.bound(
+				[groupId, after === undefined ? -Infinity : after],
+				[groupId, before === undefined ? Infinity : before],
+				after !== undefined,
+				before !== undefined
+			);
+			// Tail/prepend pages take the newest rows (walk back, flip at the end);
+			// append pages take the oldest rows above `after`.
+			const direction: IDBCursorDirection = after === undefined ? 'prev' : 'next';
+			const page: StoredChatMessage[] = [];
+			const request = store.openCursor(range, direction);
+			transaction.onerror = () =>
+				reject(transaction.error ?? new Error('IndexedDB transaction failed'));
+			request.onerror = () => reject(request.error ?? new Error('IndexedDB request failed'));
+			request.onsuccess = () => {
+				const cursor = request.result;
+				if (!cursor || page.length >= limit) {
+					resolve(direction === 'prev' ? page.reverse() : page);
+					return;
+				}
+				const { groupId: storedGroupId, ...message } = cursor.value as StoredChatMessageRecord;
+				void storedGroupId;
+				page.push(cloneMessage(message));
+				cursor.continue();
+			};
+		});
+	}
+
 	async putGroup(group: StoredChatGroupData): Promise<void> {
 		const db = this.requireDatabase();
 		await new Promise<void>((resolve, reject) => {
@@ -561,9 +637,19 @@ class IndexedDbChatStorage implements ChatStorage {
 			const messageStore = transaction.objectStore(MESSAGE_STORE);
 			const syncIssueStore = transaction.objectStore(SYNC_ISSUE_STORE);
 			const snapshotStore = transaction.objectStore(SNAPSHOT_STORE);
+			const writtenMessageCursors: number[] = [];
 			transaction.onerror = () =>
 				reject(transaction.error ?? new Error('IndexedDB transaction failed'));
-			transaction.oncomplete = () => resolve();
+			transaction.oncomplete = () => {
+				// Merged only on success: a failed transaction must not mark
+				// unwritten cursors durable or the next putGroup would skip them.
+				if (writtenMessageCursors.length > 0) {
+					const durable = this.durableMessageCursors.get(group.id) ?? new Set<number>();
+					for (const cursor of writtenMessageCursors) durable.add(cursor);
+					this.durableMessageCursors.set(group.id, durable);
+				}
+				resolve();
+			};
 
 			const getExistingGroup = groupStore.get(group.id) as IDBRequest<
 				StoredChatGroupRecord | undefined
@@ -601,19 +687,27 @@ class IndexedDbChatStorage implements ChatStorage {
 				// messages that aren't durable yet (catchUpGroupFromChain recovers them
 				// with cursor <= fetchCursor), so a cursor-based skip would silently drop
 				// them on refresh. Checking the real set is robust to any such producer.
-				// One getAllKeys per putGroup is a cheap index scan (reads only; far lighter
-				// than re-writing the whole history), and reads fresh each call so it stays
-				// correct across tabs sharing this IDB. If a huge active group ever makes
-				// this hot, add a durableMessageCursor fast-skip — see putGroup notes.
+				// The known set is memoized per group per session (one getAllKeys lazy
+				// init instead of one per persist) — see durableMessageCursors.
 				if (group.messages.length > 0) {
-					const storedKeys = messageStore.index('groupId').getAllKeys(group.id);
-					storedKeys.onsuccess = () => {
-						const stored = new Set(storedKeys.result.map((key) => (key as [string, number])[1]));
+					const writeMissing = (durable: Set<number>) => {
 						for (const message of group.messages) {
-							if (stored.has(message.cursor)) continue;
+							if (durable.has(message.cursor)) continue;
+							writtenMessageCursors.push(message.cursor);
 							messageStore.put(cloneMessageRecord({ ...message, groupId: group.id }));
 						}
 					};
+					const durable = this.durableMessageCursors.get(group.id);
+					if (durable) {
+						writeMissing(durable);
+					} else {
+						const storedKeys = messageStore.index('groupId').getAllKeys(group.id);
+						storedKeys.onsuccess = () => {
+							const known = new Set(storedKeys.result.map((key) => (key as [string, number])[1]));
+							this.durableMessageCursors.set(group.id, known);
+							writeMissing(known);
+						};
+					}
 				}
 			};
 			for (const issue of group.syncIssues) {
@@ -623,6 +717,7 @@ class IndexedDbChatStorage implements ChatStorage {
 	}
 
 	async deleteGroup(groupId: string): Promise<void> {
+		this.durableMessageCursors.delete(groupId);
 		const db = this.requireDatabase();
 		await new Promise<void>((resolve, reject) => {
 			const transaction = db.transaction(
