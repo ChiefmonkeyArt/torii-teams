@@ -25,6 +25,7 @@ import {
 	isGroupDocumentPullUnresolved,
 	reconcileMultiDeviceNow
 } from '$lib/services/multiDevice.svelte';
+import { getChatStorage } from '$lib/storage/chatStorage';
 
 import { ChatKinds, SYSTEM_MESSAGE_KIND } from '$lib/chat/kinds';
 import {
@@ -677,7 +678,10 @@ export function unrecoveredDropHorizon(group: {
 }): number | undefined {
 	// Drop-class issues are rare (the common call has none), so the cursor set
 	// builds lazily on the first one instead of on every call over the full
-	// history.
+	// history. Window scope (docs/long-history.md): `messages` is the loaded
+	// window, so a recovered-but-evicted row looks missing and re-triggers one
+	// recovery fetch — its ingest then no-ops (durable cursors are seen), which
+	// is harmless; kept sync on purpose.
 	let cursors: Set<number> | undefined;
 	let horizon: number | undefined;
 	for (const issue of group.syncIssues) {
@@ -829,6 +833,25 @@ export async function ingestChatGroupMessages(params: {
 	const issues: StoredChatSyncIssue[] = [];
 	const seenCursors = new Set(group.messages.map((stored) => stored.cursor));
 	const seenMessageIds = new Set(group.messages.map((stored) => stored.id));
+	// Windowed histories (docs/long-history.md decision 7): a re-offered cursor
+	// may be durable but no longer loaded (drop-recovery refetches, delayed
+	// self-echoes), and re-processing it would re-run its commit side effects —
+	// cursors already in storage count as seen too. Drop-class messages never
+	// have durable rows (they failed to decrypt the first time), so recovery
+	// refetches still process.
+	if (group.id && messages.length > 0) {
+		try {
+			const storage = await getChatStorage();
+			const persisted = await storage.getPersistedMessageCursors(
+				group.id,
+				messages.map((message) => message.cursor)
+			);
+			for (const cursor of persisted) seenCursors.add(cursor);
+		} catch (error) {
+			// Storage unavailable: fall back to in-memory dedupe only.
+			console.error('[chat-ingest] persisted cursor check failed', { groupId: group.id, error });
+		}
+	}
 	const appliedPendingCommitMessages = new Set<string>();
 	const rejectedPendingCommitMessages = new Set<string>();
 	let removedLocalMember = false;

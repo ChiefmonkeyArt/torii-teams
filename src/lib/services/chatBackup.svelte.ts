@@ -20,6 +20,7 @@
  * Unencrypted export/import is exposed as an explicit opt-in for dev/inspection.
  */
 import { browser } from '$app/environment';
+import { getChatStorage } from '$lib/storage/chatStorage';
 import type { SerializedAccount } from 'applesauce-accounts';
 import {
 	PBKDF2_HASH,
@@ -242,18 +243,25 @@ export async function exportClientData(options: ExportOptions = {}): Promise<str
 	const ownerPubkey = normalizePubKey(account.pubkey);
 
 	await ensureGroupsLoaded();
-	const groups = listChatGroups().map((group) => {
-		// Snapshots and sync issues are always regenerable (snapshots rebuild
-		// from ClientState in loadAndNormalizeChatGroup; sync issues re-surface
-		// on re-stream), so they're never worth the bytes regardless of the
-		// messages flag.
-		const stripped: StoredChatGroup = {
-			...group,
-			syncIssues: [],
-			snapshots: []
-		};
-		return groupToBackup(includeMessages ? stripped : { ...stripped, messages: [] });
-	});
+	const storage = await getChatStorage();
+	const groups = await Promise.all(
+		listChatGroups().map(async (group) => {
+			// Snapshots and sync issues are always regenerable (snapshots rebuild
+			// from ClientState in loadAndNormalizeChatGroup; sync issues re-surface
+			// on re-stream), so they're never worth the bytes regardless of the
+			// messages flag.
+			const data = includeMessages ? await storage.getGroup(group.id) : undefined;
+			const stripped: StoredChatGroup = {
+				...group,
+				// Full history from storage: the reactive store only holds a loaded
+				// window (docs/long-history.md).
+				messages: data?.messages ?? [],
+				syncIssues: [],
+				snapshots: []
+			};
+			return groupToBackup(includeMessages ? stripped : { ...stripped, messages: [] });
+		})
+	);
 
 	const doc: BackupDocument = {
 		manifest: {

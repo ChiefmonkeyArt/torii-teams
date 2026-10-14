@@ -185,7 +185,10 @@ export interface ChatStorage {
 	readonly capabilities: ChatStorageCapabilities;
 	init(): Promise<void>;
 	listGroups(ownerPubkey?: string): Promise<StoredChatGroupRecord[]>;
-	getGroup(groupId: string): Promise<StoredChatGroupData | undefined>;
+	getGroup(
+		groupId: string,
+		options?: { messageLimit?: number }
+	): Promise<StoredChatGroupData | undefined>;
 	/** Paginated history reads — the windowed-rendering seam (docs/long-history.md).
 	 *  Ascending cursor order, boundaries exclusive: without bounds the newest
 	 *  `limit` messages (tail page); with `before` the newest `limit` below it
@@ -195,6 +198,9 @@ export interface ChatStorage {
 		groupId: string,
 		options: { after?: number; before?: number; limit: number }
 	): Promise<StoredChatMessage[]>;
+	/** Which of these cursors already have durable message rows — windowed
+	 *  ingest dedupe (docs/long-history.md decision 7). */
+	getPersistedMessageCursors(groupId: string, cursors: number[]): Promise<Set<number>>;
 	/** Unread-ledger rows (see StoredMessageLedgerRow), ascending by cursor,
 	 *  including the backfill sentinel row. */
 	listMessageLedgerRows(groupId: string): Promise<StoredMessageLedgerRow[]>;
@@ -360,9 +366,22 @@ class MemoryChatStorage implements ChatStorage {
 			.sort(compareGroups);
 	}
 
-	async getGroup(groupId: string): Promise<StoredChatGroupData | undefined> {
+	async getGroup(
+		groupId: string,
+		options: { messageLimit?: number } = {}
+	): Promise<StoredChatGroupData | undefined> {
 		const group = this.groups.get(groupId);
-		return group ? cloneGroup(group) : undefined;
+		if (!group) return undefined;
+		const data = cloneGroup(group);
+		if (options.messageLimit !== undefined) {
+			data.messages = data.messages.slice(Math.max(0, data.messages.length - options.messageLimit));
+		}
+		return data;
+	}
+
+	async getPersistedMessageCursors(groupId: string, cursors: number[]): Promise<Set<number>> {
+		const stored = new Set(this.groups.get(groupId)?.messages.map((message) => message.cursor));
+		return new Set(cursors.filter((cursor) => stored.has(cursor)));
 	}
 
 	async getGroupMessagesPage(
@@ -413,6 +432,15 @@ class MemoryChatStorage implements ChatStorage {
 			const rows = stored.messageLedger;
 			delete stored.messageLedger;
 			await this.putMessageLedgerRows(rows);
+		}
+		const existing = this.groups.get(group.id);
+		if (existing) {
+			// Windowed histories (docs/long-history.md): putGroup receives the
+			// loaded window — merge so evicted rows are never lost from storage
+			// (the IDB backend only ever adds rows).
+			const byCursor = new Map(existing.messages.map((message) => [message.cursor, message]));
+			for (const message of stored.messages) byCursor.set(message.cursor, message);
+			stored.messages = [...byCursor.values()].sort((a, b) => a.cursor - b.cursor);
 		}
 		this.groups.set(group.id, stored);
 	}
@@ -598,7 +626,10 @@ class IndexedDbChatStorage implements ChatStorage {
 			.sort(compareGroups);
 	}
 
-	async getGroup(groupId: string): Promise<StoredChatGroupData | undefined> {
+	async getGroup(
+		groupId: string,
+		options: { messageLimit?: number } = {}
+	): Promise<StoredChatGroupData | undefined> {
 		const db = this.requireDatabase();
 		return new Promise<StoredChatGroupData | undefined>((resolve, reject) => {
 			const transaction = db.transaction(
@@ -614,7 +645,24 @@ class IndexedDbChatStorage implements ChatStorage {
 			const stateRequest = stateStore.get(groupId) as IDBRequest<
 				StoredChatGroupStateRecord | undefined
 			>;
-			const messageRequest = messageIndex.getAll(groupId) as IDBRequest<StoredChatMessageRecord[]>;
+			let messageRecords: StoredChatMessageRecord[] = [];
+			if (options.messageLimit === undefined) {
+				const messageRequest = messageIndex.getAll(groupId) as IDBRequest<
+					StoredChatMessageRecord[]
+				>;
+				messageRequest.onsuccess = () => {
+					messageRecords = messageRequest.result;
+				};
+			} else {
+				// Windowed load (docs/long-history.md): only the newest rows.
+				const walk = messageIndex.openCursor(IDBKeyRange.only(groupId), 'prev');
+				walk.onsuccess = () => {
+					const cursor = walk.result;
+					if (!cursor || messageRecords.length >= (options.messageLimit ?? 0)) return;
+					messageRecords.push(cursor.value as StoredChatMessageRecord);
+					cursor.continue();
+				};
+			}
 			const syncIssueRequest = syncIssueIndex.getAll(groupId) as IDBRequest<
 				StoredChatSyncIssueRecord[]
 			>;
@@ -638,7 +686,7 @@ class IndexedDbChatStorage implements ChatStorage {
 							stateBytes: state.stateBytes,
 							snapshots: snapshotRecord?.snapshots
 						},
-						messages: messageRequest.result ?? [],
+						messages: messageRecords,
 						syncIssues: syncIssueRequest.result ?? []
 					})
 				);
@@ -703,6 +751,27 @@ class IndexedDbChatStorage implements ChatStorage {
 				reject(transaction.error ?? new Error('IndexedDB transaction failed'));
 			transaction.oncomplete = () => resolve();
 			for (const row of rows) store.put({ ...row });
+		});
+	}
+
+	async getPersistedMessageCursors(groupId: string, cursors: number[]): Promise<Set<number>> {
+		if (cursors.length === 0) return new Set();
+		const db = this.requireDatabase();
+		return new Promise<Set<number>>((resolve, reject) => {
+			const transaction = db.transaction([MESSAGE_STORE], 'readonly');
+			const store = transaction.objectStore(MESSAGE_STORE);
+			const range = IDBKeyRange.bound(
+				[groupId, Math.min(...cursors)],
+				[groupId, Math.max(...cursors)]
+			);
+			const request = store.getAllKeys(range);
+			transaction.onerror = () =>
+				reject(transaction.error ?? new Error('IndexedDB transaction failed'));
+			request.onerror = () => reject(request.error ?? new Error('IndexedDB request failed'));
+			request.onsuccess = () => {
+				const found = new Set((request.result as Array<[string, number]>).map((key) => key[1]));
+				resolve(new Set(cursors.filter((cursor) => found.has(cursor))));
+			};
 		});
 	}
 
