@@ -114,7 +114,7 @@ render layer becomes windowed.
 ## Phases
 
 - [x] 1a — storage page reads (`getGroupMessagesPage`) + `putGroup` cursor memo.
-- [ ] 1b — unread ledger + backfill; presence summaries off full-history scans.
+- [x] 1b — unread ledger + backfill; presence summaries off full-history scans.
 - [ ] 1c — windowed store (decision 1), ingest dedupe (7), recovery persist-only (8),
       `loadMessagesAround` + jump call sites (5-6), prepend anchoring (10).
 - [ ] 2 — always-deep search (9).

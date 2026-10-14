@@ -31,6 +31,21 @@ function makeGroup(id: string, cursors: number[]): StoredChatGroupData {
 
 const cursorsOf = (messages: StoredChatMessage[]) => messages.map((message) => message.cursor);
 
+describe('message ledger rows', () => {
+	it('round-trips rows and clears them with the group', async () => {
+		const storage = await getChatStorage();
+		await storage.putMessageLedgerRows([
+			{ groupId: 'ledger-mem', cursor: 5, countable: true },
+			{ groupId: 'ledger-mem', cursor: 1, refTargetId: 'ev-1' }
+		]);
+		const rows = await storage.listMessageLedgerRows('ledger-mem');
+		expect(rows.map((row) => row.cursor)).toEqual([1, 5]);
+		expect(rows.find((row) => row.cursor === 1)?.refTargetId).toBe('ev-1');
+		await storage.deleteGroup('ledger-mem');
+		expect(await storage.listMessageLedgerRows('ledger-mem')).toEqual([]);
+	});
+});
+
 describe('getGroupMessagesPage', () => {
 	it('returns tail, before and after pages in ascending cursor order', async () => {
 		const storage = await getChatStorage();

@@ -97,6 +97,9 @@ export interface StoredChatGroupData extends StoredChatGroupRecord {
 	messages: StoredChatMessage[];
 	syncIssues: StoredChatSyncIssue[];
 	snapshots?: StoredChatGroupStateSnapshot[];
+	/** Unread-ledger rows for the messages above (see StoredMessageLedgerRow);
+	 *  storage writes them alongside the matching new message rows. */
+	messageLedger?: StoredMessageLedgerRow[];
 }
 
 interface StoredChatMessageRecord extends StoredChatMessage {
@@ -106,6 +109,24 @@ interface StoredChatMessageRecord extends StoredChatMessage {
 interface StoredChatSyncIssueRecord extends StoredChatSyncIssue {
 	groupId: string;
 }
+
+/** Durable unread-ledger row (docs/long-history.md decision 4): the facts the
+ *  unread badge and mention list need, derived once per message so unread
+ *  counts never scan history. Written for every persisted message that is
+ *  countable (non-system, not our own) or references us. A row at
+ *  `MESSAGE_LEDGER_BACKFILL_CURSOR` marks the group's one-time backfill done. */
+export interface StoredMessageLedgerRow {
+	groupId: string;
+	cursor: number;
+	/** Counts toward the unread badge (non-system, not our own). */
+	countable?: boolean;
+	/** For rows referencing us: the jump target's event id — the reference's own
+	 *  id for plain mentions, the `e`-tag target for hidden aggregates (whose
+	 *  own rows never render). */
+	refTargetId?: string;
+}
+
+export const MESSAGE_LEDGER_BACKFILL_CURSOR = -1;
 
 export interface StoredChatKeyPackageRecord {
 	id: string;
@@ -174,6 +195,10 @@ export interface ChatStorage {
 		groupId: string,
 		options: { after?: number; before?: number; limit: number }
 	): Promise<StoredChatMessage[]>;
+	/** Unread-ledger rows (see StoredMessageLedgerRow), ascending by cursor,
+	 *  including the backfill sentinel row. */
+	listMessageLedgerRows(groupId: string): Promise<StoredMessageLedgerRow[]>;
+	putMessageLedgerRows(rows: StoredMessageLedgerRow[]): Promise<void>;
 	putGroup(group: StoredChatGroupData): Promise<void>;
 	deleteGroup(groupId: string): Promise<void>;
 	deleteGroupsByOwner(ownerPubkey: string): Promise<void>;
@@ -188,7 +213,7 @@ export interface ChatStorage {
 }
 
 const DATABASE_NAME = 'cordn-web';
-const DATABASE_VERSION = 5;
+const DATABASE_VERSION = 6;
 const GROUP_STORE = 'groups';
 const GROUP_STATE_STORE = 'groupStates';
 const MESSAGE_STORE = 'messages';
@@ -196,6 +221,7 @@ const SYNC_ISSUE_STORE = 'syncIssues';
 const KEY_PACKAGE_STORE = 'keyPackages';
 const SNAPSHOT_STORE = 'snapshots';
 const OUTBOX_STORE = 'outbox';
+const MESSAGE_LEDGER_STORE = 'messageLedger';
 
 function cloneBytes(bytes: Uint8Array): Uint8Array {
 	return new Uint8Array(bytes);
@@ -258,6 +284,7 @@ function cloneGroupRecord(group: StoredChatGroupData): StoredChatGroupRecord {
 	delete (record as Partial<StoredChatGroupData>).messages;
 	delete (record as Partial<StoredChatGroupData>).syncIssues;
 	delete (record as Partial<StoredChatGroupData>).snapshots;
+	delete (record as Partial<StoredChatGroupData>).messageLedger;
 	return { ...record };
 }
 
@@ -316,6 +343,7 @@ class MemoryChatStorage implements ChatStorage {
 	protected groups = new Map<string, StoredChatGroupData>();
 	protected keyPackages = new Map<string, StoredChatKeyPackageRecord>();
 	protected outboxEntries: StoredChatOutboxRecord[] = [];
+	protected messageLedgerRows = new Map<string, Map<number, StoredMessageLedgerRow>>();
 
 	constructor(capabilities: ChatStorageCapabilities) {
 		this.capabilities = capabilities;
@@ -357,16 +385,41 @@ class MemoryChatStorage implements ChatStorage {
 		return page.map(cloneMessage);
 	}
 
+	async listMessageLedgerRows(groupId: string): Promise<StoredMessageLedgerRow[]> {
+		return [...(this.messageLedgerRows.get(groupId)?.values() ?? [])]
+			.map((row) => ({ ...row }))
+			.sort((a, b) => a.cursor - b.cursor);
+	}
+
+	async putMessageLedgerRows(rows: StoredMessageLedgerRow[]): Promise<void> {
+		for (const row of rows) {
+			let byCursor = this.messageLedgerRows.get(row.groupId);
+			if (!byCursor) {
+				byCursor = new Map();
+				this.messageLedgerRows.set(row.groupId, byCursor);
+			}
+			byCursor.set(row.cursor, { ...row });
+		}
+	}
+
 	async putGroup(group: StoredChatGroupData): Promise<void> {
 		const stored = cloneGroup(group);
 		if (stored.snapshots && stored.snapshots.length === 0) {
 			delete stored.snapshots;
+		}
+		// Ledger rows accumulate in their own map (never replaced): the group
+		// data only carries rows for its current messages.
+		if (stored.messageLedger?.length) {
+			const rows = stored.messageLedger;
+			delete stored.messageLedger;
+			await this.putMessageLedgerRows(rows);
 		}
 		this.groups.set(group.id, stored);
 	}
 
 	async deleteGroup(groupId: string): Promise<void> {
 		this.groups.delete(groupId);
+		this.messageLedgerRows.delete(groupId);
 	}
 
 	async deleteGroupsByOwner(ownerPubkey: string): Promise<void> {
@@ -484,6 +537,12 @@ class IndexedDbChatStorage implements ChatStorage {
 					const store = db.createObjectStore(OUTBOX_STORE, { keyPath: 'seq' });
 					store.createIndex('groupId', 'groupId', { unique: false });
 					store.createIndex('ownerPubkey', 'ownerPubkey', { unique: false });
+				}
+				if (!db.objectStoreNames.contains(MESSAGE_LEDGER_STORE)) {
+					const store = db.createObjectStore(MESSAGE_LEDGER_STORE, {
+						keyPath: ['groupId', 'cursor']
+					});
+					store.createIndex('groupId', 'groupId', { unique: false });
 				}
 			};
 			request.onsuccess = () => resolve(request.result);
@@ -625,16 +684,46 @@ class IndexedDbChatStorage implements ChatStorage {
 		});
 	}
 
+	async listMessageLedgerRows(groupId: string): Promise<StoredMessageLedgerRow[]> {
+		const rows = await this.runTransaction<StoredMessageLedgerRow[]>(
+			MESSAGE_LEDGER_STORE,
+			'readonly',
+			(store) => store.index('groupId').getAll(groupId) as IDBRequest<StoredMessageLedgerRow[]>
+		);
+		return (rows ?? []).map((row) => ({ ...row })).sort((a, b) => a.cursor - b.cursor);
+	}
+
+	async putMessageLedgerRows(rows: StoredMessageLedgerRow[]): Promise<void> {
+		if (rows.length === 0) return;
+		const db = this.requireDatabase();
+		await new Promise<void>((resolve, reject) => {
+			const transaction = db.transaction([MESSAGE_LEDGER_STORE], 'readwrite');
+			const store = transaction.objectStore(MESSAGE_LEDGER_STORE);
+			transaction.onerror = () =>
+				reject(transaction.error ?? new Error('IndexedDB transaction failed'));
+			transaction.oncomplete = () => resolve();
+			for (const row of rows) store.put({ ...row });
+		});
+	}
+
 	async putGroup(group: StoredChatGroupData): Promise<void> {
 		const db = this.requireDatabase();
 		await new Promise<void>((resolve, reject) => {
 			const transaction = db.transaction(
-				[GROUP_STORE, GROUP_STATE_STORE, MESSAGE_STORE, SYNC_ISSUE_STORE, SNAPSHOT_STORE],
+				[
+					GROUP_STORE,
+					GROUP_STATE_STORE,
+					MESSAGE_STORE,
+					MESSAGE_LEDGER_STORE,
+					SYNC_ISSUE_STORE,
+					SNAPSHOT_STORE
+				],
 				'readwrite'
 			);
 			const groupStore = transaction.objectStore(GROUP_STORE);
 			const stateStore = transaction.objectStore(GROUP_STATE_STORE);
 			const messageStore = transaction.objectStore(MESSAGE_STORE);
+			const messageLedgerStore = transaction.objectStore(MESSAGE_LEDGER_STORE);
 			const syncIssueStore = transaction.objectStore(SYNC_ISSUE_STORE);
 			const snapshotStore = transaction.objectStore(SNAPSHOT_STORE);
 			const writtenMessageCursors: number[] = [];
@@ -690,11 +779,16 @@ class IndexedDbChatStorage implements ChatStorage {
 				// The known set is memoized per group per session (one getAllKeys lazy
 				// init instead of one per persist) — see durableMessageCursors.
 				if (group.messages.length > 0) {
+					const rowsByCursor = new Map((group.messageLedger ?? []).map((row) => [row.cursor, row]));
 					const writeMissing = (durable: Set<number>) => {
 						for (const message of group.messages) {
 							if (durable.has(message.cursor)) continue;
 							writtenMessageCursors.push(message.cursor);
 							messageStore.put(cloneMessageRecord({ ...message, groupId: group.id }));
+							// Unread-ledger rows ride the matching message writes (same
+							// transaction, same new-only gate).
+							const row = rowsByCursor.get(message.cursor);
+							if (row) messageLedgerStore.put({ ...row, groupId: group.id });
 						}
 					};
 					const durable = this.durableMessageCursors.get(group.id);
@@ -725,6 +819,7 @@ class IndexedDbChatStorage implements ChatStorage {
 					GROUP_STORE,
 					GROUP_STATE_STORE,
 					MESSAGE_STORE,
+					MESSAGE_LEDGER_STORE,
 					SYNC_ISSUE_STORE,
 					SNAPSHOT_STORE,
 					OUTBOX_STORE
@@ -735,6 +830,8 @@ class IndexedDbChatStorage implements ChatStorage {
 			const stateStore = transaction.objectStore(GROUP_STATE_STORE);
 			const messageStore = transaction.objectStore(MESSAGE_STORE);
 			const messageIndex = messageStore.index('groupId');
+			const messageLedgerStore = transaction.objectStore(MESSAGE_LEDGER_STORE);
+			const messageLedgerIndex = messageLedgerStore.index('groupId');
 			const syncIssueStore = transaction.objectStore(SYNC_ISSUE_STORE);
 			const syncIssueIndex = syncIssueStore.index('groupId');
 			const snapshotStore = transaction.objectStore(SNAPSHOT_STORE);
@@ -751,6 +848,13 @@ class IndexedDbChatStorage implements ChatStorage {
 				const cursor = deleteMessages.result;
 				if (!cursor) return;
 				messageStore.delete(cursor.primaryKey);
+				cursor.continue();
+			};
+			const deleteLedger = messageLedgerIndex.openKeyCursor(IDBKeyRange.only(groupId));
+			deleteLedger.onsuccess = () => {
+				const cursor = deleteLedger.result;
+				if (!cursor) return;
+				messageLedgerStore.delete(cursor.primaryKey);
 				cursor.continue();
 			};
 			const deleteIssues = syncIssueIndex.openKeyCursor(IDBKeyRange.only(groupId));

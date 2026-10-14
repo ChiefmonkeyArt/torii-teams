@@ -57,6 +57,34 @@ describe('getGroupMessagesPage (indexeddb)', () => {
 		await storage.deleteGroup(id);
 	});
 
+	test('putGroup writes ledger rows only for newly written messages', async () => {
+		const storage = await getChatStorage();
+		const id = `ledger-${crypto.randomUUID()}`;
+		await storage.putGroup({
+			...makeGroup(id, [8]),
+			messageLedger: [
+				{ groupId: id, cursor: 8, countable: true },
+				// No message at cursor 99: rows ride message writes, so this must
+				// never reach storage.
+				{ groupId: id, cursor: 99, countable: true }
+			]
+		});
+		await storage.putGroup({
+			...makeGroup(id, [3, 8]),
+			messageLedger: [
+				{ groupId: id, cursor: 3, refTargetId: 'ev-3' },
+				{ groupId: id, cursor: 8, countable: true }
+			]
+		});
+
+		const rows = await storage.listMessageLedgerRows(id);
+		expect(rows.map((row) => row.cursor)).toEqual([3, 8]);
+		expect(rows.find((row) => row.cursor === 3)?.refTargetId).toBe('ev-3');
+
+		await storage.deleteGroup(id);
+		expect(await storage.listMessageLedgerRows(id)).toEqual([]);
+	});
+
 	test('putGroup memo still writes messages below the stored high-water', async () => {
 		const storage = await getChatStorage();
 		const id = `memo-${crypto.randomUUID()}`;

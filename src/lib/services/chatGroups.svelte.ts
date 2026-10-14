@@ -109,6 +109,10 @@ import {
 	type ChatGroupStateSnapshot
 } from '$lib/services/chatGroupSnapshots';
 import { advanceNativeCursor, groupFetchWatermark } from '$lib/services/nativeBridge';
+import {
+	buildMessageLedgerRows,
+	refreshMessageLedgersForGroups
+} from '$lib/services/chatUnreadLedger.svelte';
 
 const groupIdDecoder = new TextDecoder();
 
@@ -255,6 +259,9 @@ function toStoredGroupData(group: StoredChatGroup): StoredChatGroupData {
 		// array), so the reference stays stable while the write is queued.
 		messages: group.messages,
 		syncIssues: group.syncIssues,
+		// Unread-ledger facts for the messages above, derived here where the
+		// owner account is known (docs/long-history.md decision 4).
+		messageLedger: buildMessageLedgerRows(group.id, group.messages, manager.getActive()?.pubkey),
 		snapshots: group.snapshots.map((snapshot) => ({
 			groupId: snapshot.groupId,
 			status: snapshot.status,
@@ -385,6 +392,12 @@ async function loadGroups(ownerPubkey?: string) {
 		void persistGroups(chatGroupsStore.groups);
 	}
 	groupsLoaded = true;
+	// Unread ledger read model: durable rows per group, with the one-time
+	// backfill for histories that predate the ledger.
+	void refreshMessageLedgersForGroups(
+		chatGroupsStore.groups.map((group) => group.id),
+		normalizedOwner
+	);
 }
 
 export async function ensureGroupsLoaded() {
