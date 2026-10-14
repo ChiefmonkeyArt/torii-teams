@@ -56,7 +56,7 @@ export function buildMessageLedgerRows(
 		const countable =
 			message.kind !== SYSTEM_MESSAGE_KIND && !(me && samePubKey(message.sender, me));
 		let refTargetId: string | undefined;
-		if (me && message.sender !== me && chatMessageReferencesPubkey(message.tags, me)) {
+		if (me && !samePubKey(message.sender, me) && chatMessageReferencesPubkey(message.tags, me)) {
 			refTargetId = isStreamHiddenKind(message.kind)
 				? (message.tags.find((tag) => tag[0] === 'e')?.[1] ?? message.id)
 				: message.id;

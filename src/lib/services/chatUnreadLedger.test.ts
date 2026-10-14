@@ -37,6 +37,10 @@ describe('buildMessageLedgerRows', () => {
 			[
 				makeMessage(1, { kind: SYSTEM_MESSAGE_KIND }), // system rows never badge
 				makeMessage(2, { sender: ME }), // our own send never badges
+				// Owner checks are samePubKey, like every sender check in the codebase:
+				// a signer returning a differently-cased pubkey is still us — neither a
+				// badge row nor a mention row.
+				makeMessage(7, { sender: ME.toUpperCase(), tags: [['p', ME]] }),
 				makeMessage(3),
 				makeMessage(4, { tags: [['p', ME]] }), // plain mention: self-targeted
 				// Hidden aggregate (reaction): its own row never renders, so it points
