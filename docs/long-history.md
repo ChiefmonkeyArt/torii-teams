@@ -58,10 +58,12 @@ render layer becomes windowed.
    an IDB point check for out-of-window candidates. This matters: drop-recovery
    re-fetches *old* cursors and self-echoes dedupe by message id. Invariant: a cursor
    that is already durable must never produce a second in-memory row.
-8. **Recovery paths persist-only below the window.** `multiDevice` catch-up merges and
-   drop-recovery folds recovered messages that fall below the window straight into
-   storage instead of the reactive array; their `.some()`/Set scans over the full array
-   become cursor-set + point checks. (`markOwnCommitLost`'s in-memory row removal keeps
+8. **Recovery paths stay window-safe by construction.** `multiDevice` catch-up merges and
+   drop-recovery folds run through the same cursor-dedupe merge as ingest (a re-offered
+   durable row becomes a window reload, never a duplicate), and the cap bounds their
+   growth. `unrecoveredDropHorizon`'s "row exists" check is window-scoped: a
+   recovered-but-evicted row re-triggers one recovery fetch whose ingest then no-ops
+   (durable cursors are seen). (`markOwnCommitLost`'s in-memory row removal keeps
    today's semantics unchanged.)
 9. **Search is always-deep (no button).** Window results return synchronously; an IDB
    scan backfills older results progressively (worker, chunked). The scan runs
@@ -71,10 +73,11 @@ render layer becomes windowed.
    newest-first order (annotations are always newer than their targets), and reaction
    matches resolve target snippets via ≤50 point lookups. UI: progressive list with a
    quiet "searching older messages…" line.
-10. **Prepend anchoring.** First try upgrading `@tanstack/svelte-virtual` to the
-    release with `anchorTo: 'end'`/`followOnAppend` (it also deletes the hand-rolled
-    bottom-pin math); fallback is capture-key/offset compensation on prepend. The
-    `scrollRun` guards in `ChatMessageList` must survive data changes mid-jump.
+10. **Prepend anchoring** is hand-rolled around the load call (scroll-height delta
+    restore, refined by TanStack's item-size anchoring): exact unless new arrivals land
+    in the same update. Upgrading `@tanstack/svelte-virtual` to
+    `anchorTo: 'end'`/`followOnAppend` remains the phase-3 option — deferred to avoid
+    swapping the scroll system without device testing.
 
 ## Gotcha map (code that assumes complete in-memory history)
 
@@ -115,8 +118,9 @@ render layer becomes windowed.
 
 - [x] 1a — storage page reads (`getGroupMessagesPage`) + `putGroup` cursor memo.
 - [x] 1b — unread ledger + backfill; presence summaries off full-history scans.
-- [ ] 1c — windowed store (decision 1), ingest dedupe (7), recovery persist-only (8),
-      `loadMessagesAround` + jump call sites (5-6), prepend anchoring (10).
+- [x] 1c — windowed store (decision 1), ingest dedupe (7), recovery merge semantics (8),
+      `loadChatGroupMessagesAround` + jump call sites (5-6), prepend anchoring (10).
+      Backup export reads full history from storage.
 - [ ] 2 — always-deep search (9).
 - [ ] 3 — optional: write-through at ingest, persisted search index, only if metrics
       from 1-2 say so.
