@@ -6,8 +6,7 @@
 </script>
 
 <script lang="ts">
-	import { getContext } from 'svelte';
-	import { untrack } from 'svelte';
+	import { getContext, untrack } from 'svelte';
 	import type { HTMLImgAttributes } from 'svelte/elements';
 	import { cn, type WithElementRef } from '$lib/utils.js';
 	import { AVATAR_STATUS_KEY, type AvatarStatusContext } from './avatar-context.js';
@@ -58,5 +57,11 @@
 	style:display={avatar.status === 'loaded' ? 'block' : 'none'}
 	{style}
 	class={cn('aspect-square size-full rounded-full object-cover', className)}
+	onerror={() => {
+		// A warm src can still die later (expired link, deleted avatar): drop it so
+		// the fallback shows and the next mount re-probes instead of trusting it.
+		if (src) loadedSrcs.delete(src);
+		avatar.set('error');
+	}}
 	{...restProps}
 />
