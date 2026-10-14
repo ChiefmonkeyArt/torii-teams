@@ -51,7 +51,7 @@ render layer becomes windowed.
    its measured-row convergence; an unloaded target loads its page first, then scrolls.
 6. **First-unread edge (the sharp one).** `ChatShell` computes the focus id
    synchronously during render on purpose (an effect-set focus loses the race to the
-   bottom-pin — see the comment at `initialFocusMessageId`). When the first unread is
+   bottom-pin — see the comment at `initialFocusCursor`). When the first unread is
    inside the loaded window: unchanged synchronous path. When it is below the window
    (unread backlog deeper than the window): compute the focus from the ledger cursor,
    load the page around it before the list mounts (brief loading state), and match the
@@ -94,7 +94,7 @@ render layer becomes windowed.
 | `chatGroupSessions.svelte.ts` `messages: [...group.messages]` | full copy per op | becomes O(window) automatically |
 | `chatStorage.ts` `putGroup` `getAllKeys` diff | whole-history keys per persist | memo (decision 3, landed) |
 | `multiDevice.svelte.ts:~2725-3020` catch-up merge/sort, `.some()` scans | array = all stored | decision 8 |
-| `ChatShell.svelte` `?message=` effect, `handleJumpToMessage`, `initialFocusMessageId` | target in `messages` | `loadMessagesAround` (decisions 5-6) |
+| `ChatShell.svelte` `?message=` effect, `handleJumpToMessage`, `initialFocusCursor` | target in `messages` | `loadChatGroupMessagesAround` (decisions 5-6) |
 | `chatMessageSearch.ts` | searches loaded messages | decision 9 |
 | `chatGroupDisplay.ts`, `chatAttention.svelte.ts` | tail-only reads | already window-safe |
 
