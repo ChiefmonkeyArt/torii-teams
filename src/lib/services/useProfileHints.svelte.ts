@@ -6,6 +6,12 @@ import type { ProfileContent } from 'applesauce-core/helpers';
 
 export type ProfileHints = Record<string, ProfileContent>;
 
+// Session-wide profile cache, keyed by pubkey: survives component remounts, so
+// a rebuilt chat list paints real avatars on the first frame instead of
+// fallback-then-pop (the $effect below runs after first paint — too late to
+// seed a mount). Metadata rarely changes; the live subscription still updates it.
+const profileContentCache = new Map<string, ProfileContent>();
+
 export interface UseProfileHintsOptions {
 	/** When non-empty, triggers a deduplicated profile metadata fetch for each pubkey. */
 	relays?: string[];
@@ -23,6 +29,13 @@ export function useProfileHints(
 	opts: UseProfileHintsOptions = {}
 ): ProfileHints {
 	const hints = $state<ProfileHints>({});
+
+	// Synchronous warm seed for the initial pubkey set (the reactive tail of the
+	// list is the effect's job).
+	for (const pubkey of getPubkeys()) {
+		const cached = profileContentCache.get(pubkey);
+		if (cached) hints[pubkey] = cached;
+	}
 
 	$effect(() => {
 		const pubkeys = [...new SvelteSet(getPubkeys())];
@@ -51,6 +64,7 @@ export function useProfileHints(
 						return;
 					}
 					hints[pubkey] = next;
+					profileContentCache.set(pubkey, next);
 				})
 			);
 
