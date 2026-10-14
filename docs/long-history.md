@@ -65,14 +65,16 @@ render layer becomes windowed.
    recovered-but-evicted row re-triggers one recovery fetch whose ingest then no-ops
    (durable cursors are seen). (`markOwnCommitLost`'s in-memory row removal keeps
    today's semantics unchanged.)
-9. **Search is always-deep (no button).** Window results return synchronously; an IDB
-   scan backfills older results progressively (worker, chunked). The scan runs
-   **newest-first and short-circuits** once 50 results are newer than the scan cursor —
-   results sort `createdAt` desc with `limit: 50`, so a stopped scan is result-identical
-   to a full one. Edit/delete parity with `getSearchableMessages()` falls out of
-   newest-first order (annotations are always newer than their targets), and reaction
-   matches resolve target snippets via ≤50 point lookups. UI: progressive list with a
-   quiet "searching older messages…" line.
+9. **Search is always-deep (no button).** Window results return synchronously; the
+   deep scan backfills older results from storage progressively, newest-first per
+   group, one IDB page at a time on the main thread (every read yields; each
+   keystroke cancels the previous scan). Edit/delete parity with
+   `getSearchableMessages()` is exact: deletes and edits pend until their target
+   row streams by so the author/kind validation sees it, and reaction matches
+   resolve the same way (unsolved at scan end are skipped, like the sync pass).
+   A newest-first early-out was dropped on purpose — results sort by `createdAt`
+   and sender clocks skew, so a stopped scan could differ from a full one. UI:
+   progressive list with a quiet "searching older messages…" line.
 10. **Prepend anchoring** is hand-rolled around the load call (scroll-height delta
     restore, refined by TanStack's item-size anchoring): exact unless new arrivals land
     in the same update. Upgrading `@tanstack/svelte-virtual` to
@@ -121,7 +123,7 @@ render layer becomes windowed.
 - [x] 1c — windowed store (decision 1), ingest dedupe (7), recovery merge semantics (8),
       `loadChatGroupMessagesAround` + jump call sites (5-6), prepend anchoring (10).
       Backup export reads full history from storage.
-- [ ] 2 — always-deep search (9).
+- [x] 2 — always-deep search (9).
 - [ ] 3 — optional: write-through at ingest, persisted search index, only if metrics
       from 1-2 say so.
 
