@@ -12,13 +12,21 @@
 		searchChatContent,
 		type ChatContentSearchResults
 	} from '$lib/services/chatContentSearch';
-	import type { ChatMessageSearchResult } from '$lib/services/chatMessageSearch';
+	import type {
+		ChatMessageSearchHandle,
+		ChatMessageSearchResult
+	} from '$lib/services/chatMessageSearch';
+	import {
+		mergeChatMessageSearchResults,
+		searchChatMessagesDeep
+	} from '$lib/services/chatMessageSearch';
 	import { resolveSearchQuery } from '$lib/services/chatSearchKeywords';
 	import { listChatGroupMembers, listChatGroups } from '$lib/services/chatGroups.svelte';
 	import { groupRouteId } from '$lib/services/chatGroupLinks.svelte';
 	import { useProfileHints } from '$lib/services/useProfileHints.svelte';
 	import { metadataRelays } from '$lib/services/relay-pool';
 	import { normalizePubKey } from '$lib/utils';
+	import { untrack } from 'svelte';
 
 	let {
 		groupId
@@ -60,8 +68,16 @@
 				})
 			: emptyResults
 	);
+	let deepMessageResults = $state<ChatMessageSearchResult[]>([]);
+	let searchingOlder = $state(false);
+	let deepSearchHandle: ChatMessageSearchHandle | null = null;
+	// Instant window hits merged with the deep-scan backfill (deduped by key).
+	const visibleResults = $derived.by<ChatContentSearchResults>(() => ({
+		...searchResults,
+		messages: mergeChatMessageSearchResults(searchResults.messages, deepMessageResults)
+	}));
 	const resultCount = $derived(
-		searchResults.people.length + searchResults.groups.length + searchResults.messages.length
+		visibleResults.people.length + visibleResults.groups.length + visibleResults.messages.length
 	);
 
 	// Same 200ms settle as the sidebar search: the fold runs over every stored
@@ -72,6 +88,34 @@
 			debouncedSearchQuery = nextQuery;
 		}, 200);
 		return () => clearTimeout(timer);
+	});
+
+	// Always-deep search (docs/long-history.md decision 9): the sync pass above
+	// answers from the loaded windows instantly, this backfills everything below
+	// them from storage, newest-first, in batches. Every keystroke cancels the
+	// previous scan.
+	$effect(() => {
+		const query = resolvedSearchQuery;
+		const searching = isSearching;
+		const scope = groupId;
+		deepMessageResults = [];
+		if (!searching) {
+			searchingOlder = false;
+			return;
+		}
+		searchingOlder = true;
+		const options = untrack(() => ({
+			activePubkey: $activeAccount?.pubkey,
+			profileHints
+		}));
+		const handle = searchChatMessagesDeep(query, { ...options, groupId: scope }, (batch) => {
+			deepMessageResults = mergeChatMessageSearchResults(deepMessageResults, batch);
+		});
+		deepSearchHandle = handle;
+		void handle.done.then(() => {
+			if (deepSearchHandle === handle) searchingOlder = false;
+		});
+		return () => handle.cancel();
 	});
 
 	function closeAndGoto(href: string) {
@@ -124,8 +168,9 @@
 		{#if isSearching}
 			<div class="max-h-[60vh] overflow-y-auto">
 				<ChatSearchResults
-					results={searchResults}
+					results={visibleResults}
 					query={debouncedSearchQuery.trim()}
+					searching={searchingOlder}
 					onSelectPerson={(pubkey) =>
 						closeAndGoto(resolve('/p/[identifier]', { identifier: nip19.npubEncode(pubkey) }))}
 					onSelectGroup={(selectedGroupId) =>

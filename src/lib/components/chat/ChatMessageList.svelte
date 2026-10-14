@@ -13,7 +13,9 @@
 	let {
 		messages,
 		groupId = '',
-		initialFocusMessageId = '',
+		initialFocusCursor = 0,
+		ensureMessage,
+		onLoadOlder,
 		onReply = () => {},
 		onReact = () => Promise.resolve(),
 		onUnreact = () => Promise.resolve(),
@@ -35,9 +37,16 @@
 		 *  stacked above scroll-to-bottom (moved out of the composer). */
 		unreadReferenceCount?: number;
 		onNavigateToReference?: () => void | Promise<void>;
-		/** Open-at-first-unread target ("<eventId>:<cursor>"), set once per group
-		 *  by ChatShell on open. Empty → open at the bottom. */
-		initialFocusMessageId?: string;
+		/** Open-at-first-unread target cursor, set once per group by ChatShell on
+		 *  open (0 = open at the bottom). Cursor-based so a gap start below the
+		 *  loaded window can be loaded before landing (docs/long-history.md). */
+		initialFocusCursor?: number;
+		/** Load the history page around `cursor` (windowed history: jump and focus
+		 *  targets may not be loaded yet). */
+		ensureMessage?: (cursor: number) => Promise<void>;
+		/** Load the next history page below the window; returns the rows fetched
+		 *  (falsy = the group's history start was reached). */
+		onLoadOlder?: () => Promise<number | void>;
 		onReply?: (message: ChatMessage) => void;
 		onReact?: (message: ChatMessage, reaction: string) => void | Promise<void>;
 		onUnreact?: (message: ChatMessage, reaction: string) => void | Promise<void>;
@@ -62,11 +71,14 @@
 	let wasAtBottom = true;
 	let showScrollToBottom = $state(false);
 	let suppressNextAutoScroll = false;
-	// Open-at-first-unread bookkeeping: the focus id already consumed, and a
+	// Open-at-first-unread bookkeeping: the focus cursor already consumed, and a
 	// monotonic token so a newer programmatic scroll invalidates older in-flight
 	// ones (mount → focus and group-switch → focus can overlap mid-await).
-	let consumedFocusId = '';
+	let consumedFocusCursor = 0;
 	let scrollRun = 0;
+	// History paging (docs/long-history.md): scroll-up prepends older pages.
+	let historyExhaustedForGroup = '';
+	let loadOlderInFlight = false;
 	// The scrollRun value of the last COMPLETED programmatic flight. While
 	// scrollRun !== settledRun a flight is mid-air and the visible window is
 	// transient (focus jumps pass over the tail) — visibility-based read
@@ -109,6 +121,12 @@
 
 	const virtualItems = $derived($virtualizer.getVirtualItems());
 	const totalSize = $derived($virtualizer.getTotalSize());
+	// The "New messages" line rides the row the focus flight lands on (the first
+	// row at/after the focus cursor — the gap start may fall between cursors).
+	const focusMarkerId = $derived.by(() => {
+		if (initialFocusCursor <= 0) return '';
+		return messages.find((message) => (message.cursor ?? 0) >= initialFocusCursor)?.id ?? '';
+	});
 
 	async function scrollToLatestMessage() {
 		const run = ++scrollRun;
@@ -167,14 +185,24 @@
 	// Open-at-first-unread: land with the first unread message (and its "New
 	// messages" marker) at the TOP of the viewport, WhatsApp-style. The final
 	// position comes from DOM geometry (not another scrollToIndex) so late
-	// measurements can't drift it. Returns false when the target isn't in the
-	// list (consumer falls back to the bottom-pin).
-	async function scrollToFocusMessage(messageId: string): Promise<boolean> {
+	// measurements can't drift it. Cursor-based: the gap start may sit below the
+	// loaded window, so load its page first (decision 6). Returns false when no
+	// row renders at/after the cursor (consumer falls back to the bottom-pin).
+	async function scrollToFocusMessage(focusCursor: number): Promise<boolean> {
 		if (!browser || !container) return false;
-		const index = messages.findIndex((message) => message.id === messageId);
+		let index = messages.findIndex((message) => (message.cursor ?? 0) >= focusCursor);
+		if (index === -1 && ensureMessage) {
+			// Hold the focus flight across the load: no bottom-pin may claim the
+			// scroll while the page loads.
+			wasAtBottom = false;
+			suppressNextAutoScroll = true;
+			await ensureMessage(focusCursor);
+			await tick();
+			index = messages.findIndex((message) => (message.cursor ?? 0) >= focusCursor);
+		}
 		if (index === -1) return false;
 
-		consumedFocusId = messageId;
+		consumedFocusCursor = focusCursor;
 		// The focus flight owns the scroll: mark "not at bottom" so no auto-scroll
 		// actor (message-arrival effect re-runs, the container RO, the totalSize
 		// re-pin) can race it back to the latest message mid-flight.
@@ -251,6 +279,38 @@
 	function handleScroll() {
 		updateBottomState();
 		scheduleVisibleUnreadReferenceCheck();
+		if (container && container.scrollTop < 240) void handleLoadOlder();
+	}
+
+	// Composite message keys are `${eventId}:${cursor}` (raw event ids carry no
+	// colon) — the cursor is what pages below the window.
+	function parseMessageKeyCursor(messageKey: string): number | undefined {
+		const at = messageKey.lastIndexOf(':');
+		if (at === -1) return undefined;
+		const cursor = Number(messageKey.slice(at + 1));
+		return Number.isFinite(cursor) && cursor >= 0 ? cursor : undefined;
+	}
+
+	// Scroll-up paging: the anchor math keeps the reading position fixed while
+	// rows splice in above. shortcut: exact unless new arrivals land in the same
+	// update (their height over-shifts the correction slightly); TanStack's
+	// item-size anchoring refines the rest.
+	async function handleLoadOlder() {
+		if (!onLoadOlder || loadOlderInFlight || historyExhaustedForGroup === groupId) return;
+		loadOlderInFlight = true;
+		const beforeHeight = container?.scrollHeight ?? 0;
+		const beforeTop = container?.scrollTop ?? 0;
+		try {
+			const loaded = await onLoadOlder();
+			await tick();
+			if (container) {
+				container.scrollTop = beforeTop + (container.scrollHeight - beforeHeight);
+			}
+			measureVisibleItems();
+			if (!loaded) historyExhaustedForGroup = groupId;
+		} finally {
+			loadOlderInFlight = false;
+		}
 	}
 
 	// DOM-anchored positioning (immune to virtualizer estimate error above the
@@ -310,7 +370,6 @@
 	$effect(() => {
 		const messageCount = messages.length;
 		const lastMessageId = messages.at(-1)?.id;
-		const focusId = initialFocusMessageId;
 		if (!browser || !container) return;
 		untrack(() => {
 			$virtualizer.setOptions({
@@ -321,6 +380,7 @@
 		});
 
 		const shouldScroll = wasAtBottom;
+		const focusCursor = initialFocusCursor;
 		void tick().then(async () => {
 			void messageCount;
 			void lastMessageId;
@@ -331,7 +391,9 @@
 				// Land on the first unread message when the chat opens with one;
 				// otherwise keep the classic bottom-pin for new arrivals.
 				const focused =
-					Boolean(focusId) && focusId !== consumedFocusId && (await scrollToFocusMessage(focusId));
+					focusCursor > 0 &&
+					focusCursor !== consumedFocusCursor &&
+					(await scrollToFocusMessage(focusCursor));
 				if (!focused && shouldScroll) await scrollToLatestMessage();
 			}
 			updateBottomState();
@@ -361,9 +423,26 @@
 		// unavailable-parent stubs carry it (no cursor yet), while rendered
 		// messages match on their composite `${eventId}:${cursor}` id. Raw ids
 		// can't collide with composite ones (no colon).
-		const messageIndex = messages.findIndex(
+		let messageIndex = messages.findIndex(
 			(message) => message.id === messageId || message.eventId === messageId
 		);
+		// Windowed history (docs/long-history.md): the target may not be loaded.
+		// Composite keys carry the cursor, so load its page and retry; raw event
+		// ids can't be resolved below the window (no id index) and no-op as before.
+		if (messageIndex === -1 && ensureMessage) {
+			const cursor = parseMessageKeyCursor(messageId);
+			if (cursor === undefined) return;
+			suppressNextAutoScroll = true;
+			await ensureMessage(cursor);
+			await tick();
+			messageIndex = messages.findIndex(
+				(message) => message.id === messageId || message.eventId === messageId
+			);
+			if (messageIndex === -1) {
+				suppressNextAutoScroll = false;
+				return;
+			}
+		}
 		if (messageIndex === -1) return;
 		const targetId = messages[messageIndex].id;
 
@@ -440,7 +519,7 @@
 								showAuthor={runHead}
 								showAvatar={runTail}
 								showDayLabel={previousMessage?.dayLabel !== message.dayLabel}
-								showUnreadMarker={message.id === initialFocusMessageId}
+								showUnreadMarker={message.id === focusMarkerId}
 								{onReply}
 								{onReact}
 								{onUnreact}

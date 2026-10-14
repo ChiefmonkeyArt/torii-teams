@@ -51,11 +51,14 @@
 	import { type StoredChatSystemMessageData } from '$lib/services/chatGroupMessages.svelte';
 	import { formatUnixTimestamp, normalizePubKey, samePubKey } from '$lib/utils';
 	import {
+		ensureChatGroupWindow,
 		getChatGroup,
 		isChatGroupRemoved,
 		isChatGroupPoisoned,
 		listChatGroupMembers,
-		listChatGroupMessages
+		listChatGroupMessages,
+		loadChatGroupMessagesAround,
+		loadOlderChatGroupMessages
 	} from '$lib/services/chatGroups.svelte';
 	import type { StoredChatMessage } from '$lib/services/chatGroupMessages.svelte';
 	import { serializeChatProfileMentions } from '$lib/services/chatMentions';
@@ -1071,32 +1074,43 @@
 		selectedDetailEventId = null;
 	}
 
-	// Open-at-first-unread: which rendered message the list should land on when
-	// the chat opens. Computed during render (not in an effect) so the message
-	// list mounts with the focus id already in hand — an effect-set prop arrives
+	// Open-at-first-unread: which rendered row the list should land on when the
+	// chat opens. Computed during render (not in an effect) so the message list
+	// mounts with the focus cursor already in hand — an effect-set prop arrives
 	// one flush late, the list bottom-pins first, and that in-flight pin keeps
 	// the virtual window at the tail so the focus row never renders. Snapshotted
 	// once per group; the read cursor only advances with visibility, so the
 	// unread gap persists until actually read and a mid-backlog exit resumes
 	// here next open. Live arrivals while the chat is open never re-focus. A
-	// ?message= deep link wins
-	// (its own effect scrolls to the target).
+	// ?message= deep link wins (its own effect scrolls to the target).
+	// Windowed history (docs/long-history.md decision 6): when the unread gap
+	// starts below the loaded window, focus the gap start and let the list load
+	// its page before landing.
 	let snapshotGroupId = '';
-	let snapshotFocusId = '';
-	const initialFocusMessageId = $derived.by(() => {
+	let snapshotFocusCursor = 0;
+	const initialFocusCursor = $derived.by(() => {
 		if (snapshotGroupId !== groupId) {
 			snapshotGroupId = groupId;
-			const firstUnread = page.url.searchParams.get('message')
-				? undefined
-				: storedMessages.find(
-						(message) =>
-							message.cursor > getChatGroupLastReadCursor(groupId) &&
-							message.kind !== SYSTEM_MESSAGE_KIND &&
-							!isStreamHiddenKind(message.kind)
-					);
-			snapshotFocusId = firstUnread ? `${firstUnread.id}:${firstUnread.cursor}` : '';
+			const lastReadCursor = getChatGroupLastReadCursor(groupId);
+			const unreadExists = Boolean(group && group.lastCursor > lastReadCursor);
+			if (page.url.searchParams.get('message') || !unreadExists) {
+				snapshotFocusCursor = 0;
+			} else {
+				const firstUnread = storedMessages.find(
+					(message) =>
+						message.cursor > lastReadCursor &&
+						message.kind !== SYSTEM_MESSAGE_KIND &&
+						!isStreamHiddenKind(message.kind)
+				);
+				const windowFloor = storedMessages[0]?.cursor ?? Infinity;
+				snapshotFocusCursor = firstUnread
+					? firstUnread.cursor
+					: windowFloor > lastReadCursor
+						? lastReadCursor + 1
+						: 0;
+			}
 		}
-		return snapshotFocusId;
+		return snapshotFocusCursor;
 	});
 
 	// Read-marking follows visibility (Signal-Desktop-style): the message list
@@ -1117,6 +1131,12 @@
 		if (!messageListRef) return; // wait for the list to mount before claiming handled
 		handledMessageTarget = targetMessage;
 		void messageListRef.scrollToMessage(targetMessage);
+	});
+
+	// Grow the open group's window to the full tail (docs/long-history.md).
+	$effect(() => {
+		if (!groupId) return;
+		untrack(() => void ensureChatGroupWindow(groupId));
 	});
 </script>
 
@@ -1169,7 +1189,9 @@
 					bind:this={messageListRef}
 					{messages}
 					{groupId}
-					{initialFocusMessageId}
+					{initialFocusCursor}
+					ensureMessage={(cursor) => loadChatGroupMessagesAround(groupId, cursor)}
+					onLoadOlder={() => loadOlderChatGroupMessages(groupId)}
 					unreadReferenceCount={unreadReferenceTargets.length}
 					onNavigateToReference={navigateToNextReference}
 					onReply={handleReply}

@@ -35,6 +35,8 @@ import {
 	markChatGroupMentionsRead,
 	markChatGroupRead
 } from './chatGroupPresence.svelte';
+import { getChatStorage } from '$lib/storage/chatStorage';
+import { refreshMessageLedgersForGroups } from '$lib/services/chatUnreadLedger.svelte';
 
 const MEMBER = 'cc'.repeat(32);
 const MENTIONED = 'dd'.repeat(32);
@@ -302,5 +304,38 @@ describe('chat group presence unread scans', () => {
 		expect(targets).toHaveLength(1);
 		expect(targets[0]?.reference.id).toBe(`${id}-vote`);
 		expect(targets[0]?.target.id).toBe(`${id}-poll`);
+	});
+});
+
+describe('unread ledger below the loaded window', () => {
+	test('counts ledger rows the window no longer holds without double-counting loaded ones', async () => {
+		const id = 'presence-ledger-counts';
+		seedGroup(id, [30, 40]); // the loaded window
+		const storage = await getChatStorage();
+		await storage.putMessageLedgerRows([
+			{ groupId: id, cursor: 10, countable: true },
+			{ groupId: id, cursor: 20, countable: true },
+			{ groupId: id, cursor: 30, countable: true } // loaded → counted by the window
+		]);
+		await refreshMessageLedgersForGroups([id], account.pubkey);
+
+		expect(getUnreadChatGroupMessageCount(id)).toBe(4); // 10, 20 + window 30, 40
+		markChatGroupRead(id, 30);
+		expect(getUnreadChatGroupMessageCount(id)).toBe(1); // only 40
+	});
+
+	test('lists ledger mention rows below the window and skips loaded ones', async () => {
+		const id = 'presence-ledger-mentions';
+		seedGroup(id, [30]); // cursor 30 mentions MENTIONED (index 0 carries the p tag)
+		const storage = await getChatStorage();
+		await storage.putMessageLedgerRows([
+			{ groupId: id, cursor: 5, refTargetId: 'ev-5' },
+			{ groupId: id, cursor: 30, refTargetId: `${id}-0` } // loaded → listed once
+		]);
+		await refreshMessageLedgersForGroups([id], account.pubkey);
+
+		const targets = listUnreadChatGroupReferenceTargets(id, MENTIONED);
+		expect(targets.map((entry) => entry.reference.cursor)).toEqual([5, 30]);
+		expect(targets[1]?.target.id).toBe(`${id}-0`);
 	});
 });

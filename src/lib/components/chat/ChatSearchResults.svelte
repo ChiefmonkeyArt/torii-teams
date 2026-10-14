@@ -8,12 +8,15 @@
 	let {
 		results,
 		query,
+		searching = false,
 		onSelectPerson,
 		onSelectGroup,
 		onSelectMessage
 	}: {
 		results: ChatContentSearchResults;
 		query: string;
+		/** Deep-scan backfill still running (older history may still match). */
+		searching?: boolean;
 		onSelectPerson: (pubkey: string) => void;
 		onSelectGroup: (groupId: string) => void;
 		onSelectMessage: (result: ChatMessageSearchResult) => void;
@@ -44,11 +47,19 @@
 	</div>
 
 	{#if results.people.length === 0 && results.groups.length === 0 && results.messages.length === 0}
-		<div
-			class="rounded-xl border border-dashed border-border px-3 py-4 text-sm text-muted-foreground"
-		>
-			No results found for “{query}”.
-		</div>
+		{#if searching}
+			<div
+				class="rounded-xl border border-dashed border-border px-3 py-4 text-sm text-muted-foreground"
+			>
+				Searching older messages…
+			</div>
+		{:else}
+			<div
+				class="rounded-xl border border-dashed border-border px-3 py-4 text-sm text-muted-foreground"
+			>
+				No results found for “{query}”.
+			</div>
+		{/if}
 	{:else}
 		{#if results.people.length > 0}
 			{@render sectionLabel('People')}
@@ -129,6 +140,9 @@
 					</button>
 				{/each}
 			</div>
+		{/if}
+		{#if searching}
+			<p class="px-1 pt-1 text-xs text-muted-foreground">Searching older messages…</p>
 		{/if}
 	{/if}
 </div>

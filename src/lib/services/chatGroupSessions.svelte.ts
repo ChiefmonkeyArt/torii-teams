@@ -38,6 +38,8 @@ export interface PersistedChatGroupLike {
 }
 
 export interface WorkingChatGroupSession {
+	/** Group id (StoredChatGroup); optional for bare test sessions. */
+	id?: string;
 	state: ClientState;
 	metadata?: CordnGroupMetadata;
 	lastCursor: number;
@@ -61,6 +63,7 @@ export function createWorkingChatGroupSession(
 	state: ClientState
 ): WorkingChatGroupSession {
 	return {
+		id: group.id,
 		state,
 		metadata: group.metadata,
 		lastCursor: group.lastCursor,

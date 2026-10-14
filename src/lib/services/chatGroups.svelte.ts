@@ -109,6 +109,18 @@ import {
 	type ChatGroupStateSnapshot
 } from '$lib/services/chatGroupSnapshots';
 import { advanceNativeCursor, groupFetchWatermark } from '$lib/services/nativeBridge';
+import {
+	buildMessageLedgerRows,
+	refreshMessageLedgersForGroups
+} from '$lib/services/chatUnreadLedger.svelte';
+import {
+	capWindowRows,
+	HISTORY_PAGE_ROWS,
+	IDLE_WINDOW_ROWS,
+	MAX_WINDOW_ROWS,
+	mergeWindowMessages,
+	TAIL_WINDOW_ROWS
+} from '$lib/services/chatGroupWindows';
 
 const groupIdDecoder = new TextDecoder();
 
@@ -213,12 +225,90 @@ export const chatGroupsStore = $state<{ groups: StoredChatGroup[] }>({
  *  mutate a store array or message in place or its readers go stale. */
 export class StoredChatMessageList extends Array<StoredChatMessage> {}
 
-/** Wrap a group's history for the reactive store — see StoredChatMessageList. */
+/** Wrap a group's history for the reactive store — see StoredChatMessageList.
+ *  Also the ingest-side window cap ('low'): working sessions append freely,
+ *  the store never grows past MAX_WINDOW_ROWS. */
 function asStoredGroup(group: StoredChatGroup): StoredChatGroup {
-	if (group.messages instanceof StoredChatMessageList) return group;
-	const messages = new StoredChatMessageList();
-	for (const message of group.messages) messages.push(message);
-	return { ...group, messages };
+	if (group.messages instanceof StoredChatMessageList && group.messages.length <= MAX_WINDOW_ROWS) {
+		return group;
+	}
+	return { ...group, messages: toWindowList(capWindowRows([...group.messages], 'low')) };
+}
+
+// --- Message windows (docs/long-history.md decision 1) ----------------------
+// The reactive store holds a bounded window per group: a tail that ingest
+// extends, prepend pages for scroll-up history, and around-pages for jumps.
+// Durable storage keeps everything — windows are a read-side concern only,
+// and unread counts stay exact via the ledger (chatUnreadLedger). The merge/
+// cap math lives in chatGroupWindows.
+
+function toWindowList(messages: StoredChatMessage[]): StoredChatMessageList {
+	const list = new StoredChatMessageList();
+	for (const message of messages) list.push(message);
+	return list;
+}
+
+/** Window-only store update: history pages change nothing durable. Merges with
+ *  the CURRENT store rows in one synchronous step — a page fetch must never
+ *  write back the window captured before its await, or rows that arrived during
+ *  the fetch get erased (and the persisted-cursor dedupe then hides them until
+ *  reload). */
+function updateGroupMessagesWindow(groupId: string, incoming: StoredChatMessage[]) {
+	const current = chatGroupsStore.groups.find((group) => group.id === groupId);
+	if (!current) return;
+	const window = toWindowList(
+		capWindowRows(mergeWindowMessages(current.messages, incoming), 'high')
+	);
+	chatGroupsStore.groups = chatGroupsStore.groups.map((group) =>
+		group.id === groupId ? { ...group, messages: window } : group
+	);
+}
+
+/** Grow the window to the open-group tail size (called when a chat opens). */
+export async function ensureChatGroupWindow(groupId: string): Promise<void> {
+	const group = getChatGroup(groupId);
+	if (!group || group.messages.length >= TAIL_WINDOW_ROWS) return;
+	const storage = await getChatStorage();
+	const page = await storage.getGroupMessagesPage(groupId, { limit: TAIL_WINDOW_ROWS });
+	if (page.length === 0) return;
+	updateGroupMessagesWindow(groupId, page);
+}
+
+/** Load the next history page below the window (scroll-up). Returns the rows
+ *  fetched — 0 means the window reached the start of this group's history. */
+export async function loadOlderChatGroupMessages(
+	groupId: string,
+	limit: number = HISTORY_PAGE_ROWS
+): Promise<number> {
+	const group = getChatGroup(groupId);
+	if (!group || group.messages.length === 0) return 0;
+	const storage = await getChatStorage();
+	const page = await storage.getGroupMessagesPage(groupId, {
+		before: group.messages[0].cursor,
+		limit
+	});
+	if (page.length === 0) return 0;
+	updateGroupMessagesWindow(groupId, page);
+	return page.length;
+}
+
+/** Jump support (docs/long-history.md decision 5): load a page centered on
+ *  `cursor`. The page merges into the window; the MAX_WINDOW_ROWS cap bounds
+ *  memory, and unread counts are hole-safe because the ledger covers what the
+ *  window does not hold. */
+export async function loadChatGroupMessagesAround(
+	groupId: string,
+	cursor: number,
+	radius: number = Math.floor(HISTORY_PAGE_ROWS / 2)
+): Promise<void> {
+	const group = getChatGroup(groupId);
+	if (!group) return;
+	const storage = await getChatStorage();
+	const [atOrBelow, above] = await Promise.all([
+		storage.getGroupMessagesPage(groupId, { before: cursor + 1, limit: radius + 1 }),
+		storage.getGroupMessagesPage(groupId, { after: cursor, limit: radius })
+	]);
+	updateGroupMessagesWindow(groupId, [...atOrBelow, ...above]);
 }
 
 function toStoredGroupData(group: StoredChatGroup): StoredChatGroupData {
@@ -255,6 +345,9 @@ function toStoredGroupData(group: StoredChatGroup): StoredChatGroupData {
 		// array), so the reference stays stable while the write is queued.
 		messages: group.messages,
 		syncIssues: group.syncIssues,
+		// Unread-ledger facts for the messages above, derived here where the
+		// owner account is known (docs/long-history.md decision 4).
+		messageLedger: buildMessageLedgerRows(group.id, group.messages, manager.getActive()?.pubkey),
 		snapshots: group.snapshots.map((snapshot) => ({
 			groupId: snapshot.groupId,
 			status: snapshot.status,
@@ -316,7 +409,7 @@ async function loadAndNormalizeChatGroup(
 	storage: ChatStorage,
 	groupId: string
 ): Promise<{ group: StoredChatGroup; changed: boolean }> {
-	const data = await storage.getGroup(groupId);
+	const data = await storage.getGroup(groupId, { messageLimit: IDLE_WINDOW_ROWS });
 	if (!data) {
 		throw new Error(`Stored group ${groupId} not found`);
 	}
@@ -385,6 +478,12 @@ async function loadGroups(ownerPubkey?: string) {
 		void persistGroups(chatGroupsStore.groups);
 	}
 	groupsLoaded = true;
+	// Unread ledger read model: durable rows per group, with the one-time
+	// backfill for histories that predate the ledger.
+	void refreshMessageLedgersForGroups(
+		chatGroupsStore.groups.map((group) => group.id),
+		normalizedOwner
+	);
 }
 
 export async function ensureGroupsLoaded() {
