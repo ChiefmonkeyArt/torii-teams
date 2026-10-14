@@ -538,6 +538,13 @@ const newsReleases: NewsRelease[] = [
 		version: 4,
 		title: 'Snappier chats, quieter background',
 		body: '- ✨ Messages send a beat faster in busy conversations: when a group is already receiving live updates in real time, the app no longer makes an extra network check before sending.\n- 🔄 Long chat histories load more smoothly — repeated crypto work that used to run per message now runs once per conversation update instead.\n- 🔄 Busy groups stay smooth while messages stream in: a conversation holding thousands of messages no longer stutters each time something arrives.\n- 🔄 Incoming messages trigger far less redundant copying and UI bookkeeping, and background coordinator status updates no longer stir the interface when nothing has actually changed.\n- 🐛 On Android, the update banner no longer hides behind the status bar and notch at the top of the screen — its Reload button stays in reach — and toasts now clear the gesture bar at the bottom.\n- 🐛 Inviting someone could fail with "key package not available" when linked devices ended up with different invite keys than the coordinator — devices now keep that key in sync automatically and repair past mismatches on their own, so invites work from any of your devices.'
+	},
+	{
+		id: 'cordn-news-2026-10-14-long-chats',
+		createdAt: Date.UTC(2026, 9, 14),
+		version: 1,
+		title: 'Long chats stay fast, search sees everything',
+		body: "- ✨ Chats with thousands of messages no longer slow down the longer you use the app: history loads in small pages on demand, so switching between chats and scrolling back stays smooth no matter how far back the conversation goes.\n- ✨ Search now looks through a chat's entire history, not just what's on screen: older matches appear as they're found, and edited or deleted messages are handled correctly.\n- ✨ Unread and mention badges stay exact even with a big backlog — no more wrong counts when hundreds of messages piled up while you were away.\n- 🐛 A message that arrived while you were reading older history could stay invisible until the app was restarted.\n- 🔄 Opening a chat with unread messages lands on the first unread one even when the backlog goes back much further than what first loads.\n- 🔄 The app performs far fewer background checks and wake-ups, which means less battery drain and fewer stutters during long sessions."
 	}
 ];
 
