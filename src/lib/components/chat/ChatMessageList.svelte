@@ -379,7 +379,6 @@
 			});
 		});
 
-		const shouldScroll = wasAtBottom;
 		const focusCursor = initialFocusCursor;
 		void tick().then(async () => {
 			void messageCount;
@@ -388,6 +387,10 @@
 			if (suppressNextAutoScroll) {
 				suppressNextAutoScroll = false;
 			} else {
+				// Sampled at decision time, not effect-run time: an ingest batch that
+				// re-runs this effect mid focus-flight must not bottom-pin over it —
+				// the flight has flipped wasAtBottom and owns the scroll by then.
+				const shouldScroll = wasAtBottom;
 				// Land on the first unread message when the chat opens with one;
 				// otherwise keep the classic bottom-pin for new arrivals.
 				const focused =
