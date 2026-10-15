@@ -702,4 +702,32 @@ describe('maintainReachability()', () => {
 		expect(chatKeyPackagesStore.keyPackages).toHaveLength(0);
 		expect(reachabilityStore.uncoveredCoordinatorKeys).toEqual([COORD_A]);
 	});
+
+	test('sweep re-checks immediately when the coordinator set changes, TTL or not', async () => {
+		const { chatKeyPackagesStore, sweepReachability } = await import('./chatKeyPackages.svelte');
+		chatKeyPackagesStore.keyPackages = [makeRecord('kp-lr', [], { isLastResort: true })];
+		// Deterministic clock: the first sweep sees the daily TTL as expired no
+		// matter what earlier tests stamped; the second runs purely because the
+		// coordinator set changed.
+		const realNow = Date.now();
+		const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(realNow + 25 * 60 * 60 * 1000);
+		try {
+			listKnownCoordinatorKeysMock.mockReturnValue([COORD_A]);
+			serve({ [COORD_A]: [] });
+			await sweepReachability();
+			expect(publishKeyPackageMock).toHaveBeenCalledTimes(1);
+
+			// A new coordinator appears mid-session (e.g. joining a group on it).
+			listKnownCoordinatorKeysMock.mockReturnValue([COORD_A, COORD_B]);
+			serve({
+				[COORD_A]: [{ pk: OWNER, kp_ref: 'kp-lr', last_resort: true, at: 1 }],
+				[COORD_B]: []
+			});
+			await sweepReachability();
+
+			expect(publishKeyPackageMock).toHaveBeenCalledTimes(2);
+		} finally {
+			nowSpy.mockRestore();
+		}
+	});
 });

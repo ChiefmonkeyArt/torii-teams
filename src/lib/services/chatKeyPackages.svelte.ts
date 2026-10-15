@@ -924,6 +924,8 @@ export function getAutoPublishKeyPackages(): boolean {
 
 export function setAutoPublishKeyPackages(value: boolean): void {
 	autoPublishKeyPackagesSetting.set(value);
+	// Turning it on takes effect now, not at the next sweep.
+	if (value) void maintainReachability({ publish: true });
 }
 
 /**
@@ -971,6 +973,15 @@ export function summarizeCoordinatorReachability(input: {
 
 let maintainReachabilityChain: Promise<void> = Promise.resolve();
 let lastMaintainOwnerPubkey = '';
+let lastMaintainAt = 0;
+let lastMaintainFingerprint = '';
+
+/** Account + coordinator set — a change here means new coverage obligations. */
+function reachabilityFingerprint(ownerPubkey: string): string {
+	return `${ownerPubkey}|${dedupeStrings(listKnownCoordinatorKeys().map(normalizePubKey))
+		.sort()
+		.join(',')}`;
+}
 
 /**
  * Keep the account reachable on every known coordinator: verify what each one
@@ -1003,6 +1014,12 @@ async function runMaintainReachability(options: { publish?: boolean }): Promise<
 	const heldRefs = new Set(localKeyPackages.map((entry) => entry.keyPackageRef));
 	const holdsLastResort = localKeyPackages.some((entry) => entry.isLastResort);
 	const coordinatorKeys = dedupeStrings(listKnownCoordinatorKeys().map(normalizePubKey));
+	// Sweep dedupe stamp: the heartbeat sweep skips while this holds — a
+	// changed account or coordinator set (a group's coordinator, an added one)
+	// re-checks immediately, so a newly joined coordinator publishes without
+	// waiting for the TTL or a reload.
+	lastMaintainFingerprint = reachabilityFingerprint(ownerPubkey);
+	lastMaintainAt = Date.now();
 
 	// Parallel observation: one offline coordinator must not stall the rest
 	// (same as reconcilePublishedKeyPackagesForActiveAccount).
@@ -1067,20 +1084,25 @@ async function runMaintainReachability(options: { publish?: boolean }): Promise<
 }
 
 const REACHABILITY_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
-let lastReachabilitySweepAt = 0;
 
 /**
  * Heartbeat-ridden staleness sweep for reachability — rides the watch
  * heartbeat with a TTL, no extra timer (same pattern as
  * sweepStaleCoordinatorRelays): re-verifies coverage at most daily and
  * republishes whatever a coordinator lost (consumed, evicted, data loss)
- * during a long-lived session. No-throw; a logged-out account is a no-op.
+ * during a long-lived session — and immediately when the account or the
+ * coordinator set changes, so a newly joined coordinator publishes without
+ * waiting for the TTL or a reload. No-throw; a logged-out account is a no-op.
  */
 export async function sweepReachability(): Promise<void> {
-	const now = Date.now();
-	if (now - lastReachabilitySweepAt < REACHABILITY_SWEEP_INTERVAL_MS) return;
-	lastReachabilitySweepAt = now;
 	try {
+		if (!manager.getActive()) return;
+		const ownerPubkey = normalizePubKey(getActivePubkey());
+		if (
+			reachabilityFingerprint(ownerPubkey) === lastMaintainFingerprint &&
+			Date.now() - lastMaintainAt < REACHABILITY_SWEEP_INTERVAL_MS
+		)
+			return;
 		await maintainReachability();
 	} catch (error) {
 		console.debug(
