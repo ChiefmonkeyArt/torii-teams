@@ -9,6 +9,7 @@
 		type PollOptionResult
 	} from '$lib/chat/polls';
 	import type { InlineBodyProps } from '$lib/chat/registry';
+	import MessageParts from '$lib/chat/inline/MessageParts.svelte';
 	import { listChatGroupMessages } from '$lib/services/chatGroups.svelte';
 	import { manager } from '$lib/services/accountManager.svelte';
 	import { cn, normalizePubKey } from '$lib/utils';
@@ -129,7 +130,9 @@
 				isOwn && 'text-primary-foreground'
 			)}
 		>
-			{definition.question}
+			<!-- The question renders through the shared message-parts lane: links,
+				mentions and pasted media behave as in any message, auto-load gate included. -->
+			<MessageParts messageId={message.eventId} text={definition.question} {isOwn} />
 		</p>
 		<div class="mt-2 flex flex-col gap-1.5">
 			{#each options as option (option.id)}

@@ -2,6 +2,7 @@
 	import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
 
 	import { buildPollTally, getMessagePollDefinition, type PollOptionResult } from '$lib/chat/polls';
+	import MessageParts from '$lib/chat/inline/MessageParts.svelte';
 	import type { RichBodyProps } from '$lib/chat/registry';
 	import ProfileCard from '$lib/components/ProfileCard.svelte';
 	import { listChatGroupMessages } from '$lib/services/chatGroups.svelte';
@@ -65,7 +66,11 @@
 		</div>
 
 		<div>
-			<p class="text-base font-semibold break-words whitespace-pre-wrap">{definition.question}</p>
+			<p class="text-base font-semibold break-words whitespace-pre-wrap">
+				<!-- Same lane as DefaultRich's body; the auto-load gate lives in
+					InlineMediaUrl, not in the callers. -->
+				<MessageParts messageId={eventId} text={definition.question} />
+			</p>
 			<p class="mt-1 text-xs text-muted-foreground">
 				{#if definition.endsAt !== null}
 					{open ? 'Ends' : 'Ended'} {formatUnixTimestamp(definition.endsAt * 1000, true, true)}
