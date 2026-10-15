@@ -411,8 +411,6 @@
 		});
 
 		void tick().then(async () => {
-			void messageCount;
-			void lastMessageId;
 			measureVisibleItems();
 			if (suppressNextAutoScroll) {
 				suppressNextAutoScroll = false;
