@@ -637,6 +637,7 @@ describe('maintainReachability()', () => {
 		fetchQueryMock.mockReset();
 		publishKeyPackageMock.mockClear();
 		publishKeyPackageMock.mockResolvedValue({ last_resort: true });
+		withCoordinatorClientRetryMock.mockClear();
 		listKnownCoordinatorKeysMock.mockReset();
 		listKnownCoordinatorKeysMock.mockReturnValue([COORD_A, COORD_B]);
 	});
@@ -669,6 +670,7 @@ describe('maintainReachability()', () => {
 				.publishedCoordinatorKeys
 		).toContain(COORD_A);
 		expect(reachabilityStore.checked).toBe(true);
+		expect(reachabilityStore.ownerPubkey).toBe(OWNER);
 		expect(reachabilityStore.uncoveredCoordinatorKeys).toEqual([]);
 	});
 
@@ -683,6 +685,24 @@ describe('maintainReachability()', () => {
 
 		expect(publishKeyPackageMock).not.toHaveBeenCalled();
 		expect(reachabilityStore.uncoveredCoordinatorKeys).toEqual([COORD_A]);
+	});
+
+	test('observe-only runs never write, even where a one-time package covers reachability', async () => {
+		const { chatKeyPackagesStore, maintainReachability, reachabilityStore } =
+			await import('./chatKeyPackages.svelte');
+		chatKeyPackagesStore.keyPackages = [makeRecord('kp-lr', [], { isLastResort: true })];
+		// COORD_A is reachable through a one-time package only: invitable, but the
+		// opt-out must not let the pass add a last-resort (or touch markers) there.
+		serve({ [COORD_A]: [{ pk: OWNER, kp_ref: 'kp-one-time', last_resort: false, at: 1 }] });
+
+		await maintainReachability({ publish: false });
+
+		expect(publishKeyPackageMock).not.toHaveBeenCalled();
+		expect(withCoordinatorClientRetryMock).not.toHaveBeenCalled();
+		expect(chatKeyPackagesStore.keyPackages[0].publishedCoordinatorKeys).toEqual([]);
+		// Reachable = invitable: not a callout trigger even though auto-publish
+		// would add a last-resort here.
+		expect(reachabilityStore.uncoveredCoordinatorKeys).toEqual([]);
 	});
 
 	test('never takes over a foreign last-resort and never mints over a fleet-owned identity', async () => {

@@ -27,6 +27,7 @@
 	import { getGroupActivityAt } from '$lib/components/chat/chatGroupDisplay';
 	import { isChatGroupPinned } from '$lib/services/chatGroupPins.svelte';
 	import { buildGroupSharePath } from '$lib/utils/groupShareLink';
+	import { safeNormalizePubKey } from '$lib/utils';
 	import { groupRouteId } from '$lib/services/chatGroupLinks.svelte';
 	import { pullToRefresh } from '$lib/actions/pullToRefresh';
 	import { refreshChatFeedAction } from '$lib/services/chatUiActions.svelte';
@@ -139,6 +140,7 @@
 		() =>
 			hasAccount &&
 			reachabilityStore.checked &&
+			reachabilityStore.ownerPubkey === safeNormalizePubKey($activeAccount?.pubkey ?? '') &&
 			reachabilityStore.uncoveredCoordinatorKeys.length > 0 &&
 			!migrationBannerStore.detected &&
 			!reachabilityCalloutDismissed

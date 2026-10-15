@@ -924,8 +924,9 @@ export function getAutoPublishKeyPackages(): boolean {
 
 export function setAutoPublishKeyPackages(value: boolean): void {
 	autoPublishKeyPackagesSetting.set(value);
-	// Turning it on takes effect now, not at the next sweep.
-	if (value) void maintainReachability({ publish: true });
+	// Turning it on takes effect now, not at the next sweep; real failures
+	// surface on the callout, so swallow the rejection here.
+	if (value) void maintainReachability({ publish: true }).catch(() => undefined);
 }
 
 /**
@@ -935,8 +936,14 @@ export function setAutoPublishKeyPackages(value: boolean): void {
  * coordinator never appears (absent from a response is not the same as
  * unpublished), and one that reports a successful publish is dropped.
  */
-export const reachabilityStore = $state<{ checked: boolean; uncoveredCoordinatorKeys: string[] }>({
+export const reachabilityStore = $state<{
+	checked: boolean;
+	/** Whose summary this is — a stale summary from another account must never render. */
+	ownerPubkey: string;
+	uncoveredCoordinatorKeys: string[];
+}>({
 	checked: false,
+	ownerPubkey: '',
 	uncoveredCoordinatorKeys: []
 });
 
@@ -972,7 +979,6 @@ export function summarizeCoordinatorReachability(input: {
 }
 
 let maintainReachabilityChain: Promise<void> = Promise.resolve();
-let lastMaintainOwnerPubkey = '';
 let lastMaintainAt = 0;
 let lastMaintainFingerprint = '';
 
@@ -1004,11 +1010,6 @@ export async function maintainReachability(options: { publish?: boolean } = {}):
 async function runMaintainReachability(options: { publish?: boolean }): Promise<void> {
 	if (!manager.getActive()) return;
 	const ownerPubkey = normalizePubKey(getActivePubkey());
-	if (ownerPubkey !== lastMaintainOwnerPubkey) {
-		lastMaintainOwnerPubkey = ownerPubkey;
-		reachabilityStore.checked = false;
-		reachabilityStore.uncoveredCoordinatorKeys = [];
-	}
 	const publish = options.publish ?? getAutoPublishKeyPackages();
 	const localKeyPackages = listChatKeyPackages(ownerPubkey);
 	const heldRefs = new Set(localKeyPackages.map((entry) => entry.keyPackageRef));
@@ -1057,7 +1058,10 @@ async function runMaintainReachability(options: { publish?: boolean }): Promise<
 		observations.map(async ({ coordinatorKey, summary }) => {
 			if (!summary) return undefined; // unverifiable: neither a trigger nor a target
 			const uncovered = !summary.reachable;
-			if (uncovered && !publish) return coordinatorKey;
+			// Observe-only (opted out): report, never write — the paths below
+			// publish (and repair markers), which must never happen behind the
+			// user's back.
+			if (!publish) return uncovered ? coordinatorKey : undefined;
 			// Foreign last-resort: never take over automatically.
 			if (summary.lastResort && !summary.lastResort.held) return undefined;
 			if (!summary.lastResort && !holdsLastResort && foreignObserved) {
@@ -1077,6 +1081,7 @@ async function runMaintainReachability(options: { publish?: boolean }): Promise<
 			}
 		})
 	);
+	reachabilityStore.ownerPubkey = ownerPubkey;
 	reachabilityStore.uncoveredCoordinatorKeys = stillUncovered.filter(
 		(key): key is string => key !== undefined
 	);
