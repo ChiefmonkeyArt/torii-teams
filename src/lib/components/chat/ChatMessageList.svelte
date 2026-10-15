@@ -79,6 +79,16 @@
 	// History paging (docs/long-history.md): scroll-up prepends older pages.
 	let historyExhaustedForGroup = '';
 	let loadOlderInFlight = false;
+	// Identity gate for the messages effect: the owner's `messages` derivation
+	// hands the list a fresh array on unrelated state changes (presence,
+	// unread-reference maps); each of those used to re-run the measure +
+	// bottom-pin continuation, and the competing scrolls jittered the view on
+	// every composer keystroke. Only real list changes may re-measure/re-pin.
+	let appliedGroupId = '';
+	let appliedMessageCount = -1;
+	let appliedLastMessageId = '';
+	let appliedFocusCursor = -1;
+
 	// The scrollRun value of the last COMPLETED programmatic flight. While
 	// scrollRun !== settledRun a flight is mid-air and the visible window is
 	// transient (focus jumps pass over the tail) — visibility-based read
@@ -133,12 +143,18 @@
 		await tick();
 		if (!browser || !container || messages.length === 0 || run !== scrollRun) return;
 
-		$virtualizer.scrollToIndex(messages.length - 1, { align: 'end' });
-		await tick();
-		if (run !== scrollRun) return;
-		measureVisibleItems();
-		await tick();
-		if (run !== scrollRun || !container) return;
+		// Already at the bottom: the tail rows are mounted and measured, so pin
+		// to the DOM truth directly — scrollToIndex would aim at totalSize minus
+		// a cached viewport rect that can lag the live container (composer wrap,
+		// soft keyboard) and un-pin the view mid-flight.
+		if (!isAtBottom()) {
+			$virtualizer.scrollToIndex(messages.length - 1, { align: 'end' });
+			await tick();
+			if (run !== scrollRun) return;
+			measureVisibleItems();
+			await tick();
+			if (run !== scrollRun || !container) return;
+		}
 		container.scrollTo({
 			top: container.scrollHeight,
 			behavior: 'instant'
@@ -369,8 +385,23 @@
 
 	$effect(() => {
 		const messageCount = messages.length;
-		const lastMessageId = messages.at(-1)?.id;
+		const lastMessageId = messages.at(-1)?.id ?? '';
+		const focusCursor = initialFocusCursor;
 		if (!browser || !container) return;
+		// Identity churn from the owner's `messages` derivation must not reach
+		// the scroll/read-mark continuation (see the applied* gate above).
+		if (
+			appliedGroupId === groupId &&
+			appliedMessageCount === messageCount &&
+			appliedLastMessageId === lastMessageId &&
+			appliedFocusCursor === focusCursor
+		) {
+			return;
+		}
+		appliedGroupId = groupId;
+		appliedMessageCount = messageCount;
+		appliedLastMessageId = lastMessageId;
+		appliedFocusCursor = focusCursor;
 		untrack(() => {
 			$virtualizer.setOptions({
 				count: messageCount,
@@ -379,10 +410,7 @@
 			});
 		});
 
-		const focusCursor = initialFocusCursor;
 		void tick().then(async () => {
-			void messageCount;
-			void lastMessageId;
 			measureVisibleItems();
 			if (suppressNextAutoScroll) {
 				suppressNextAutoScroll = false;

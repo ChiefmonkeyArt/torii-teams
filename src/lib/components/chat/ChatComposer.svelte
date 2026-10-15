@@ -606,12 +606,31 @@
 		pendingAttachments = [];
 	}
 
+	// Height writes reflow the flex column, and the message list clamps its
+	// scrollTop against a transiently shorter composer (clamps never restore) —
+	// the per-keystroke jump on line wraps. So: grow with one exact write
+	// (scrollHeight already reports taller content at a fixed height); only
+	// re-measure through height:'auto' when the draft shrank or the cap changed
+	// (that transient self-heals — the net shrink re-pins the list); write
+	// nothing when nothing changed.
+	// shortcut: a same-length char swap that re-wraps resizes one input late;
+	// upgrade only if that's ever reported.
+	let lastResizeValueLength = 0;
+	let lastResizeCap = -1;
+
 	function resizeTextarea() {
 		if (!textareaRef) return;
-		textareaRef.style.height = 'auto';
-		textareaRef.style.height = `${Math.min(textareaRef.scrollHeight, expanded ? 320 : 128)}px`;
-		textareaRef.style.overflowY =
-			textareaRef.scrollHeight > (expanded ? 320 : 128) ? 'auto' : 'hidden';
+		const cap = expanded ? 320 : 128;
+		const contentHeight = textareaRef.scrollHeight;
+		if (contentHeight > textareaRef.clientHeight) {
+			textareaRef.style.height = `${Math.min(contentHeight, cap)}px`;
+		} else if (textareaRef.value.length < lastResizeValueLength || cap !== lastResizeCap) {
+			textareaRef.style.height = 'auto';
+			textareaRef.style.height = `${Math.min(textareaRef.scrollHeight, cap)}px`;
+		}
+		lastResizeValueLength = textareaRef.value.length;
+		lastResizeCap = cap;
+		textareaRef.style.overflowY = textareaRef.scrollHeight > cap ? 'auto' : 'hidden';
 	}
 
 	// Track the last-seen focusKey so the effect skips its initial mount run. On mobile, focusing
