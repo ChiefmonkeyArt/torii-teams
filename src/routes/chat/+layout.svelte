@@ -26,6 +26,7 @@
 	import { listChatGroups } from '$lib/services/chatGroups.svelte';
 	import { startWatchingAllGroups } from '$lib/services/chatGroupWatch.svelte';
 	import {
+		maintainReachability,
 		reconcilePublishedKeyPackagesForActiveAccount as reconcileKeyPackages,
 		shouldReconcilePublishedKeyPackages
 	} from '$lib/services/chatKeyPackages.svelte';
@@ -133,6 +134,10 @@
 			if (shouldReconcilePublishedKeyPackages(pubkey)) {
 				await reconcileKeyPackages();
 			}
+			// Reachability maintenance (auto-publish + callout truth) after the
+			// fetch warm-up and marker reconcile; the mint gate inside holds off
+			// until multi-device adoption when the fleet owns the last-resort.
+			await maintainReachability();
 		});
 	});
 

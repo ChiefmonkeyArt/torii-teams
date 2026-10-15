@@ -23,6 +23,9 @@ const listKnownCoordinatorKeysMock = vi.fn((): string[] => []);
 const keyPackageDecoderMock = vi.fn();
 const privateKeyPackageDecoderMock = vi.fn();
 const makeKeyPackageRefMock = vi.fn();
+const generateKeyPackageMock = vi.fn();
+const encodeMock = vi.fn();
+const isLastResortKeyPackageMock = vi.fn();
 
 vi.mock('ts-mls', async () => {
 	const actual = await vi.importActual<typeof import('ts-mls')>('ts-mls');
@@ -30,7 +33,9 @@ vi.mock('ts-mls', async () => {
 		...actual,
 		keyPackageDecoder: keyPackageDecoderMock,
 		privateKeyPackageDecoder: privateKeyPackageDecoderMock,
-		makeKeyPackageRef: makeKeyPackageRefMock
+		makeKeyPackageRef: makeKeyPackageRefMock,
+		generateKeyPackage: generateKeyPackageMock,
+		encode: encodeMock
 	};
 });
 
@@ -73,9 +78,11 @@ vi.mock('$lib/services/chatMlsUtils', () => ({
 	createCordnMetadataCapabilities: vi.fn(),
 	createCredential: vi.fn(),
 	ensureLastResortKeyPackageExtension: vi.fn(),
-	isLastResortKeyPackage: vi.fn(),
+	isLastResortKeyPackage: isLastResortKeyPackageMock,
 	getCordnCipherSuite: vi.fn(() => 1)
 }));
+
+vi.mock('$lib/services/multiDevice.svelte', () => ({ onMetaStateChange: vi.fn() }));
 
 vi.mock('$lib/services/chatStorage', () => ({
 	getChatStorage: vi.fn().mockResolvedValue({
@@ -537,5 +544,162 @@ describe('repairLastResortAlignment() (spec §11.5 resolution order)', () => {
 		await repairLastResortAlignment();
 
 		expect(withCoordinatorClientRetryMock).not.toHaveBeenCalled();
+	});
+});
+
+describe('summarizeCoordinatorReachability()', () => {
+	test('treats a failed listing as unverifiable, never unreachable', async () => {
+		const { summarizeCoordinatorReachability } = await import('./chatKeyPackages.svelte');
+		expect(
+			summarizeCoordinatorReachability({
+				entries: undefined,
+				ownerPubkey: OWNER,
+				heldRefs: new Set()
+			})
+		).toBeUndefined();
+	});
+
+	test('nothing served for the owner is uncovered; any served package is reachable', async () => {
+		const { summarizeCoordinatorReachability } = await import('./chatKeyPackages.svelte');
+		// Another identity's package does not make US invitable.
+		expect(
+			summarizeCoordinatorReachability({
+				entries: [{ pk: 'dd'.repeat(32), kp_ref: 'other', last_resort: false, at: 1 }],
+				ownerPubkey: OWNER,
+				heldRefs: new Set()
+			})
+		).toEqual({ reachable: false, lastResort: undefined });
+		// A one-time package invites just as well as a last-resort.
+		expect(
+			summarizeCoordinatorReachability({
+				entries: [{ pk: OWNER, kp_ref: 'kp-one-time', last_resort: false, at: 1 }],
+				ownerPubkey: OWNER,
+				heldRefs: new Set()
+			})
+		).toEqual({ reachable: true, lastResort: undefined });
+	});
+
+	test('reports the served last-resort and whether the device holds it', async () => {
+		const { summarizeCoordinatorReachability } = await import('./chatKeyPackages.svelte');
+		const entries = [
+			{ pk: OWNER, kp_ref: 'kp-old', last_resort: true, at: 1 },
+			{ pk: OWNER, kp_ref: 'kp-new', last_resort: true, at: 2 }
+		];
+		expect(
+			summarizeCoordinatorReachability({
+				entries,
+				ownerPubkey: OWNER,
+				heldRefs: new Set(['kp-new'])
+			})
+		).toEqual({ reachable: true, lastResort: { ref: 'kp-new', held: true } });
+		expect(
+			summarizeCoordinatorReachability({ entries, ownerPubkey: OWNER, heldRefs: new Set() })
+		).toEqual({ reachable: true, lastResort: { ref: 'kp-new', held: false } });
+	});
+});
+
+describe('ensureLastResortPublished() mint single-flight', () => {
+	beforeEach(() => {
+		fetchQueryMock.mockReset();
+		fetchQueryMock.mockResolvedValue([]);
+		publishKeyPackageMock.mockClear();
+		publishKeyPackageMock.mockResolvedValue({ last_resort: true });
+		makeKeyPackageRefMock.mockReset();
+		makeKeyPackageRefMock.mockResolvedValue(new Uint8Array([7]));
+		generateKeyPackageMock.mockReset();
+		generateKeyPackageMock.mockResolvedValue({ publicPackage: {}, privatePackage: {} });
+		encodeMock.mockReset();
+		encodeMock.mockReturnValue(new Uint8Array([1]));
+		isLastResortKeyPackageMock.mockReset();
+		isLastResortKeyPackageMock.mockReturnValue(true);
+	});
+
+	test('mints exactly one last-resort under concurrent ensure calls', async () => {
+		const { chatKeyPackagesStore, ensureLastResortPublished } =
+			await import('./chatKeyPackages.svelte');
+		chatKeyPackagesStore.keyPackages = [];
+
+		const results = await Promise.all([
+			ensureLastResortPublished(COORD_A),
+			ensureLastResortPublished(COORD_B)
+		]);
+
+		expect(results[0].kind).toBe('ready');
+		expect(results[1].kind).toBe('ready');
+		expect(results[0].keyPackageRef).toBe(results[1].keyPackageRef);
+		// A second mint would evict the first everywhere (quota = 1).
+		expect(chatKeyPackagesStore.keyPackages.filter((entry) => entry.isLastResort)).toHaveLength(1);
+	});
+});
+
+describe('maintainReachability()', () => {
+	beforeEach(() => {
+		fetchQueryMock.mockReset();
+		publishKeyPackageMock.mockClear();
+		publishKeyPackageMock.mockResolvedValue({ last_resort: true });
+		listKnownCoordinatorKeysMock.mockReset();
+		listKnownCoordinatorKeysMock.mockReturnValue([COORD_A, COORD_B]);
+	});
+
+	function serve(entriesByCoordinator: Record<string, unknown[] | undefined>) {
+		fetchQueryMock.mockImplementation((opts: { queryKey: string[] }) => {
+			const coordinatorKey = opts.queryKey[opts.queryKey.length - 2];
+			const entries = entriesByCoordinator[coordinatorKey];
+			return entries === undefined
+				? Promise.reject(new Error('coordinator unreachable'))
+				: Promise.resolve(entries);
+		});
+	}
+
+	test('publishes the last-resort where a coordinator serves none and reports no gaps', async () => {
+		const { chatKeyPackagesStore, maintainReachability, reachabilityStore } =
+			await import('./chatKeyPackages.svelte');
+		chatKeyPackagesStore.keyPackages = [makeRecord('kp-lr', [], { isLastResort: true })];
+		serve({
+			[COORD_A]: [],
+			[COORD_B]: [{ pk: OWNER, kp_ref: 'kp-lr', last_resort: true, at: 1 }]
+		});
+
+		await maintainReachability();
+
+		// Exactly one publish (to COORD_A); COORD_B is reused/re-marked, not re-published.
+		expect(publishKeyPackageMock).toHaveBeenCalledTimes(1);
+		expect(
+			chatKeyPackagesStore.keyPackages.find((entry) => entry.keyPackageRef === 'kp-lr')!
+				.publishedCoordinatorKeys
+		).toContain(COORD_A);
+		expect(reachabilityStore.checked).toBe(true);
+		expect(reachabilityStore.uncoveredCoordinatorKeys).toEqual([]);
+	});
+
+	test('observe-only runs report verified-uncovered coordinators and publish nothing', async () => {
+		const { chatKeyPackagesStore, maintainReachability, reachabilityStore } =
+			await import('./chatKeyPackages.svelte');
+		chatKeyPackagesStore.keyPackages = [makeRecord('kp-lr', [], { isLastResort: true })];
+		// COORD_B unreachable: unverifiable, never a banner trigger.
+		serve({ [COORD_A]: [], [COORD_B]: undefined });
+
+		await maintainReachability({ publish: false });
+
+		expect(publishKeyPackageMock).not.toHaveBeenCalled();
+		expect(reachabilityStore.uncoveredCoordinatorKeys).toEqual([COORD_A]);
+	});
+
+	test('never takes over a foreign last-resort and never mints over a fleet-owned identity', async () => {
+		const { chatKeyPackagesStore, maintainReachability, reachabilityStore } =
+			await import('./chatKeyPackages.svelte');
+		// The device holds nothing; COORD_B serves a last-resort it does not hold
+		// (the fleet owns it), COORD_A serves nothing and would need a mint.
+		chatKeyPackagesStore.keyPackages = [];
+		serve({
+			[COORD_A]: [],
+			[COORD_B]: [{ pk: OWNER, kp_ref: 'kp-foreign', last_resort: true, at: 1 }]
+		});
+
+		await maintainReachability();
+
+		expect(publishKeyPackageMock).not.toHaveBeenCalled();
+		expect(chatKeyPackagesStore.keyPackages).toHaveLength(0);
+		expect(reachabilityStore.uncoveredCoordinatorKeys).toEqual([COORD_A]);
 	});
 });
