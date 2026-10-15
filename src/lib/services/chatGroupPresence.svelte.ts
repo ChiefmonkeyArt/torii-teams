@@ -69,6 +69,12 @@ function scheduleSavePresence() {
 if (browser) {
 	// A pending write must not lose read marks to an abrupt tab close.
 	addEventListener('pagehide', flushPresence);
+	// Android backgrounds the WebView without firing pagehide and may kill the
+	// process later — flush on hide or the debounce strands a reading session's
+	// read marks and the next notification-tap open lands at a stale first unread.
+	document.addEventListener('visibilitychange', () => {
+		if (document.visibilityState === 'hidden') flushPresence();
+	});
 }
 
 function getPresenceStorageKey(ownerPubkey?: string) {
