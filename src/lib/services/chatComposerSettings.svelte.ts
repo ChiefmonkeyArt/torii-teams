@@ -64,7 +64,7 @@ export function enterKeySends(): boolean {
  * default). Module $state → reading the getter in a template/effect is
  * reactive, so toggles apply live without remounts.
  */
-function persistedChatBool(key: string) {
+export function persistedChatBool(key: string) {
 	let value = $state(browser ? localStorage.getItem(key) !== 'false' : true);
 	return {
 		get: () => value,

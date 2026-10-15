@@ -44,6 +44,8 @@ import { chatQueryKeys } from '$lib/queries/chatQueryKeys';
 import { fetchCoordinatorAvailableKeyPackages } from '$lib/queries/chatKeyPackageQueries';
 import { planLastResortRepair, type LastResortKeyPackageEntry } from '$lib/services/multiDevice';
 import { onMetaStateChange } from '$lib/services/multiDevice.svelte';
+import { manager } from '$lib/services/accountManager.svelte';
+import { persistedChatBool } from '$lib/services/chatComposerSettings.svelte';
 
 export interface StoredKeyPackageRecord {
 	id: string;
@@ -355,6 +357,25 @@ export type EnsureLastResortResult =
 	| { kind: 'ready'; keyPackageRef: string }
 	| { kind: 'foreign'; keyPackageRef: string; coordinatorKey: string };
 
+let lastResortMintInFlight: Promise<StoredKeyPackageRecord> | null = null;
+
+/**
+ * The account's canonical last-resort key package (the §11.5 pick), minting
+ * one if the device holds none. Single-flight: the auto-maintain fan-out and a
+ * manual click can race, and a second mint would evict the first from every
+ * coordinator (quota = 1) — stranding pending invites that cited it.
+ */
+function getOrMintLastResort(ownerPubkey: string): Promise<StoredKeyPackageRecord> {
+	const existing = pickLastResortRecord(ownerPubkey);
+	if (existing) return Promise.resolve(existing);
+	lastResortMintInFlight ??= createChatKeyPackage({ isLastResort: true })
+		.then((created) => created.record)
+		.finally(() => {
+			lastResortMintInFlight = null;
+		});
+	return lastResortMintInFlight;
+}
+
 /**
  * Read-only probe for the new-device migration banner: does `coordinatorKey` hold ANY available key
  * package for the active identity that THIS device did not publish? That is the "you've used Cordn
@@ -461,21 +482,11 @@ export async function ensureLastResortPublished(
 		};
 	}
 
-	// 3. Coordinator has no last-resort for us -> safe to publish our own.
-	const localLastResort = chatKeyPackagesStore.keyPackages.find(
-		(entry) => entry.isLastResort && normalizePubKey(entry.ownerPubkey) === ownerPubkey
-	);
-	if (localLastResort) {
-		await publishChatKeyPackage(localLastResort.keyPackageRef, normalizedCoordinator);
-		return { kind: 'ready', keyPackageRef: localLastResort.keyPackageRef };
-	}
-
-	// 4. No local last-resort anywhere -> mint one and publish.
-	const created = await createChatKeyPackage({
-		isLastResort: true,
-		publishCoordinatorKey: normalizedCoordinator
-	});
-	return { kind: 'ready', keyPackageRef: created.record.keyPackageRef };
+	// 3. Coordinator has no last-resort for us -> safe to publish ours, minting
+	// one first if the device holds none (single-flight, see getOrMintLastResort).
+	const lastResort = await getOrMintLastResort(ownerPubkey);
+	await publishChatKeyPackage(lastResort.keyPackageRef, normalizedCoordinator);
+	return { kind: 'ready', keyPackageRef: lastResort.keyPackageRef };
 }
 
 /**
@@ -487,18 +498,9 @@ export async function ensureLastResortPublished(
 export async function takeOverLastResort(coordinatorKey: string): Promise<string> {
 	const ownerPubkey = normalizePubKey(getActivePubkey());
 	const normalizedCoordinator = normalizePubKey(coordinatorKey);
-	const localLastResort = chatKeyPackagesStore.keyPackages.find(
-		(entry) => entry.isLastResort && normalizePubKey(entry.ownerPubkey) === ownerPubkey
-	);
-	if (localLastResort) {
-		await publishChatKeyPackage(localLastResort.keyPackageRef, normalizedCoordinator);
-		return localLastResort.keyPackageRef;
-	}
-	const created = await createChatKeyPackage({
-		isLastResort: true,
-		publishCoordinatorKey: normalizedCoordinator
-	});
-	return created.record.keyPackageRef;
+	const lastResort = await getOrMintLastResort(ownerPubkey);
+	await publishChatKeyPackage(lastResort.keyPackageRef, normalizedCoordinator);
+	return lastResort.keyPackageRef;
 }
 
 export function decodeStoredKeyPackage(record: StoredKeyPackageRecord): {
@@ -906,5 +908,211 @@ export async function repairLastResortAlignment(): Promise<void> {
 		console.warn('[key-packages] last-resort repair failed', error);
 	} finally {
 		lastResortRepairInFlight = false;
+	}
+}
+
+/**
+ * Whether Cordn keeps a last-resort key package published on every known
+ * coordinator automatically (opt-out; default on). When off, the chat-home
+ * callout and "Ensure reachable" stay the manual path.
+ */
+const autoPublishKeyPackagesSetting = persistedChatBool('cordn.autoPublishKeyPackages');
+
+export function getAutoPublishKeyPackages(): boolean {
+	return autoPublishKeyPackagesSetting.get();
+}
+
+export function setAutoPublishKeyPackages(value: boolean): void {
+	autoPublishKeyPackagesSetting.set(value);
+	// Turning it on takes effect now, not at the next sweep; real failures
+	// surface on the callout, so swallow the rejection here.
+	if (value) void maintainReachability({ publish: true }).catch(() => undefined);
+}
+
+/**
+ * Verified reachability summary for the chat-home callout, written by
+ * {@link maintainReachability}. `uncoveredCoordinatorKeys` lists coordinators
+ * that VERIFIED no key package exists for the active identity — an unreachable
+ * coordinator never appears (absent from a response is not the same as
+ * unpublished), and one that reports a successful publish is dropped.
+ */
+export const reachabilityStore = $state<{
+	checked: boolean;
+	/** Whose summary this is — a stale summary from another account must never render. */
+	ownerPubkey: string;
+	uncoveredCoordinatorKeys: string[];
+}>({
+	checked: false,
+	ownerPubkey: '',
+	uncoveredCoordinatorKeys: []
+});
+
+export interface CoordinatorReachabilitySummary {
+	/** The coordinator serves at least one key package for the identity: invitable here. */
+	reachable: boolean;
+	/** The last-resort it serves for the identity, when it holds one. */
+	lastResort?: { ref: string; held: boolean };
+}
+
+/**
+ * Pure classification of one coordinator's key-package listing for the active
+ * identity: is the identity invitable there, and do we hold the last-resort
+ * the coordinator serves? `entries` undefined = the coordinator call failed —
+ * unverifiable, never "unreachable". Any served key package counts as
+ * reachable (a one-time package invites just as well); last-resort detail
+ * drives the auto-publish decision.
+ */
+export function summarizeCoordinatorReachability(input: {
+	entries: readonly { pk: string; kp_ref: string; last_resort: boolean; at: number }[] | undefined;
+	ownerPubkey: string;
+	heldRefs: ReadonlySet<string>;
+}): CoordinatorReachabilitySummary | undefined {
+	if (!input.entries) return undefined;
+	const own = input.entries.filter((entry) => normalizePubKey(entry.pk) === input.ownerPubkey);
+	const servedLastResort = own.filter((entry) => entry.last_resort).sort((a, b) => b.at - a.at)[0];
+	return {
+		reachable: own.length > 0,
+		lastResort: servedLastResort
+			? { ref: servedLastResort.kp_ref, held: input.heldRefs.has(servedLastResort.kp_ref) }
+			: undefined
+	};
+}
+
+let maintainReachabilityChain: Promise<void> = Promise.resolve();
+let lastMaintainAt = 0;
+let lastMaintainFingerprint = '';
+
+/** Account + coordinator set — a change here means new coverage obligations. */
+function reachabilityFingerprint(ownerPubkey: string): string {
+	return `${ownerPubkey}|${dedupeStrings(listKnownCoordinatorKeys().map(normalizePubKey))
+		.sort()
+		.join(',')}`;
+}
+
+/**
+ * Keep the account reachable on every known coordinator: verify what each one
+ * serves for us, then (unless opted out) publish the local last-resort where it
+ * is missing — the staircase KeyPackageReconciler model, last-resort only (it
+ * is the one package the meta document replicates, so every device can process
+ * a Welcome against it). Never takes over a foreign last-resort and never
+ * mints over a fleet-owned identity. Writes the callout's
+ * {@link reachabilityStore} summary from what was verified: a failed publish or
+ * an opted-out run leaves the coordinator listed as uncovered.
+ */
+export async function maintainReachability(options: { publish?: boolean } = {}): Promise<void> {
+	// Serialize passes (startup, heartbeat sweep, callout button): each caller
+	// gets a full pass, in order, without interleaved store writes.
+	const run = maintainReachabilityChain.then(() => runMaintainReachability(options));
+	maintainReachabilityChain = run.catch(() => undefined);
+	return run;
+}
+
+async function runMaintainReachability(options: { publish?: boolean }): Promise<void> {
+	if (!manager.getActive()) return;
+	const ownerPubkey = normalizePubKey(getActivePubkey());
+	const publish = options.publish ?? getAutoPublishKeyPackages();
+	const localKeyPackages = listChatKeyPackages(ownerPubkey);
+	const heldRefs = new Set(localKeyPackages.map((entry) => entry.keyPackageRef));
+	const holdsLastResort = localKeyPackages.some((entry) => entry.isLastResort);
+	const coordinatorKeys = dedupeStrings(listKnownCoordinatorKeys().map(normalizePubKey));
+	// Sweep dedupe stamp: the heartbeat sweep skips while this holds — a
+	// changed account or coordinator set (a group's coordinator, an added one)
+	// re-checks immediately, so a newly joined coordinator publishes without
+	// waiting for the TTL or a reload.
+	lastMaintainFingerprint = reachabilityFingerprint(ownerPubkey);
+	lastMaintainAt = Date.now();
+
+	// Parallel observation: one offline coordinator must not stall the rest
+	// (same as reconcilePublishedKeyPackagesForActiveAccount).
+	const observations = await Promise.all(
+		coordinatorKeys.map(async (coordinatorKey) => {
+			try {
+				const entries = await queryClient.fetchQuery({
+					queryKey: chatQueryKeys.availableKeyPackages(ownerPubkey, coordinatorKey),
+					queryFn: () => fetchCoordinatorAvailableKeyPackages(coordinatorKey),
+					staleTime: 30 * 1000
+				});
+				return {
+					coordinatorKey,
+					summary: summarizeCoordinatorReachability({ entries, ownerPubkey, heldRefs })
+				};
+			} catch (error) {
+				const log = isCoordinatorReadBackoffError(error) ? console.debug : console.warn;
+				log(
+					`[key-packages] maintain: ${getCoordinatorLabel(coordinatorKey)} unreachable, skipping`,
+					error instanceof Error ? error.message : error
+				);
+				return { coordinatorKey, summary: undefined };
+			}
+		})
+	);
+
+	// Mint gate: a served last-resort we do not hold means the fleet owns a
+	// canonical this device has not adopted — minting here would evict it and
+	// strand invites citing it. The migration banner's link/restore flow
+	// resolves those; this pass only publishes material we already hold.
+	const foreignObserved = observations.some(
+		(observation) => observation.summary?.lastResort && !observation.summary.lastResort.held
+	);
+	const stillUncovered = await Promise.all(
+		observations.map(async ({ coordinatorKey, summary }) => {
+			if (!summary) return undefined; // unverifiable: neither a trigger nor a target
+			const uncovered = !summary.reachable;
+			// Observe-only (opted out): report, never write — the paths below
+			// publish (and repair markers), which must never happen behind the
+			// user's back.
+			if (!publish) return uncovered ? coordinatorKey : undefined;
+			// Foreign last-resort: never take over automatically.
+			if (summary.lastResort && !summary.lastResort.held) return undefined;
+			if (!summary.lastResort && !holdsLastResort && foreignObserved) {
+				return uncovered ? coordinatorKey : undefined;
+			}
+			try {
+				// Reuses (and re-marks on drift) a held last-resort, publishes
+				// where one is missing; refuses foreign ones on its own observation.
+				await ensureLastResortPublished(coordinatorKey);
+				return undefined;
+			} catch (error) {
+				console.warn(
+					`[key-packages] maintain: could not publish on ${getCoordinatorLabel(coordinatorKey)}`,
+					error instanceof Error ? error.message : error
+				);
+				return uncovered ? coordinatorKey : undefined;
+			}
+		})
+	);
+	reachabilityStore.ownerPubkey = ownerPubkey;
+	reachabilityStore.uncoveredCoordinatorKeys = stillUncovered.filter(
+		(key): key is string => key !== undefined
+	);
+	reachabilityStore.checked = true;
+}
+
+const REACHABILITY_SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Heartbeat-ridden staleness sweep for reachability — rides the watch
+ * heartbeat with a TTL, no extra timer (same pattern as
+ * sweepStaleCoordinatorRelays): re-verifies coverage at most daily and
+ * republishes whatever a coordinator lost (consumed, evicted, data loss)
+ * during a long-lived session — and immediately when the account or the
+ * coordinator set changes, so a newly joined coordinator publishes without
+ * waiting for the TTL or a reload. No-throw; a logged-out account is a no-op.
+ */
+export async function sweepReachability(): Promise<void> {
+	try {
+		if (!manager.getActive()) return;
+		const ownerPubkey = normalizePubKey(getActivePubkey());
+		if (
+			reachabilityFingerprint(ownerPubkey) === lastMaintainFingerprint &&
+			Date.now() - lastMaintainAt < REACHABILITY_SWEEP_INTERVAL_MS
+		)
+			return;
+		await maintainReachability();
+	} catch (error) {
+		console.debug(
+			'[key-packages] reachability sweep failed',
+			error instanceof Error ? error.message : error
+		);
 	}
 }

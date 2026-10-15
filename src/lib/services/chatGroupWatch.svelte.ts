@@ -36,6 +36,7 @@ import {
 	maybeRefreshCoordinatorRelaysOnOutage,
 	sweepStaleCoordinatorRelays
 } from '$lib/services/coordinatorRelayRefresh';
+import { sweepReachability } from '$lib/services/chatKeyPackages.svelte';
 import {
 	awaitMultiDeviceReconciled,
 	resetMultiDeviceSession
@@ -1204,6 +1205,9 @@ if (browser) {
 		// only): rides the existing heartbeat so no extra timer exists. Each
 		// coordinator is checked and refreshed independently.
 		void sweepStaleCoordinatorRelays();
+		// Key-package reachability staleness (same TTL-sweep pattern): rides the
+		// heartbeat so no extra timer exists.
+		void sweepReachability();
 		// OS sleep can leave a page visible throughout, with no visibility event.
 		if (
 			missedHeartbeat &&

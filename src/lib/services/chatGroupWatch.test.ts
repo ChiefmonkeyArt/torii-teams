@@ -58,6 +58,9 @@ vi.mock('$lib/services/coordinatorRelayRefresh', () => ({
 	sweepStaleCoordinatorRelays: vi.fn(async () => undefined),
 	maybeRefreshCoordinatorRelaysOnOutage: vi.fn(async () => false)
 }));
+vi.mock('$lib/services/chatKeyPackages.svelte', () => ({
+	sweepReachability: vi.fn(async () => undefined)
+}));
 vi.mock('$lib/services/multiDevice.svelte', () => ({ awaitMultiDeviceReconciled: async () => {} }));
 vi.mock('$lib/query-client', () => ({ queryClient: {} }));
 vi.mock('$lib/queries/chatQueryKeys', () => ({ chatQueryKeys: {} }));

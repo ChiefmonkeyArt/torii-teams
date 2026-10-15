@@ -91,6 +91,13 @@ export const DEFAULT_DONATION: DonationConfig = {
  */
 const newsReleases: NewsRelease[] = [
 	{
+		id: 'cordn-news-2026-10-15-reachability',
+		createdAt: Date.UTC(2026, 9, 15),
+		version: 1,
+		title: 'Reachable everywhere, automatically',
+		body: "- ✨ You now stay reachable everywhere automatically: Cordn keeps your key package — the contact card that lets people start a private conversation with you — published on every coordinator you use, so people there can always invite you. The “Keep me reachable automatically” switch in Settings → Key packages is on by default; turn it off if you prefer to publish only when you ask.\n- 🐛 The “You're not reachable” notice used to go quiet as soon as any one coordinator had your key package, even when the others had none — people there could not reach you. It now speaks up only after actually checking, and names exactly the coordinators where you are missing.\n- 🔄 “Make me reachable” fixes every listed coordinator in one tap, and never overwrites a key package published from another of your devices."
+	},
+	{
 		id: 'cordn-news-2026-10-13-polls',
 		createdAt: Date.UTC(2026, 9, 13),
 		version: 1,

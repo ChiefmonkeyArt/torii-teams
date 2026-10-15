@@ -17,7 +17,9 @@
 	import { listChatGroups } from '$lib/services/chatGroups.svelte';
 	import { getUnreadNewsCount, isNewsItemUnread } from '$lib/news/newsReadState.svelte';
 	import { getNewsFeedItems } from '$lib/news/feedItems';
-	import { listChatKeyPackages } from '$lib/services/chatKeyPackages.svelte';
+	import { maintainReachability, reachabilityStore } from '$lib/services/chatKeyPackages.svelte';
+	import { getCoordinatorLabel } from '$lib/services/chatCoordinators.svelte';
+	import { toast } from 'svelte-sonner';
 	import {
 		getChatGroupSummary,
 		markAllChatGroupsRead
@@ -25,9 +27,10 @@
 	import { getGroupActivityAt } from '$lib/components/chat/chatGroupDisplay';
 	import { isChatGroupPinned } from '$lib/services/chatGroupPins.svelte';
 	import { buildGroupSharePath } from '$lib/utils/groupShareLink';
+	import { safeNormalizePubKey } from '$lib/utils';
 	import { groupRouteId } from '$lib/services/chatGroupLinks.svelte';
 	import { pullToRefresh } from '$lib/actions/pullToRefresh';
-	import { makeReachableAction, refreshChatFeedAction } from '$lib/services/chatUiActions.svelte';
+	import { refreshChatFeedAction } from '$lib/services/chatUiActions.svelte';
 	import { appUpdateStore, reloadForUpdate } from '$lib/services/appUpdate.svelte';
 	import CheckCheck from '@lucide/svelte/icons/check-check';
 
@@ -93,7 +96,6 @@
 				b.activityAt - a.activityAt
 		);
 	});
-	const keyPackages = $derived.by(() => listChatKeyPackages($activeAccount?.pubkey));
 	const hasUnreadChats = $derived(feedRows.some((row) => row.kind === 'group' && row.unread));
 	const hasAccount = $derived.by(() => Boolean($activeAccount));
 	// Web-only storage disclaimer: browser storage is the source of truth on web,
@@ -111,18 +113,16 @@
 		storageDisclaimerDismissed = true;
 	}
 	const hasGroups = $derived.by(() => groups.length > 0);
-	const hasPublishedLastResort = $derived.by(() =>
-		keyPackages.some(
-			(keyPackage) => keyPackage.isLastResort && keyPackage.publishedCoordinatorKeys.length > 0
-		)
-	);
-	// Reachability callout: shows after login until a last-resort key package is
-	// published, so others can invite the user. Dismiss is permanent and per browser
-	// (like the storage disclaimer) — republishing later stays possible via the
-	// key-package config page. Suppressed when the migration banner
-	// detects the identity is already reachable from another device — that case has
-	// its own (link/restore) UX and publishing here would trigger a destructive
-	// last-resort take-over.
+	// Reachability callout: shown while any known coordinator VERIFIES that no
+	// key package for the active identity is published there — people on that
+	// coordinator cannot invite the user. Truth comes from the maintain pass's
+	// verified summary (an unreachable coordinator never triggers), and with
+	// auto-publish on the callout doubles as its failure surface. Dismiss is
+	// permanent and per browser (like the storage disclaimer) — republishing
+	// later stays possible via the key-package config page. Suppressed when the
+	// migration banner detects the identity is already reachable from another
+	// device — that case has its own (link/restore) UX and publishing here would
+	// trigger a destructive last-resort take-over.
 	// ponytail: dismissal is global, not per-account; key it by pubkey if
 	// multi-account users complain about the callout staying hidden.
 	const REACHABILITY_DISMISSED_KEY = 'cordn.reachabilityCalloutDismissed';
@@ -133,10 +133,15 @@
 		localStorage.setItem(REACHABILITY_DISMISSED_KEY, '1');
 		reachabilityCalloutDismissed = true;
 	}
+	const uncoveredCoordinatorLabels = $derived.by(() =>
+		reachabilityStore.uncoveredCoordinatorKeys.map((key) => getCoordinatorLabel(key))
+	);
 	const showReachabilityCallout = $derived.by(
 		() =>
 			hasAccount &&
-			!hasPublishedLastResort &&
+			reachabilityStore.checked &&
+			reachabilityStore.ownerPubkey === safeNormalizePubKey($activeAccount?.pubkey ?? '') &&
+			reachabilityStore.uncoveredCoordinatorKeys.length > 0 &&
 			!migrationBannerStore.detected &&
 			!reachabilityCalloutDismissed
 	);
@@ -161,7 +166,15 @@
 		try {
 			makingReachable = true;
 			reachabilityError = '';
-			await makeReachableAction();
+			// Explicit action overrides the auto-publish opt-out.
+			await maintainReachability({ publish: true });
+			if (reachabilityStore.uncoveredCoordinatorKeys.length > 0) {
+				reachabilityError = `Still unreachable on ${uncoveredCoordinatorLabels.join(', ')}.`;
+				return;
+			}
+			toast.success('You are reachable', {
+				description: 'Others can now start private conversations with you.'
+			});
 		} catch (error) {
 			reachabilityError = error instanceof Error ? error.message : 'Failed to publish key package';
 		} finally {
@@ -244,10 +257,11 @@
 				{#if showReachabilityCallout}
 					<Card.Root>
 						<Card.Header class="space-y-1.5">
-							<Card.Title>No one can invite you yet</Card.Title>
+							<Card.Title>You're not reachable everywhere</Card.Title>
 							<Card.Description>
-								You can join and create chats, but other people can't start a private conversation
-								with you until you publish a key package. It only takes a second.
+								You can join and create chats, but people on {uncoveredCoordinatorLabels.join(', ')}
+								can't start a private conversation with you until a key package is published there. It
+								only takes a second.
 							</Card.Description>
 						</Card.Header>
 						<Card.Content class="space-y-3">

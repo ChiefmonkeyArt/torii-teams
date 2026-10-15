@@ -7,6 +7,7 @@
 	import * as Collapsible from '$lib/components/ui/collapsible';
 	import { Button } from '$lib/components/ui/button';
 	import { Spinner } from '$lib/components/ui/spinner';
+	import { Switch } from '$lib/components/ui/switch';
 	import { toast } from 'svelte-sonner';
 	import AccountLoginDialog from '$lib/components/AccountLoginDialog.svelte';
 	import KeyPackageCard from '$lib/components/chat/KeyPackageCard.svelte';
@@ -21,11 +22,13 @@
 	import {
 		createChatKeyPackage,
 		ensureLastResortPublished,
+		getAutoPublishKeyPackages,
 		listChatKeyPackages,
 		listZombieKeyPackageRefs,
 		pruneZombieKeyPackages,
 		publishChatKeyPackage,
 		removeChatKeyPackage,
+		setAutoPublishKeyPackages,
 		takeOverLastResort
 	} from '$lib/services/chatKeyPackages.svelte';
 	import { promptForeignLastResort } from '$lib/services/lastResortConflict.svelte';
@@ -294,7 +297,19 @@
 	</header>
 
 	<div class="flex-1 overflow-y-auto px-4 py-6 md:px-6 md:py-8">
-		<div class="mx-auto grid max-w-4xl gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+		<div class="mx-auto max-w-4xl">
+			<div class="flex items-center justify-between gap-4 rounded-2xl border border-border p-4">
+				<div class="min-w-0">
+					<p class="font-medium">Keep me reachable automatically</p>
+					<p class="mt-0.5 text-sm text-muted-foreground">
+						Cordn keeps a last-resort key package published on every coordinator you use, so people
+						there can always invite you. Turn off to publish only when you ask.
+					</p>
+				</div>
+				<Switch checked={getAutoPublishKeyPackages()} onCheckedChange={setAutoPublishKeyPackages} />
+			</div>
+		</div>
+		<div class="mx-auto mt-6 grid max-w-4xl gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
 			<Card.Root>
 				<Card.Header>
 					<Card.Title>Create key package</Card.Title>
