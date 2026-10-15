@@ -91,6 +91,13 @@ export const DEFAULT_DONATION: DonationConfig = {
  */
 const newsReleases: NewsRelease[] = [
 	{
+		id: 'cordn-news-2026-10-15-typing-jump',
+		createdAt: Date.UTC(2026, 9, 15),
+		version: 1,
+		title: 'A chat that holds still while you type',
+		body: '- 🐛 Another pass at the jumpy chat: writing a message that wraps to several lines no longer makes the conversation jump on every keystroke or line break. The view stays pinned to the newest message while you write, and typing no longer stirs up a storm of background work that made long chats feel heavy.'
+	},
+	{
 		id: 'cordn-news-2026-10-15-poll-question-media',
 		createdAt: Date.UTC(2026, 9, 15),
 		version: 1,
