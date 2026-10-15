@@ -91,6 +91,13 @@ export const DEFAULT_DONATION: DonationConfig = {
  */
 const newsReleases: NewsRelease[] = [
 	{
+		id: 'cordn-news-2026-10-15-poll-question-media',
+		createdAt: Date.UTC(2026, 9, 15),
+		version: 1,
+		title: 'Pictures and links in poll questions',
+		body: "- ✨ A poll question is no longer just plain text: paste an image or video link into it and it shows right in the poll card, in the chat and in the poll's details. Links and @mentions work there too, and pasted media follows your auto-load media setting like everywhere else — tap “Load media” to reveal it when loading is off."
+	},
+	{
 		id: 'cordn-news-2026-10-15-reachability',
 		createdAt: Date.UTC(2026, 9, 15),
 		version: 1,
