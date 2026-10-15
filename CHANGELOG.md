@@ -1,5 +1,98 @@
 # Changelog
 
+## 0.6.0 — 2026-10-15
+
+### Features
+
+- **chat:** render poll questions through the message-parts lane
+- **news:** note the automatic reachability and the sharper callout
+- **key-packages:** auto-publish last-resort on every coordinator
+- **news:** announce long-chat performance work and prune shipped docs
+- **chat:** always-deep message search over full history
+- **chat:** windowed message histories in the reactive store
+- **chat:** exact unread and mention counts from a durable message ledger
+- **storage:** paginated history reads and putGroup write memo
+- **news:** note the safer edits and landed mentions
+- **chat:** make grouped reactions expandable with per-reaction jumps
+- **news:** note the versatile search and quieter reactions
+- **chat:** filter the share picker by group or person
+- **chat:** search people and group titles from the chat sidebar and header
+- **news:** note the notification reliability and UI fixes
+- **chat:** remind non-exempted users to allow unrestricted background
+- **news:** announce polls
+- **chat:** add NIP-31 alt summaries and readable poll-vote content
+- **chat:** group rich poll votes under their options
+- **news:** say who ends up sending the duplicate
+- **chat:** add NIP-88 polls with tap-to-vote and rich results
+- **news:** note the editing honesty fixes
+- **news:** announce share reachability and profile availability states
+- **share:** add direct "Make me reachable" action to the share dialog
+- **start-chat:** verify share reachability and clarify availability loading
+- **news:** announce coordinator relay auto-refresh
+- **coordinators:** auto-refresh coordinator relays on staleness and outage
+
+### Fixes
+
+- **chat:** stop the composer's transient auto-height from clamping the list scroll
+- **chat:** stop the per-keystroke bottom-pin storm in the message list
+- **key-packages:** honor the opt-out and scope the callout summary to its account
+- **key-packages:** publish to coordinators added mid-session
+- **chat:** land notification opens at the new messages
+- **test:** make the appearance fresh-install boot order-independent
+- **storage:** compare ledger reference senders case-insensitively
+- **ui:** drop the profile-hint warm cache that blanked the app on boot
+- **ui:** drop dead avatar srcs from the warm cache on error
+- **chat:** ascending windowed loads and race-free window merges
+- **chat:** queue edits as durable send intents
+- **chat:** splice mentions at the query end instead of the caret
+- **chat:** keep in-progress edits and mentions across composer remounts
+- **chat:** keep the header search button icon-only
+- **chat:** search from chat home and scope it inside groups
+- **chat:** show only other people's reaction rows in the timeline
+- **chat:** collapse same-user reaction marker rows
+- **chat:** keep pinned groups on top in the share picker
+- **chat:** keep lightbox toolbar clicks from closing the overlay
+- **chat:** never leave the share picker in the back stack
+- **chat:** re-pin the message list synchronously on container resize
+- **native:** request the battery exemption once at launch
+- **chat:** forgive empty option rows in the poll composer
+- **chat:** hide edit action on poll rows
+- **chat:** poll card contrast on own bubbles
+- **chat:** attach poll vote mentions to the poll row
+- **chat:** poll tallies dropped every vote on deadline polls
+- **chat:** reflect pending edits in reply quotes
+- **chat:** only offer edit on messages that are actually sent
+- **chat:** make reply-quote taps jump from pending bubbles too
+- **chat:** guard reply consumption and keep the armed reply per group
+- **chat:** keep reply quotes visible and attached across send paths
+
+### Performance
+
+- **ui:** warm avatar caches so list remounts paint without fallback pop
+- **chat:** drop per-batch permission calls and watch ensure ticks
+
+### Docs
+
+- **news:** announce the calm-while-typing chat fix
+- **key-packages:** note the fleet-owned mint gate in the AGENTS invariant
+- sync history docs with landed names, add window invariant to AGENTS
+- mark long-history phases 1-2 landed, correct the search design
+- **share:** align profileShareHint module header with its mapping role
+
+### Refactor
+
+- **chat:** drop dead void guards in the messages effect
+- **chat:** drop leftover temp in the per-group reply restore
+- **chat:** remove dead reply author-label plumbing
+
+### Other
+
+- **chat:** reuse the menu opener in the edit e2e
+- **chat:** harden the edit e2e against stale menus and early settles
+- **chat:** cover message editing across send states end to end
+- **share:** lock per-coordinator reachability in the share dialog
+- **coordinators:** e2e smoke for coordinator relay auto-refresh
+
 ## 0.5.5 — 2026-10-07
 
 ### Features
