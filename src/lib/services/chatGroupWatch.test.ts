@@ -250,3 +250,19 @@ describe('foreground recovery triggers', () => {
 		expect(rebuild).toHaveBeenCalledTimes(2);
 	});
 });
+
+describe('watchable set signature', () => {
+	test('stable across cursor advances, changes with the set', async () => {
+		groups.mockReturnValue([{ id: 'group', coordinatorKey: 'bb'.repeat(32), fetchCursor: 1 }]);
+		const watch = await import('./chatGroupWatch.svelte');
+		const first = watch.watchableGroupsSignature();
+		// An ingested batch advances the cursor without changing the watchable set.
+		groups.mockReturnValue([{ id: 'group', coordinatorKey: 'bb'.repeat(32), fetchCursor: 2 }]);
+		expect(watch.watchableGroupsSignature()).toBe(first);
+		groups.mockReturnValue([
+			{ id: 'group', coordinatorKey: 'bb'.repeat(32), fetchCursor: 2 },
+			{ id: 'other', coordinatorKey: 'bb'.repeat(32), fetchCursor: 1 }
+		]);
+		expect(watch.watchableGroupsSignature()).not.toBe(first);
+	});
+});

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
 	initAppearance,
 	setTheme,
@@ -20,6 +20,12 @@ describe('appearance runtime', () => {
 	it('boots, switches, previews, saves, deletes, and imports themes', async () => {
 		localStorage.clear();
 		document.getElementById('cordn-theme')?.remove();
+		// "Fresh profile" also means no chat database: the one-time migration
+		// treats any existing Cordn database as a pre-theming install and keeps
+		// Classic. The storage contract tests share this origin and leave that
+		// database behind, which made this boot depend on file order — simulate
+		// the one side of "fresh" the test cannot arrange for real.
+		vi.stubGlobal('indexedDB', { databases: async () => [] });
 
 		// Fresh profile → lower-contrast Soft default, applied as CSS vars.
 		await initAppearance();
@@ -27,6 +33,7 @@ describe('appearance runtime', () => {
 		expect(cssVar('--background')).toBe('#f5f5f2');
 		expect(document.getElementById('cordn-theme')).toBeTruthy();
 		expect(localStorage.getItem('cordn.theme')).toBe('soft');
+		vi.unstubAllGlobals();
 
 		// Switching to Classic repaints and persists.
 		setTheme(CLASSIC_THEME.id);

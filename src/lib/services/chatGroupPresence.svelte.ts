@@ -14,6 +14,12 @@ import { getChatDraftPreview } from '$lib/services/chatDrafts.svelte';
 import { clearShownNotifications } from '$lib/services/nativeBridge';
 import { manager } from '$lib/services/accountManager.svelte';
 import { samePubKey } from '$lib/utils';
+import {
+	clearMessageLedgers,
+	getMessageLedger,
+	pruneMessageLedgers,
+	type MessageLedger
+} from '$lib/services/chatUnreadLedger.svelte';
 
 const STORAGE_KEY = 'cordn-chat-group-presence';
 
@@ -63,6 +69,12 @@ function scheduleSavePresence() {
 if (browser) {
 	// A pending write must not lose read marks to an abrupt tab close.
 	addEventListener('pagehide', flushPresence);
+	// Android backgrounds the WebView without firing pagehide and may kill the
+	// process later — flush on hide or the debounce strands a reading session's
+	// read marks and the next notification-tap open lands at a stale first unread.
+	document.addEventListener('visibilitychange', () => {
+		if (document.visibilityState === 'hidden') flushPresence();
+	});
 }
 
 function getPresenceStorageKey(ownerPubkey?: string) {
@@ -75,6 +87,7 @@ export function loadChatGroupPresenceForOwner(ownerPubkey?: string) {
 	flushPresence();
 	// Cached summaries pin the outgoing owner's history arrays.
 	summaryCache.clear();
+	clearMessageLedgers();
 	activePresenceStorageKey = getPresenceStorageKey(ownerPubkey);
 	try {
 		const raw =
@@ -175,7 +188,15 @@ export function markAllChatGroupsRead() {
 	}
 }
 
-export function listUnreadChatGroupReferenceTargets(groupId: string, pubkey: string) {
+export interface UnreadChatGroupReferenceTarget {
+	reference: { id: string; cursor: number };
+	target: { id: string; cursor: number };
+}
+
+export function listUnreadChatGroupReferenceTargets(
+	groupId: string,
+	pubkey: string
+): UnreadChatGroupReferenceTarget[] {
 	const lastReadMentionCursor = getChatGroupLastReadMentionCursor(groupId);
 	const group = getChatGroup(groupId);
 	// Same O(1) guard as the summary's unread count (getChatGroupMessageSummary),
@@ -183,31 +204,53 @@ export function listUnreadChatGroupReferenceTargets(groupId: string, pubkey: str
 	// reference either.
 	if (!group || group.lastCursor <= lastReadMentionCursor) return [];
 	const messages = listChatGroupMessages(groupId);
-	const references = messages.filter(
-		(message) =>
+	const ledger = getMessageLedger(groupId);
+	const entries: UnreadChatGroupReferenceTarget[] = [];
+	const loadedCursors = new Set<number>();
+	const references = messages.filter((message) => {
+		loadedCursors.add(message.cursor);
+		return (
 			message.cursor > lastReadMentionCursor &&
 			message.sender !== pubkey &&
 			chatMessageReferencesPubkey(message.tags, pubkey)
-	);
+		);
+	});
 	// Resolving annotation/poll-response targets needs the byEventId map (a
 	// full-history allocation); plain mentions don't, and they are the common
 	// case. Hidden aggregate kinds (poll votes) attach to their `e`-tagged row
 	// like annotations do — their own rows never render, so a self-target would
 	// never clear via the visibility pass.
 	if (!references.some((message) => isStreamHiddenKind(message.kind))) {
-		return references.map((message) => ({ reference: message, target: message }));
-	}
-	const byEventId = new Map(messages.map((message) => [message.id, message]));
-
-	return references.map((message) => {
-		if (!isStreamHiddenKind(message.kind)) {
-			return { reference: message, target: message };
+		for (const message of references) {
+			entries.push({
+				reference: { id: message.id, cursor: message.cursor },
+				target: { id: message.id, cursor: message.cursor }
+			});
 		}
-
-		const targetId = message.tags.find((tag) => tag[0] === 'e')?.[1];
-		const target = targetId ? byEventId.get(targetId) : undefined;
-		return { reference: message, target: target ?? message };
-	});
+	} else {
+		const byEventId = new Map(messages.map((message) => [message.id, message]));
+		for (const message of references) {
+			let target = { id: message.id, cursor: message.cursor };
+			if (isStreamHiddenKind(message.kind)) {
+				const targetId = message.tags.find((tag) => tag[0] === 'e')?.[1];
+				const resolved = targetId ? byEventId.get(targetId) : undefined;
+				// Unloaded target keeps the pre-windowing fallback: the reference row
+				// itself.
+				if (resolved) target = { id: resolved.id, cursor: resolved.cursor };
+			}
+			entries.push({ reference: { id: message.id, cursor: message.cursor }, target });
+		}
+	}
+	// Below-window backlog from the ledger (rows written at ingest/backfill);
+	// loaded rows are skipped so they never double-list. shortcut: hidden
+	// aggregates from ledger rows approximate the jump with the reference's own
+	// cursor — reference tags carry the target id but never a cursor, and the
+	// target is usually the same row for the plain-mention common case.
+	for (const [cursor, targetId] of ledger.referenceTargets) {
+		if (cursor <= lastReadMentionCursor || loadedCursors.has(cursor)) continue;
+		entries.push({ reference: { id: targetId, cursor }, target: { id: targetId, cursor } });
+	}
+	return entries.sort((a, b) => a.reference.cursor - b.reference.cursor);
 }
 
 export interface ChatGroupSummary {
@@ -227,6 +270,7 @@ export interface ChatGroupSummary {
 // cleared on account switch and group pruning.
 type MessageSummary = {
 	messages: StoredChatMessage[] | undefined;
+	ledger: MessageLedger;
 	lastCursor: number;
 	description: string | undefined;
 	lastReadCursor: number;
@@ -249,11 +293,13 @@ function getChatGroupMessageSummary(
 	const description = group?.metadata?.description;
 	const lastReadCursor = getChatGroupLastReadCursor(groupId);
 	const lastReadMentionCursor = getChatGroupLastReadMentionCursor(groupId);
+	const ledger = getMessageLedger(groupId);
 	const key = `${groupId}\u0000${senderPubkey ?? ''}\u0000${refPubkey ?? ''}`;
 	const cached = summaryCache.get(key);
 	if (
 		cached &&
 		cached.messages === messages &&
+		cached.ledger === ledger &&
 		cached.lastCursor === lastCursor &&
 		cached.description === description &&
 		cached.lastReadCursor === lastReadCursor &&
@@ -269,7 +315,9 @@ function getChatGroupMessageSummary(
 	const countUnread = Boolean(group && group.lastCursor > lastReadCursor);
 	let latestMessage: StoredChatMessage | undefined;
 	let unreadCount = 0;
+	const windowCursors = new Set<number>();
 	for (const message of messages ?? []) {
+		windowCursors.add(message.cursor);
 		if (!latestMessage || message.cursor > latestMessage.cursor) {
 			latestMessage = message;
 		}
@@ -282,10 +330,19 @@ function getChatGroupMessageSummary(
 			if (!(senderPubkey && samePubKey(message.sender, senderPubkey))) unreadCount++;
 		}
 	}
+	// Below-window backlog from the ledger (windowed history — docs/long-history.md):
+	// the window counted what it holds, the ledger fills in the unread rows it
+	// no longer holds (skipping loaded cursors so nothing double-counts).
+	if (countUnread) {
+		for (const cursor of ledger.countableCursors) {
+			if (cursor > lastReadCursor && !windowCursors.has(cursor)) unreadCount++;
+		}
+	}
 
 	const preview = latestMessage ? getChatMessagePreviewText(latestMessage) : '';
 	const summary: MessageSummary = {
 		messages,
+		ledger,
 		lastCursor,
 		description,
 		lastReadCursor,
@@ -334,6 +391,7 @@ export function pruneChatGroupPresence() {
 	summaryCache.clear();
 
 	const validGroupIds = new Set(listChatGroups().map((group) => group.id));
+	pruneMessageLedgers(validGroupIds);
 	const nextEntries = Object.entries(chatGroupPresenceStore.groups).filter(([groupId]) =>
 		validGroupIds.has(groupId)
 	);
