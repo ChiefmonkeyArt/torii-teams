@@ -126,6 +126,22 @@ export function markMessageMediaLoaded(messageId: string): void {
 	loadedMessageMedia.add(messageId);
 }
 
+// Resolve failures are remembered per plaintext hash (the cache key) so a
+// permanently dead blob link — old sends whose store object is gone — settles
+// on the error card instead of re-fetching on every row remount or
+// messages-array identity churn (the spinner/error blink loop). Session-scoped
+// like the reveal overrides above; cleared only by an explicit retry tap.
+const failedMessageMedia = new SvelteSet<string>();
+export function isMessageMediaFailed(plaintextHashHex: string): boolean {
+	return failedMessageMedia.has(plaintextHashHex);
+}
+export function markMessageMediaFailed(plaintextHashHex: string): void {
+	failedMessageMedia.add(plaintextHashHex);
+}
+export function clearMessageMediaFailure(plaintextHashHex: string): void {
+	failedMessageMedia.delete(plaintextHashHex);
+}
+
 const BLOSSOM_SERVERS_PRESET = new Set<string>(
 	// Set for O(1) preset membership so the config UI can show "Custom" when the
 	// user typed a URL not in BLOSSOM_SERVERS.
