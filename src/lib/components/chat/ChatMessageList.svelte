@@ -8,7 +8,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import ChatMessageItem from './ChatMessageItem.svelte';
 	import { estimateChatMessageHeight } from './chatMessageRenderCache';
-	import { prependRestoreScrollTop, shouldAnchorPrepend } from './chatListScrollAnchor';
+	import { shouldAnchorPrepend } from './chatListScrollAnchor';
 	import type { ChatMessage } from './chat.types';
 
 	let {
@@ -100,15 +100,28 @@
 	const ESTIMATED_MESSAGE_HEIGHT = 128;
 	const VIRTUAL_OVERSCAN = 8;
 
+	// The virtualizer must only see list changes when the messages effect
+	// applies them through setOptions. estimateSize/getItemKey closures reading
+	// the reactive `messages` prop made every identity change (store writes,
+	// presence ticks) re-run the totalSize/virtualItems derivations mid-flush,
+	// re-rendering the virtualized DOM with a STALE count over SHIFTED rows —
+	// the "lands on the new messages, then jumps higher" open race: the prepend
+	// anchor then measured that franken-DOM height and restored to a wrong
+	// offset. A plain snapshot severs the accidental coupling.
+	// svelte-ignore non_reactive_update
+	let messageSnapshot: ChatMessage[] = [];
+
 	const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
 		count: 0,
 		getScrollElement: () => container,
 		// Shape-aware estimates shrink the estimate→measure deltas that make
 		// first-pass scrolls jump; measured rows keep their real heights.
-		estimateSize: (index) =>
-			messages[index] ? estimateChatMessageHeight(messages[index]) : ESTIMATED_MESSAGE_HEIGHT,
+		estimateSize: (index) => {
+			const message = messageSnapshot[index];
+			return message ? estimateChatMessageHeight(message) : ESTIMATED_MESSAGE_HEIGHT;
+		},
 		overscan: VIRTUAL_OVERSCAN,
-		getItemKey: (index) => messages[index]?.id ?? index
+		getItemKey: (index) => messageSnapshot[index]?.id ?? index
 	});
 	// Class field, not an option (setOptions never touches it), assigned once.
 	// ($store reads are safe, but `$store.prop = …` compiles to store.set() and
@@ -279,6 +292,39 @@
 		return true;
 	}
 
+	// First row intersecting the viewport top (the reading anchor): its id plus
+	// the pixel offset it sits at, so a window merge that inserts older rows
+	// ABOVE it can restore the exact reading position afterwards.
+	function captureAnchorRow(): { id: string; viewportOffset: number } | null {
+		if (!container) return null;
+		const containerTop = container.getBoundingClientRect().top;
+		for (const element of container.querySelectorAll<HTMLElement>('[data-virtual-item]')) {
+			const rect = element.getBoundingClientRect();
+			if (rect.bottom > containerTop + 1) {
+				return { id: element.dataset.messageId ?? '', viewportOffset: rect.top - containerTop };
+			}
+		}
+		return null;
+	}
+
+	// Anchor restore = a mini flight through the same convergence machinery the
+	// focus landing uses (scrollToIndex + measured final position). Raw scrollTop
+	// writes fought the virtualizer's scroll-reconcile bookkeeping and stranded
+	// the rendered window off-viewport — the "jumped higher and stayed" endgame.
+	async function restoreAnchorRow(anchor: { id: string; viewportOffset: number }): Promise<void> {
+		const run = ++scrollRun;
+		const element = await jumpToRow(anchor.id, 'start', run);
+		if (run !== scrollRun || !element || !container) return;
+		// jumpToRow pinned the row's TOP to the viewport top; nudge it back to
+		// its exact captured reading offset.
+		const delta =
+			element.getBoundingClientRect().top -
+			container.getBoundingClientRect().top -
+			anchor.viewportOffset;
+		container.scrollTop += delta;
+		settledRun = run;
+	}
+
 	function isAtBottom() {
 		if (!container) return true;
 		return container.scrollHeight - container.scrollTop - container.clientHeight < 80;
@@ -297,7 +343,9 @@
 		let maxVisibleCursor = 0;
 
 		for (const virtualItem of virtualItems) {
-			const message = messages[virtualItem.index];
+			// Reads the snapshot — the array the rows were rendered from — never the
+			// live prop: mid-update they can disagree and the wrong cursor is read.
+			const message = messageSnapshot[virtualItem.index];
 			if (!message) continue;
 			const element = container.querySelector<HTMLElement>(`[data-index="${virtualItem.index}"]`);
 			if (!element) continue;
@@ -440,41 +488,40 @@
 		// Older rows merging in ABOVE the viewport (open-time window growth,
 		// around-loads) leave scrollTop at the same pixel and slide the view up
 		// into old history — the notification-open "lands, then jumps higher"
-		// race. Capture the scroll geometry before the update; restore it in the
-		// continuation below, mirroring handleLoadOlder's own-load anchoring.
-		const prependAnchor =
-			shouldAnchorPrepend({
-				hasAppliedList: appliedMessageCount >= 0,
-				firstRowChanged: firstMessageId !== appliedFirstMessageId,
-				atBottom: wasAtBottom,
-				flightMidAir: scrollRun !== settledRun,
-				loadingOlder: loadOlderInFlight,
-				suppressed: suppressNextAutoScroll
-			}) && container
-				? { scrollTop: container.scrollTop, scrollHeight: container.scrollHeight }
-				: null;
+		// race. Capture the reading anchor before the update; restore it in the
+		// continuation below from the virtualizer's own offset math — height-delta
+		// arithmetic measured a DOM mid-re-render and overshot.
+		const prependAnchor = shouldAnchorPrepend({
+			hasAppliedList: appliedMessageCount >= 0,
+			firstRowChanged: firstMessageId !== appliedFirstMessageId,
+			atBottom: wasAtBottom,
+			flightMidAir: scrollRun !== settledRun,
+			loadingOlder: loadOlderInFlight,
+			suppressed: suppressNextAutoScroll
+		})
+			? captureAnchorRow()
+			: null;
 		appliedGroupId = groupId;
 		appliedMessageCount = messageCount;
 		appliedLastMessageId = lastMessageId;
 		appliedFirstMessageId = firstMessageId;
 		appliedFocusCursor = focusCursor;
 		untrack(() => {
+			messageSnapshot = messages;
 			$virtualizer.setOptions({
 				count: messageCount,
 				getScrollElement: () => container,
-				getItemKey: (index) => messages[index]?.id ?? index
+				getItemKey: (index) => messageSnapshot[index]?.id ?? index
 			});
 		});
 
 		void tick().then(async () => {
-			// Restore the captured geometry first, so the anchor — not the shifted
-			// content — defines the position every later actor measures from.
-			if (prependAnchor && container) {
-				container.scrollTop = prependRestoreScrollTop(
-					prependAnchor.scrollTop,
-					prependAnchor.scrollHeight,
-					container.scrollHeight
-				);
+			// Restore the reading anchor first — by row identity, through the
+			// virtualizer's own scroll machinery (see restoreAnchorRow) — so the
+			// anchor, not the shifted content, defines the position every later
+			// actor measures from.
+			if (prependAnchor && prependAnchor.id) {
+				await restoreAnchorRow(prependAnchor);
 			}
 			measureVisibleItems();
 			if (suppressNextAutoScroll) {
@@ -610,10 +657,10 @@
 		<div class="mx-auto min-h-full w-full max-w-5xl px-3 py-4 sm:px-4 sm:py-5 md:px-6 md:py-8">
 			<div class="relative w-full" style={`height: ${totalSize}px;`}>
 				{#each virtualItems as virtualItem (virtualItem.key)}
-					{@const message = messages[virtualItem.index]}
+					{@const message = messageSnapshot[virtualItem.index]}
 					{#if message}
-						{@const previousMessage = messages[virtualItem.index - 1]}
-						{@const nextMessage = messages[virtualItem.index + 1]}
+						{@const previousMessage = messageSnapshot[virtualItem.index - 1]}
+						{@const nextMessage = messageSnapshot[virtualItem.index + 1]}
 						{@const systemRow = Boolean(message.systemKind)}
 						{@const runHead = !systemRow && previousMessage?.author !== message.author}
 						<!-- Pfp anchors to the NEWEST message of a run (bottom-aligned like Signal): the hop to

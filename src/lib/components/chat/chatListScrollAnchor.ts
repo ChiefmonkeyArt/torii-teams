@@ -1,5 +1,5 @@
 /**
- * Scroll-anchoring math for window prepends in ChatMessageList (pure and
+ * Scroll-anchoring decision for window prepends in ChatMessageList (pure and
  * DOM-free so the decision table is unit-testable). When older rows merge in
  * above the viewport — `ensureChatGroupWindow`'s tail growth on open, the
  * focus flight's around-loads — the browser keeps scrollTop at the same pixel
@@ -31,19 +31,4 @@ export function shouldAnchorPrepend(guard: PrependAnchorGuard): boolean {
 		!guard.loadingOlder &&
 		!guard.suppressed
 	);
-}
-
-/**
- * scrollTop that keeps the viewport on the same rows after the content above
- * it changed: shift by the height delta (negative for top trims, clamped at
- * 0). shortcut: exact for prepend-only updates; rows appended in the same
- * write over-shift by their height — the known sources (tail/around loads)
- * are prepend-only, same trade-off handleLoadOlder makes.
- */
-export function prependRestoreScrollTop(
-	scrollTop: number,
-	prevScrollHeight: number,
-	nextScrollHeight: number
-): number {
-	return Math.max(0, scrollTop + (nextScrollHeight - prevScrollHeight));
 }

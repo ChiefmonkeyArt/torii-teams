@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { prependRestoreScrollTop, shouldAnchorPrepend } from './chatListScrollAnchor';
+import { shouldAnchorPrepend } from './chatListScrollAnchor';
 
 const anchored = {
 	hasAppliedList: true,
@@ -22,16 +22,5 @@ describe('shouldAnchorPrepend', () => {
 		expect(shouldAnchorPrepend({ ...anchored, flightMidAir: true })).toBe(false); // focus/jump flight
 		expect(shouldAnchorPrepend({ ...anchored, loadingOlder: true })).toBe(false); // pager anchor
 		expect(shouldAnchorPrepend({ ...anchored, suppressed: true })).toBe(false); // suppressed
-	});
-});
-
-describe('prependRestoreScrollTop', () => {
-	test('shifts down by the height prepended above the viewport', () => {
-		expect(prependRestoreScrollTop(1000, 6000, 6500)).toBe(1500);
-	});
-
-	test('shifts up when rows were trimmed above, clamped at the top', () => {
-		expect(prependRestoreScrollTop(1000, 6000, 5800)).toBe(800);
-		expect(prependRestoreScrollTop(100, 6000, 5800)).toBe(0);
 	});
 });
