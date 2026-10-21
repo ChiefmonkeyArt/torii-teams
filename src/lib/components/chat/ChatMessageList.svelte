@@ -228,14 +228,21 @@
 			suppressNextAutoScroll = true;
 			await ensureMessage(focusCursor);
 			await tick();
-			if (run !== scrollRun) return false; // superseded mid-load
+			// Superseded: a newer flight owns the scroll now. Return TRUE so the
+			// caller skips its bottom-pin fallback — that fallback would take the
+			// token itself and clobber the successor's landing mid-flight.
+			if (run !== scrollRun) return true;
 			index = messages.findIndex((message) => (message.cursor ?? 0) >= focusCursor);
 		}
 		if (index === -1) {
 			// No target — the flight is over, so its suppression is too. The flag
 			// used to leak from every bail-out and stale-suppress the first
 			// post-open window growth (the anchor and bottom re-pin both skip).
+			// Settling matters as much as clearing: a stranded scrollRun >
+			// settledRun freezes visibility read-marking until some later
+			// programmatic scroll happens to settle it.
 			suppressNextAutoScroll = false;
+			settledRun = run;
 			return false;
 		}
 
@@ -253,6 +260,7 @@
 		if (run !== scrollRun) return true;
 		if (!row) {
 			suppressNextAutoScroll = false;
+			settledRun = run; // we still own the token — settle or read-marking freezes
 			return false; // target vanished mid-flight — fall back to bottom-pin
 		}
 		positionMessage(row, 'top');
@@ -507,8 +515,10 @@
 
 	async function navigateToMessage(messageId: string) {
 		if (!browser || !container) return;
-		// Run token from entry, for the same ownership-safe suppression clears
-		// as scrollToFocusMessage (every await below can be superseded).
+		// Run token from entry, with the same exit rule as scrollToFocusMessage:
+		// every exit that still owns the token settles it (a stranded scrollRun >
+		// settledRun freezes visibility read-marking), and a superseded exit
+		// leaves both to its successor.
 		const run = ++scrollRun;
 		// Accept the raw event id too: reply quotes on pending bubbles and
 		// unavailable-parent stubs carry it (no cursor yet), while rendered
@@ -522,7 +532,10 @@
 		// ids can't be resolved below the window (no id index) and no-op as before.
 		if (messageIndex === -1 && ensureMessage) {
 			const cursor = parseMessageKeyCursor(messageId);
-			if (cursor === undefined) return;
+			if (cursor === undefined) {
+				settledRun = run; // below-window raw id: nothing to load, settle what we took
+				return;
+			}
 			suppressNextAutoScroll = true;
 			await ensureMessage(cursor);
 			await tick();
@@ -532,10 +545,14 @@
 			);
 			if (messageIndex === -1) {
 				suppressNextAutoScroll = false;
+				settledRun = run;
 				return;
 			}
 		}
-		if (messageIndex === -1) return;
+		if (messageIndex === -1) {
+			settledRun = run;
+			return;
+		}
 		const targetId = messages[messageIndex].id;
 
 		suppressNextAutoScroll = true;
@@ -543,6 +560,7 @@
 		if (run !== scrollRun) return;
 		if (!element) {
 			suppressNextAutoScroll = false;
+			settledRun = run; // we still own the token — settle or read-marking freezes
 			return;
 		}
 
