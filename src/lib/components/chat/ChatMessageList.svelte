@@ -126,14 +126,15 @@
 	// Class field, not an option (setOptions never touches it), assigned once.
 	// ($store reads are safe, but `$store.prop = …` compiles to store.set() and
 	// this store is derived/read-only — so assign through a plain local.)
-	// Tanstack's default only absorbs above-viewport resizes while scrolling
-	// forward — during backward scroll the corrections land as visible jumps.
-	// Anchor in both directions; with shape-aware estimates the deltas are small,
-	// so anchoring holds the reading position without fighting scroll input.
-	// ponytail: mirrors the default minus the direction clause and the private
-	// scrollAdjustments term — live scrollTop is close enough.
+	// The default only absorbs above-viewport resizes while scrolling forward
+	// — during backward scroll (up-paging) uncorrected resizes drift the fold —
+	// and until 3.19 it also corrected fold-STRADDLING rows, whose growth is
+	// below the fold: that dragged the freshly landed view into the message
+	// (upstream #1218). Mirror the fixed default (first measure: above the
+	// fold; re-measure: ENTIRELY above it) minus the direction clause, plus a
+	// bottom-pin carve-out.
 	const virtualizerInstance = $virtualizer;
-	virtualizerInstance.shouldAdjustScrollPositionOnItemSizeChange = (item) => {
+	virtualizerInstance.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
 		// Never drag a viewport pinned at the bottom: rows settling from estimate to
 		// measured height (short text especially) would otherwise pull the freshly
 		// opened chat up to a deterministic mid-history spot. At the bottom the
@@ -141,7 +142,10 @@
 		// re-pins, so the view stays glued to the latest message.
 		const el = container;
 		if (el && el.scrollHeight - el.scrollTop - el.clientHeight <= 2) return false;
-		return item.start < (el?.scrollTop ?? 0);
+		const offset = el?.scrollTop ?? 0;
+		return instance.itemSizeCache.has(item.key)
+			? item.start + item.size <= offset
+			: item.start < offset;
 	};
 
 	const virtualItems = $derived($virtualizer.getVirtualItems());

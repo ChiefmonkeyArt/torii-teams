@@ -71,6 +71,21 @@ async function waitFor(predicate: () => boolean, budgetMs = 4000): Promise<boole
 	return predicate();
 }
 
+// Waits for the focus flight: the target row pinned at the viewport top, with
+// the scroll position stable across two samples.
+async function waitForLanding(targetId: string): Promise<boolean> {
+	let lastTop = Number.NaN;
+	return waitFor(() => {
+		const element = row(targetId);
+		const box = container();
+		if (!element || !box || box.scrollTop <= 0) return false;
+		const offset = element.getBoundingClientRect().top - box.getBoundingClientRect().top;
+		const stable = lastTop === offset;
+		lastTop = offset;
+		return stable && Math.abs(offset) < 4;
+	});
+}
+
 afterEach(() => {
 	document.body.innerHTML = '';
 });
@@ -86,19 +101,8 @@ test('a window prepend after the focus landing keeps the landed row in place', a
 		props: { initialMessages: base, focusCursor: FOCUS_CURSOR }
 	});
 
-	// Wait for the focus flight to land: the target row pinned at the viewport
-	// top, with the scroll position stable across two samples.
-	let lastTop = Number.NaN;
-	const landed = await waitFor(() => {
-		const element = row(target.id);
-		const box = container();
-		if (!element || !box || box.scrollTop <= 0) return false;
-		const offset = element.getBoundingClientRect().top - box.getBoundingClientRect().top;
-		const stable = lastTop === offset;
-		lastTop = offset;
-		return stable && Math.abs(offset) < 4;
-	});
-	expect(landed).toBe(true);
+	// Wait for the focus flight to land on the target row.
+	expect(await waitForLanding(target.id)).toBe(true);
 
 	const before = row(target.id)!.getBoundingClientRect().top;
 
@@ -110,6 +114,50 @@ test('a window prepend after the focus landing keeps the landed row in place', a
 	const afterRow = row(target.id);
 	// A null row means the landed row left the rendered window entirely — the
 	// jump exceeded the viewport, which is the very race under test.
+	const after = afterRow ? afterRow.getBoundingClientRect().top : Number.NaN;
+	expect(Number.isFinite(after) && Math.abs(after - before) < 8).toBe(true);
+
+	await unmount(harness);
+	target0.remove();
+});
+
+// Post-landing row growth: the landed row re-renders taller AFTER the focus
+// flight settles — markdown/mention parse caches filling, font swap re-wraps
+// — and the appended message is what makes the store write trip the effect
+// gate. On the old virtual-core the re-measurement of a fold-straddling row
+// applied a scroll "correction" by the growth delta, dragging the viewport
+// down into the message with no actor re-pinning it: the still-occurring
+// lands-then-jumps, strongest in chats whose last message is long (estimate
+// capped at 30 lines, so the settle delta is huge). virtual-core 3.19
+// re-measures only correct items ENTIRELY above the fold (upstream #1218).
+// The +6px pre-scroll puts the row's top strictly above the fold line, the
+// subpixel reality on device that makes the old policy fire.
+test('the landed row growing after the landing keeps the reading position', async () => {
+	const base = synthMessages(1, ROWS);
+	const target = base.find((message) => message.cursor === FOCUS_CURSOR)!;
+
+	const target0 = document.createElement('div');
+	document.body.append(target0);
+	const harness = mount(Harness, {
+		target: target0,
+		props: { initialMessages: base, focusCursor: FOCUS_CURSOR }
+	});
+	expect(await waitForLanding(target.id)).toBe(true);
+
+	const box = container()!;
+	box.scrollTop += 6; // row top now strictly above the fold line
+	await settle(32);
+	const before = row(target.id)!.getBoundingClientRect().top;
+
+	// Same-key row, much taller text — the async settle — plus one appended
+	// message so the fresh array changes the last row id and trips the gate.
+	const grown = [...base];
+	grown[base.indexOf(target)] = { ...target, text: 'y'.repeat(900) };
+	grown.push(synthMessage(ROWS + 1));
+	harness.setMessages(grown);
+	await settle(150);
+
+	const afterRow = row(target.id);
 	const after = afterRow ? afterRow.getBoundingClientRect().top : Number.NaN;
 	expect(Number.isFinite(after) && Math.abs(after - before) < 8).toBe(true);
 

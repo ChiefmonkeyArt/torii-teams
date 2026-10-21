@@ -84,7 +84,7 @@
 		"@noble/curves": "2.2.0",
 		"@noble/hashes": "2.0.1",
 		"@tanstack/svelte-query": "^6.1.33",
-		"@tanstack/svelte-virtual": "^3.13.25",
+		"@tanstack/svelte-virtual": "^3.13.47",
 		"applesauce-accounts": "^6",
 		"applesauce-common": "^6",
 		"applesauce-core": "^6",

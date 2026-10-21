@@ -90,8 +90,8 @@ importers:
         specifier: ^6.1.33
         version: 6.1.33(svelte@5.56.6(@typescript-eslint/types@8.59.3))
       '@tanstack/svelte-virtual':
-        specifier: ^3.13.25
-        version: 3.13.25(svelte@5.56.6(@typescript-eslint/types@8.59.3))
+        specifier: ^3.13.47
+        version: 3.13.47(svelte@5.56.6(@typescript-eslint/types@8.59.3))
       applesauce-accounts:
         specifier: ^6
         version: 6.0.0(patch_hash=c03be1923dd39aeaeaf61f5bb0ddd1608bc6d46cd44e6a8869852b3695cccfab)(@capacitor/core@8.4.2)(typescript@6.0.3)
@@ -987,13 +987,13 @@ packages:
     peerDependencies:
       svelte: ^5.25.0
 
-  '@tanstack/svelte-virtual@3.13.25':
-    resolution: {integrity: sha512-Y8CPJGfClVfpK2Hr9+4jehMPKr73e06F5Msuux/wFUn2TiP6DVQlpCJcT1m2iea5U1esgrFMi0phNIE36ekeAg==}
+  '@tanstack/svelte-virtual@3.13.47':
+    resolution: {integrity: sha512-lF1mdrnkoFR1+AubB/W0ifgryCHyO0iDBygWIf4LE/H0XAjHZQ/ui83EDXpWvdSrD9VV5bPR2pn5toVyHNq7xw==}
     peerDependencies:
       svelte: ^3.48.0 || ^4.0.0 || ^5.0.0
 
-  '@tanstack/virtual-core@3.15.0':
-    resolution: {integrity: sha512-0AwPGx0I8QxPYjAxShT/+z+ZOe9u8mW5rsXvivCTjRfRmz9a43+3mRyi4wwlyoUqOC56q/jatKa0Bh9M99BEHQ==}
+  '@tanstack/virtual-core@3.19.6':
+    resolution: {integrity: sha512-CsTW892z23gy7IyxYTTorVu1uZWB+0N349rSMgKz4rFLPpLza7F7TpcCKeI5iUAwYQCt8QUlOU67J+KXCxtpGw==}
 
   '@trapezedev/gradle-parse@7.1.3':
     resolution: {integrity: sha512-WQVF5pEJ5o/mUyvfGTG9nBKx9Te/ilKM3r2IT69GlbaooItT5ao7RyF1MUTBNjHLPk/xpGUY3c6PyVnjDlz0Vw==}
@@ -4235,12 +4235,12 @@ snapshots:
       '@tanstack/query-core': 5.100.14
       svelte: 5.56.6(@typescript-eslint/types@8.59.3)
 
-  '@tanstack/svelte-virtual@3.13.25(svelte@5.56.6(@typescript-eslint/types@8.59.3))':
+  '@tanstack/svelte-virtual@3.13.47(svelte@5.56.6(@typescript-eslint/types@8.59.3))':
     dependencies:
-      '@tanstack/virtual-core': 3.15.0
+      '@tanstack/virtual-core': 3.19.6
       svelte: 5.56.6(@typescript-eslint/types@8.59.3)
 
-  '@tanstack/virtual-core@3.15.0': {}
+  '@tanstack/virtual-core@3.19.6': {}
 
   '@trapezedev/gradle-parse@7.1.3': {}
 
