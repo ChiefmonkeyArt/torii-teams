@@ -177,13 +177,18 @@
 	// rows that never rendered. A deep target's estimated offset can overshoot
 	// the real content entirely (the jump clamps at the end and the row never
 	// mounts), so converge: jump, measure what rendered, jump again with the
-	// corrected offsets. Returns the target row or null when it never rendered.
+	// corrected offsets. Targeted by message ID, re-resolved every attempt: a
+	// window merge landing mid-flight shifts indices, and a stale index jumps
+	// to whatever older row inherited it. Returns the target row or null when
+	// it never rendered.
 	async function jumpToRow(
-		index: number,
+		targetId: string,
 		align: 'start' | 'center',
 		run: number
 	): Promise<HTMLElement | null> {
 		for (let attempt = 0; attempt < 3; attempt++) {
+			const index = messages.findIndex((message) => message.id === targetId);
+			if (index === -1) return null;
 			$virtualizer.scrollToIndex(index, { align });
 			// The virtual window recomputes on the element's scroll event, which
 			// lands after every microtask — wait for the next frame or the row
@@ -194,7 +199,9 @@
 			measureVisibleItems();
 			await tick();
 			if (run !== scrollRun || !container) return null;
-			const row = container.querySelector<HTMLElement>(`[data-index="${index}"]`);
+			const row = container.querySelector<HTMLElement>(
+				`[data-message-id="${CSS.escape(targetId)}"]`
+			);
 			if (row) return row;
 		}
 		return null;
@@ -208,6 +215,11 @@
 	// row renders at/after the cursor (consumer falls back to the bottom-pin).
 	async function scrollToFocusMessage(focusCursor: number): Promise<boolean> {
 		if (!browser || !container) return false;
+		// Run token from ENTRY, not after the page load: every await below can
+		// be superseded, and ownership (run === scrollRun) is what makes the
+		// suppression clears safe — a superseded flight must never clear its
+		// successor's flag.
+		const run = ++scrollRun;
 		let index = messages.findIndex((message) => (message.cursor ?? 0) >= focusCursor);
 		if (index === -1 && ensureMessage) {
 			// Hold the focus flight across the load: no bottom-pin may claim the
@@ -216,29 +228,44 @@
 			suppressNextAutoScroll = true;
 			await ensureMessage(focusCursor);
 			await tick();
+			if (run !== scrollRun) return false; // superseded mid-load
 			index = messages.findIndex((message) => (message.cursor ?? 0) >= focusCursor);
 		}
-		if (index === -1) return false;
+		if (index === -1) {
+			// No target — the flight is over, so its suppression is too. The flag
+			// used to leak from every bail-out and stale-suppress the first
+			// post-open window growth (the anchor and bottom re-pin both skip).
+			suppressNextAutoScroll = false;
+			return false;
+		}
 
 		consumedFocusCursor = focusCursor;
 		// The focus flight owns the scroll: mark "not at bottom" so no auto-scroll
 		// actor (message-arrival effect re-runs, the container RO, the totalSize
 		// re-pin) can race it back to the latest message mid-flight.
 		wasAtBottom = false;
-		const run = ++scrollRun;
 		// Suppress the totalSize re-pin while measurements settle (same guard
 		// navigateToMessage uses).
 		suppressNextAutoScroll = true;
 		// Anchor to the ROW (not the bubble) so the unread marker renders inside
 		// the viewport top; double pass because late measurements keep settling.
-		const row = await jumpToRow(index, 'start', run);
+		const row = await jumpToRow(messages[index].id, 'start', run);
 		if (run !== scrollRun) return true;
-		if (!row) return false; // target vanished mid-flight — fall back to bottom-pin
+		if (!row) {
+			suppressNextAutoScroll = false;
+			return false; // target vanished mid-flight — fall back to bottom-pin
+		}
 		positionMessage(row, 'top');
 		await tick();
 		if (run !== scrollRun) return true;
 		positionMessage(row, 'top');
 		updateBottomState();
+		// End the suppression with the flight that raised it. Leaving it for the
+		// next messages-effect run let the open-time window merge (the prepend
+		// right after landing) arrive while the flag was still up: both the
+		// anchor guard and the bottom re-pin skipped it, and the landed view slid
+		// up into older history — the lands-then-jumps race.
+		suppressNextAutoScroll = false;
 		settledRun = run;
 		markVisibleUnreadReferences();
 		return true;
@@ -480,6 +507,9 @@
 
 	async function navigateToMessage(messageId: string) {
 		if (!browser || !container) return;
+		// Run token from entry, for the same ownership-safe suppression clears
+		// as scrollToFocusMessage (every await below can be superseded).
+		const run = ++scrollRun;
 		// Accept the raw event id too: reply quotes on pending bubbles and
 		// unavailable-parent stubs carry it (no cursor yet), while rendered
 		// messages match on their composite `${eventId}:${cursor}` id. Raw ids
@@ -496,6 +526,7 @@
 			suppressNextAutoScroll = true;
 			await ensureMessage(cursor);
 			await tick();
+			if (run !== scrollRun) return; // superseded mid-load
 			messageIndex = messages.findIndex(
 				(message) => message.id === messageId || message.eventId === messageId
 			);
@@ -508,10 +539,12 @@
 		const targetId = messages[messageIndex].id;
 
 		suppressNextAutoScroll = true;
-		const run = ++scrollRun;
-		const element = await jumpToRow(messageIndex, 'center', run);
+		const element = await jumpToRow(targetId, 'center', run);
 		if (run !== scrollRun) return;
-		if (!element) return;
+		if (!element) {
+			suppressNextAutoScroll = false;
+			return;
+		}
 
 		highlightedMessageId = targetId;
 		if (highlightTimeout) {
@@ -526,6 +559,9 @@
 		if (run !== scrollRun) return;
 		positionMessage(element, 'center');
 		updateBottomState();
+		// Same rule as scrollToFocusMessage: the flight ends, its suppression
+		// ends — never leaked for the next effect run to clean up.
+		suppressNextAutoScroll = false;
 		settledRun = run;
 		markVisibleUnreadReferences();
 	}
