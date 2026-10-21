@@ -318,7 +318,15 @@
 	async function restoreAnchorRow(anchor: { id: string; viewportOffset: number }): Promise<void> {
 		const run = ++scrollRun;
 		const element = await jumpToRow(anchor.id, 'start', run);
-		if (run !== scrollRun || !element || !container) return;
+		// Superseded: the successor owns settling. Anchor unrecoverable (a window
+		// trim evicted the row): settle what we took anyway — a stranded
+		// scrollRun > settledRun freezes visibility read-marking and every later
+		// anchor until some other programmatic scroll settles it.
+		if (run !== scrollRun) return;
+		if (!element || !container) {
+			settledRun = run;
+			return;
+		}
 		// jumpToRow pinned the row's TOP to the viewport top; nudge it back to
 		// its exact captured reading offset.
 		const delta =
@@ -492,9 +500,10 @@
 		// Older rows merging in ABOVE the viewport (open-time window growth,
 		// around-loads) leave scrollTop at the same pixel and slide the view up
 		// into old history — the notification-open "lands, then jumps higher"
-		// race. Capture the reading anchor before the update; restore it in the
-		// continuation below from the virtualizer's own offset math — height-delta
-		// arithmetic measured a DOM mid-re-render and overshot.
+		// race. Capture the reading anchor before the update; the continuation
+		// restores it by row identity through the library's own scroll machinery
+		// (restoreAnchorRow) — height-delta arithmetic measured a DOM mid-re-render
+		// and overshot.
 		const prependAnchor = shouldAnchorPrepend({
 			hasAppliedList: appliedMessageCount >= 0,
 			firstRowChanged: firstMessageId !== appliedFirstMessageId,
