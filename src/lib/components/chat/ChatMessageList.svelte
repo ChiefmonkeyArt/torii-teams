@@ -8,6 +8,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import ChatMessageItem from './ChatMessageItem.svelte';
 	import { estimateChatMessageHeight } from './chatMessageRenderCache';
+	import { prependRestoreScrollTop, shouldAnchorPrepend } from './chatListScrollAnchor';
 	import type { ChatMessage } from './chat.types';
 
 	let {
@@ -87,6 +88,7 @@
 	let appliedGroupId = '';
 	let appliedMessageCount = -1;
 	let appliedLastMessageId = '';
+	let appliedFirstMessageId = '';
 	let appliedFocusCursor = -1;
 
 	// The scrollRun value of the last COMPLETED programmatic flight. While
@@ -386,6 +388,7 @@
 	$effect(() => {
 		const messageCount = messages.length;
 		const lastMessageId = messages.at(-1)?.id ?? '';
+		const firstMessageId = messages[0]?.id ?? '';
 		const focusCursor = initialFocusCursor;
 		if (!browser || !container) return;
 		// Identity churn from the owner's `messages` derivation must not reach
@@ -394,13 +397,31 @@
 			appliedGroupId === groupId &&
 			appliedMessageCount === messageCount &&
 			appliedLastMessageId === lastMessageId &&
+			appliedFirstMessageId === firstMessageId &&
 			appliedFocusCursor === focusCursor
 		) {
 			return;
 		}
+		// Older rows merging in ABOVE the viewport (open-time window growth,
+		// around-loads) leave scrollTop at the same pixel and slide the view up
+		// into old history — the notification-open "lands, then jumps higher"
+		// race. Capture the scroll geometry before the update; restore it in the
+		// continuation below, mirroring handleLoadOlder's own-load anchoring.
+		const prependAnchor =
+			shouldAnchorPrepend({
+				hasAppliedList: appliedMessageCount >= 0,
+				firstRowChanged: firstMessageId !== appliedFirstMessageId,
+				atBottom: wasAtBottom,
+				flightMidAir: scrollRun !== settledRun,
+				loadingOlder: loadOlderInFlight,
+				suppressed: suppressNextAutoScroll
+			}) && container
+				? { scrollTop: container.scrollTop, scrollHeight: container.scrollHeight }
+				: null;
 		appliedGroupId = groupId;
 		appliedMessageCount = messageCount;
 		appliedLastMessageId = lastMessageId;
+		appliedFirstMessageId = firstMessageId;
 		appliedFocusCursor = focusCursor;
 		untrack(() => {
 			$virtualizer.setOptions({
@@ -411,6 +432,15 @@
 		});
 
 		void tick().then(async () => {
+			// Restore the captured geometry first, so the anchor — not the shifted
+			// content — defines the position every later actor measures from.
+			if (prependAnchor && container) {
+				container.scrollTop = prependRestoreScrollTop(
+					prependAnchor.scrollTop,
+					prependAnchor.scrollHeight,
+					container.scrollHeight
+				);
+			}
 			measureVisibleItems();
 			if (suppressNextAutoScroll) {
 				suppressNextAutoScroll = false;
