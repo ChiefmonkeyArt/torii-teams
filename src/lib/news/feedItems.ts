@@ -91,6 +91,13 @@ export const DEFAULT_DONATION: DonationConfig = {
  */
 const newsReleases: NewsRelease[] = [
 	{
+		id: 'cordn-news-2026-10-21-quiet-fixes',
+		createdAt: Date.UTC(2026, 9, 21),
+		version: 1,
+		title: 'Quiet fixes: polls, broken media and notification jumps',
+		body: "- 🐛 Opening a poll's details now shows its reactions and exactly who reacted, just like text messages always did.\n- 🐛 Messages with old, dead media links no longer flash a loading spinner in an endless loop — they settle on a “Couldn't load media” note you can tap to try again.\n- 🐛 Opening a chat from a notification stays where it lands: the view no longer slides up into older messages a moment after arriving at the new ones."
+	},
+	{
 		id: 'cordn-news-2026-10-15-typing-jump',
 		createdAt: Date.UTC(2026, 9, 15),
 		version: 1,
