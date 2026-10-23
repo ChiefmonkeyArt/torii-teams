@@ -2,12 +2,14 @@
 	import BarChart3 from '@lucide/svelte/icons/bar-chart-3';
 
 	import { buildPollTally, getMessagePollDefinition, type PollOptionResult } from '$lib/chat/polls';
+	import { buildAnnotationIndex } from '$lib/chat/references';
 	import MessageParts from '$lib/chat/inline/MessageParts.svelte';
 	import type { RichBodyProps } from '$lib/chat/registry';
 	import ProfileCard from '$lib/components/ProfileCard.svelte';
 	import { listChatGroupMessages } from '$lib/services/chatGroups.svelte';
 	import { manager } from '$lib/services/accountManager.svelte';
 	import { formatUnixTimestamp, normalizePubKey } from '$lib/utils';
+	import RichReactions from './RichReactions.svelte';
 
 	/**
 	 * Full-fidelity poll view (kind 1068) shared by the detail sidebar and
@@ -25,6 +27,9 @@
 
 	let now = $state(Math.floor(Date.now() / 1000));
 	const storedMessages = $derived(listChatGroupMessages(groupId));
+	// Reactions ride the same annotation index DefaultRich uses — a poll's
+	// reactions fold onto its event id exactly like a text message's.
+	const annotationIndex = $derived(buildAnnotationIndex(storedMessages));
 	const tally = $derived(buildPollTally(storedMessages, eventId, activePubkey, now));
 	const pollMessage = $derived(storedMessages.find((message) => message.id === eventId));
 	const definition = $derived(
@@ -123,5 +128,7 @@
 		<p class="text-xs text-muted-foreground">
 			{participants} participant{participants === 1 ? '' : 's'}
 		</p>
+
+		<RichReactions index={annotationIndex} messageId={eventId} />
 	</div>
 {/if}

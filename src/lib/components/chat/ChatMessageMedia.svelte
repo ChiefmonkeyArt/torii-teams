@@ -8,7 +8,10 @@
 		getMediaAutoLoad,
 		mediaUploadProgress,
 		isMessageMediaLoaded,
+		isMessageMediaFailed,
 		markMessageMediaLoaded,
+		markMessageMediaFailed,
+		clearMessageMediaFailure,
 		type ResolvedMedia
 	} from '$lib/services/chatMediaStorage.svelte';
 	import { openMediaLightbox } from '$lib/services/chatMediaLightbox.svelte';
@@ -90,6 +93,15 @@
 			loading = false;
 			return;
 		}
+		// A remembered failure settles straight on the error card — no re-fetch on
+		// row remounts or messages-array identity churn (the blink loop). Reading
+		// the set here also re-runs this effect when a retry tap clears the mark.
+		if (isMessageMediaFailed(currentRef.plaintextHashHex)) {
+			resolved = null;
+			loading = false;
+			failed = true;
+			return;
+		}
 		// Churn guard (playing media): the messages array rebuilds with fresh
 		// ChatMessage objects on every groups-store write — same tags refs, but the
 		// new identities re-run this effect, and flipping `loading` unmounts a
@@ -112,6 +124,7 @@
 			})
 			.catch(() => {
 				if (cancelled) return;
+				markMessageMediaFailed(currentRef.plaintextHashHex);
 				failed = true;
 				loading = false;
 			});
@@ -246,15 +259,40 @@
 				<Download class="size-4 shrink-0 text-muted-foreground" />
 			</button>
 		{:else if isFailed}
-			<div
-				class={cn(
-					'flex items-center gap-2 rounded-xl px-2.5 py-2 text-xs',
-					message.isOwn ? 'text-primary-foreground/80' : 'text-muted-foreground'
-				)}
-			>
-				<AlertTriangle class="size-4 shrink-0" />
-				<span>Couldn't load media</span>
-			</div>
+			{#if failed}
+				<!-- Load failure (dead store link): a plain error that stays an error fed the
+				 remount re-fetch blink loop — the card itself is the retry affordance. -->
+				<button
+					type="button"
+					class={cn(
+						'flex items-center gap-2 rounded-xl px-2.5 py-2 text-xs transition-colors',
+						message.isOwn
+							? 'text-primary-foreground/80'
+							: 'text-muted-foreground hover:bg-background/50'
+					)}
+					title="Retry loading media"
+					aria-label="Retry loading media"
+					onclick={() => {
+						if (!ref) return;
+						failed = false;
+						clearMessageMediaFailure(ref.plaintextHashHex);
+					}}
+				>
+					<AlertTriangle class="size-4 shrink-0" />
+					<span>Couldn't load media</span>
+					<span class="opacity-60">· Retry</span>
+				</button>
+			{:else}
+				<div
+					class={cn(
+						'flex items-center gap-2 rounded-xl px-2.5 py-2 text-xs',
+						message.isOwn ? 'text-primary-foreground/80' : 'text-muted-foreground'
+					)}
+				>
+					<AlertTriangle class="size-4 shrink-0" />
+					<span>Couldn't load media</span>
+				</div>
+			{/if}
 		{:else}
 			<button
 				type="button"

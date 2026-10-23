@@ -8,6 +8,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import ChatMessageItem from './ChatMessageItem.svelte';
 	import { estimateChatMessageHeight } from './chatMessageRenderCache';
+	import { shouldAnchorPrepend } from './chatListScrollAnchor';
 	import type { ChatMessage } from './chat.types';
 
 	let {
@@ -87,6 +88,7 @@
 	let appliedGroupId = '';
 	let appliedMessageCount = -1;
 	let appliedLastMessageId = '';
+	let appliedFirstMessageId = '';
 	let appliedFocusCursor = -1;
 
 	// The scrollRun value of the last COMPLETED programmatic flight. While
@@ -98,27 +100,41 @@
 	const ESTIMATED_MESSAGE_HEIGHT = 128;
 	const VIRTUAL_OVERSCAN = 8;
 
+	// The virtualizer must only see list changes when the messages effect
+	// applies them through setOptions. estimateSize/getItemKey closures reading
+	// the reactive `messages` prop made every identity change (store writes,
+	// presence ticks) re-run the totalSize/virtualItems derivations mid-flush,
+	// re-rendering the virtualized DOM with a STALE count over SHIFTED rows —
+	// the "lands on the new messages, then jumps higher" open race: the prepend
+	// anchor then measured that franken-DOM height and restored to a wrong
+	// offset. A plain snapshot severs the accidental coupling.
+	// svelte-ignore non_reactive_update
+	let messageSnapshot: ChatMessage[] = [];
+
 	const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
 		count: 0,
 		getScrollElement: () => container,
 		// Shape-aware estimates shrink the estimate→measure deltas that make
 		// first-pass scrolls jump; measured rows keep their real heights.
-		estimateSize: (index) =>
-			messages[index] ? estimateChatMessageHeight(messages[index]) : ESTIMATED_MESSAGE_HEIGHT,
+		estimateSize: (index) => {
+			const message = messageSnapshot[index];
+			return message ? estimateChatMessageHeight(message) : ESTIMATED_MESSAGE_HEIGHT;
+		},
 		overscan: VIRTUAL_OVERSCAN,
-		getItemKey: (index) => messages[index]?.id ?? index
+		getItemKey: (index) => messageSnapshot[index]?.id ?? index
 	});
 	// Class field, not an option (setOptions never touches it), assigned once.
 	// ($store reads are safe, but `$store.prop = …` compiles to store.set() and
 	// this store is derived/read-only — so assign through a plain local.)
-	// Tanstack's default only absorbs above-viewport resizes while scrolling
-	// forward — during backward scroll the corrections land as visible jumps.
-	// Anchor in both directions; with shape-aware estimates the deltas are small,
-	// so anchoring holds the reading position without fighting scroll input.
-	// ponytail: mirrors the default minus the direction clause and the private
-	// scrollAdjustments term — live scrollTop is close enough.
+	// The default only absorbs above-viewport resizes while scrolling forward
+	// — during backward scroll (up-paging) uncorrected resizes drift the fold —
+	// and until 3.19 it also corrected fold-STRADDLING rows, whose growth is
+	// below the fold: that dragged the freshly landed view into the message
+	// (upstream #1218). Mirror the fixed default (first measure: above the
+	// fold; re-measure: ENTIRELY above it) minus the direction clause, plus a
+	// bottom-pin carve-out.
 	const virtualizerInstance = $virtualizer;
-	virtualizerInstance.shouldAdjustScrollPositionOnItemSizeChange = (item) => {
+	virtualizerInstance.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
 		// Never drag a viewport pinned at the bottom: rows settling from estimate to
 		// measured height (short text especially) would otherwise pull the freshly
 		// opened chat up to a deterministic mid-history spot. At the bottom the
@@ -126,7 +142,10 @@
 		// re-pins, so the view stays glued to the latest message.
 		const el = container;
 		if (el && el.scrollHeight - el.scrollTop - el.clientHeight <= 2) return false;
-		return item.start < (el?.scrollTop ?? 0);
+		const offset = el?.scrollTop ?? 0;
+		return instance.itemSizeCache.has(item.key)
+			? item.start + item.size <= offset
+			: item.start < offset;
 	};
 
 	const virtualItems = $derived($virtualizer.getVirtualItems());
@@ -175,13 +194,18 @@
 	// rows that never rendered. A deep target's estimated offset can overshoot
 	// the real content entirely (the jump clamps at the end and the row never
 	// mounts), so converge: jump, measure what rendered, jump again with the
-	// corrected offsets. Returns the target row or null when it never rendered.
+	// corrected offsets. Targeted by message ID, re-resolved every attempt: a
+	// window merge landing mid-flight shifts indices, and a stale index jumps
+	// to whatever older row inherited it. Returns the target row or null when
+	// it never rendered.
 	async function jumpToRow(
-		index: number,
+		targetId: string,
 		align: 'start' | 'center',
 		run: number
 	): Promise<HTMLElement | null> {
 		for (let attempt = 0; attempt < 3; attempt++) {
+			const index = messages.findIndex((message) => message.id === targetId);
+			if (index === -1) return null;
 			$virtualizer.scrollToIndex(index, { align });
 			// The virtual window recomputes on the element's scroll event, which
 			// lands after every microtask — wait for the next frame or the row
@@ -192,7 +216,9 @@
 			measureVisibleItems();
 			await tick();
 			if (run !== scrollRun || !container) return null;
-			const row = container.querySelector<HTMLElement>(`[data-index="${index}"]`);
+			const row = container.querySelector<HTMLElement>(
+				`[data-message-id="${CSS.escape(targetId)}"]`
+			);
 			if (row) return row;
 		}
 		return null;
@@ -206,6 +232,11 @@
 	// row renders at/after the cursor (consumer falls back to the bottom-pin).
 	async function scrollToFocusMessage(focusCursor: number): Promise<boolean> {
 		if (!browser || !container) return false;
+		// Run token from ENTRY, not after the page load: every await below can
+		// be superseded, and ownership (run === scrollRun) is what makes the
+		// suppression clears safe — a superseded flight must never clear its
+		// successor's flag.
+		const run = ++scrollRun;
 		let index = messages.findIndex((message) => (message.cursor ?? 0) >= focusCursor);
 		if (index === -1 && ensureMessage) {
 			// Hold the focus flight across the load: no bottom-pin may claim the
@@ -214,32 +245,96 @@
 			suppressNextAutoScroll = true;
 			await ensureMessage(focusCursor);
 			await tick();
+			// Superseded: a newer flight owns the scroll now. Return TRUE so the
+			// caller skips its bottom-pin fallback — that fallback would take the
+			// token itself and clobber the successor's landing mid-flight.
+			if (run !== scrollRun) return true;
 			index = messages.findIndex((message) => (message.cursor ?? 0) >= focusCursor);
 		}
-		if (index === -1) return false;
+		if (index === -1) {
+			// No target — the flight is over, so its suppression is too. The flag
+			// used to leak from every bail-out and stale-suppress the first
+			// post-open window growth (the anchor and bottom re-pin both skip).
+			// Settling matters as much as clearing: a stranded scrollRun >
+			// settledRun freezes visibility read-marking until some later
+			// programmatic scroll happens to settle it.
+			suppressNextAutoScroll = false;
+			settledRun = run;
+			return false;
+		}
 
 		consumedFocusCursor = focusCursor;
 		// The focus flight owns the scroll: mark "not at bottom" so no auto-scroll
 		// actor (message-arrival effect re-runs, the container RO, the totalSize
 		// re-pin) can race it back to the latest message mid-flight.
 		wasAtBottom = false;
-		const run = ++scrollRun;
 		// Suppress the totalSize re-pin while measurements settle (same guard
 		// navigateToMessage uses).
 		suppressNextAutoScroll = true;
 		// Anchor to the ROW (not the bubble) so the unread marker renders inside
 		// the viewport top; double pass because late measurements keep settling.
-		const row = await jumpToRow(index, 'start', run);
+		const row = await jumpToRow(messages[index].id, 'start', run);
 		if (run !== scrollRun) return true;
-		if (!row) return false; // target vanished mid-flight — fall back to bottom-pin
+		if (!row) {
+			suppressNextAutoScroll = false;
+			settledRun = run; // we still own the token — settle or read-marking freezes
+			return false; // target vanished mid-flight — fall back to bottom-pin
+		}
 		positionMessage(row, 'top');
 		await tick();
 		if (run !== scrollRun) return true;
 		positionMessage(row, 'top');
 		updateBottomState();
+		// End the suppression with the flight that raised it. Leaving it for the
+		// next messages-effect run let the open-time window merge (the prepend
+		// right after landing) arrive while the flag was still up: both the
+		// anchor guard and the bottom re-pin skipped it, and the landed view slid
+		// up into older history — the lands-then-jumps race.
+		suppressNextAutoScroll = false;
 		settledRun = run;
 		markVisibleUnreadReferences();
 		return true;
+	}
+
+	// First row intersecting the viewport top (the reading anchor): its id plus
+	// the pixel offset it sits at, so a window merge that inserts older rows
+	// ABOVE it can restore the exact reading position afterwards.
+	function captureAnchorRow(): { id: string; viewportOffset: number } | null {
+		if (!container) return null;
+		const containerTop = container.getBoundingClientRect().top;
+		for (const element of container.querySelectorAll<HTMLElement>('[data-virtual-item]')) {
+			const rect = element.getBoundingClientRect();
+			if (rect.bottom > containerTop + 1) {
+				return { id: element.dataset.messageId ?? '', viewportOffset: rect.top - containerTop };
+			}
+		}
+		return null;
+	}
+
+	// Anchor restore = a mini flight through the same convergence machinery the
+	// focus landing uses (scrollToIndex + measured final position). Raw scrollTop
+	// writes fought the virtualizer's scroll-reconcile bookkeeping and stranded
+	// the rendered window off-viewport — the "jumped higher and stayed" endgame.
+	async function restoreAnchorRow(anchor: { id: string; viewportOffset: number }): Promise<void> {
+		const run = ++scrollRun;
+		const element = await jumpToRow(anchor.id, 'start', run);
+		// Superseded: the successor owns settling. Anchor unrecoverable (a window
+		// trim evicted the row): settle what we took anyway — a stranded
+		// scrollRun > settledRun freezes visibility read-marking and every later
+		// anchor until some other programmatic scroll settles it.
+		if (run !== scrollRun) return;
+		if (!element || !container) {
+			settledRun = run;
+			return;
+		}
+		// jumpToRow pinned the row's TOP to the viewport top; nudge it back to
+		// its exact captured reading offset.
+		const delta =
+			element.getBoundingClientRect().top -
+			container.getBoundingClientRect().top -
+			anchor.viewportOffset;
+		container.scrollTop += delta;
+		settledRun = run;
 	}
 
 	function isAtBottom() {
@@ -260,7 +355,9 @@
 		let maxVisibleCursor = 0;
 
 		for (const virtualItem of virtualItems) {
-			const message = messages[virtualItem.index];
+			// Reads the snapshot — the array the rows were rendered from — never the
+			// live prop: mid-update they can disagree and the wrong cursor is read.
+			const message = messageSnapshot[virtualItem.index];
 			if (!message) continue;
 			const element = container.querySelector<HTMLElement>(`[data-index="${virtualItem.index}"]`);
 			if (!element) continue;
@@ -386,6 +483,7 @@
 	$effect(() => {
 		const messageCount = messages.length;
 		const lastMessageId = messages.at(-1)?.id ?? '';
+		const firstMessageId = messages[0]?.id ?? '';
 		const focusCursor = initialFocusCursor;
 		if (!browser || !container) return;
 		// Identity churn from the owner's `messages` derivation must not reach
@@ -394,23 +492,50 @@
 			appliedGroupId === groupId &&
 			appliedMessageCount === messageCount &&
 			appliedLastMessageId === lastMessageId &&
+			appliedFirstMessageId === firstMessageId &&
 			appliedFocusCursor === focusCursor
 		) {
 			return;
 		}
+		// Older rows merging in ABOVE the viewport (open-time window growth,
+		// around-loads) leave scrollTop at the same pixel and slide the view up
+		// into old history — the notification-open "lands, then jumps higher"
+		// race. Capture the reading anchor before the update; the continuation
+		// restores it by row identity through the library's own scroll machinery
+		// (restoreAnchorRow) — height-delta arithmetic measured a DOM mid-re-render
+		// and overshot.
+		const prependAnchor = shouldAnchorPrepend({
+			hasAppliedList: appliedMessageCount >= 0,
+			firstRowChanged: firstMessageId !== appliedFirstMessageId,
+			atBottom: wasAtBottom,
+			flightMidAir: scrollRun !== settledRun,
+			loadingOlder: loadOlderInFlight,
+			suppressed: suppressNextAutoScroll
+		})
+			? captureAnchorRow()
+			: null;
 		appliedGroupId = groupId;
 		appliedMessageCount = messageCount;
 		appliedLastMessageId = lastMessageId;
+		appliedFirstMessageId = firstMessageId;
 		appliedFocusCursor = focusCursor;
 		untrack(() => {
+			messageSnapshot = messages;
 			$virtualizer.setOptions({
 				count: messageCount,
 				getScrollElement: () => container,
-				getItemKey: (index) => messages[index]?.id ?? index
+				getItemKey: (index) => messageSnapshot[index]?.id ?? index
 			});
 		});
 
 		void tick().then(async () => {
+			// Restore the reading anchor first — by row identity, through the
+			// virtualizer's own scroll machinery (see restoreAnchorRow) — so the
+			// anchor, not the shifted content, defines the position every later
+			// actor measures from.
+			if (prependAnchor && prependAnchor.id) {
+				await restoreAnchorRow(prependAnchor);
+			}
 			measureVisibleItems();
 			if (suppressNextAutoScroll) {
 				suppressNextAutoScroll = false;
@@ -450,6 +575,11 @@
 
 	async function navigateToMessage(messageId: string) {
 		if (!browser || !container) return;
+		// Run token from entry, with the same exit rule as scrollToFocusMessage:
+		// every exit that still owns the token settles it (a stranded scrollRun >
+		// settledRun freezes visibility read-marking), and a superseded exit
+		// leaves both to its successor.
+		const run = ++scrollRun;
 		// Accept the raw event id too: reply quotes on pending bubbles and
 		// unavailable-parent stubs carry it (no cursor yet), while rendered
 		// messages match on their composite `${eventId}:${cursor}` id. Raw ids
@@ -462,26 +592,37 @@
 		// ids can't be resolved below the window (no id index) and no-op as before.
 		if (messageIndex === -1 && ensureMessage) {
 			const cursor = parseMessageKeyCursor(messageId);
-			if (cursor === undefined) return;
+			if (cursor === undefined) {
+				settledRun = run; // below-window raw id: nothing to load, settle what we took
+				return;
+			}
 			suppressNextAutoScroll = true;
 			await ensureMessage(cursor);
 			await tick();
+			if (run !== scrollRun) return; // superseded mid-load
 			messageIndex = messages.findIndex(
 				(message) => message.id === messageId || message.eventId === messageId
 			);
 			if (messageIndex === -1) {
 				suppressNextAutoScroll = false;
+				settledRun = run;
 				return;
 			}
 		}
-		if (messageIndex === -1) return;
+		if (messageIndex === -1) {
+			settledRun = run;
+			return;
+		}
 		const targetId = messages[messageIndex].id;
 
 		suppressNextAutoScroll = true;
-		const run = ++scrollRun;
-		const element = await jumpToRow(messageIndex, 'center', run);
+		const element = await jumpToRow(targetId, 'center', run);
 		if (run !== scrollRun) return;
-		if (!element) return;
+		if (!element) {
+			suppressNextAutoScroll = false;
+			settledRun = run; // we still own the token — settle or read-marking freezes
+			return;
+		}
 
 		highlightedMessageId = targetId;
 		if (highlightTimeout) {
@@ -496,6 +637,9 @@
 		if (run !== scrollRun) return;
 		positionMessage(element, 'center');
 		updateBottomState();
+		// Same rule as scrollToFocusMessage: the flight ends, its suppression
+		// ends — never leaked for the next effect run to clean up.
+		suppressNextAutoScroll = false;
 		settledRun = run;
 		markVisibleUnreadReferences();
 	}
@@ -526,10 +670,10 @@
 		<div class="mx-auto min-h-full w-full max-w-5xl px-3 py-4 sm:px-4 sm:py-5 md:px-6 md:py-8">
 			<div class="relative w-full" style={`height: ${totalSize}px;`}>
 				{#each virtualItems as virtualItem (virtualItem.key)}
-					{@const message = messages[virtualItem.index]}
+					{@const message = messageSnapshot[virtualItem.index]}
 					{#if message}
-						{@const previousMessage = messages[virtualItem.index - 1]}
-						{@const nextMessage = messages[virtualItem.index + 1]}
+						{@const previousMessage = messageSnapshot[virtualItem.index - 1]}
+						{@const nextMessage = messageSnapshot[virtualItem.index + 1]}
 						{@const systemRow = Boolean(message.systemKind)}
 						{@const runHead = !systemRow && previousMessage?.author !== message.author}
 						<!-- Pfp anchors to the NEWEST message of a run (bottom-aligned like Signal): the hop to

@@ -2,7 +2,6 @@
 	import * as Collapsible from '$lib/components/ui/collapsible';
 	import ProfileCard from '$lib/components/ProfileCard.svelte';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
-	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Pencil from '@lucide/svelte/icons/pencil';
 	import MessagesSquare from '@lucide/svelte/icons/messages-square';
 	import { manager } from '$lib/services/accountManager.svelte';
@@ -14,6 +13,7 @@
 	import ChatMarkdown from '$lib/chat/markdown/ChatMarkdown.svelte';
 	import { getCachedChatMarkdownBlocks } from '$lib/components/chat/chatMessageRenderCache';
 	import { formatUnixTimestamp, normalizePubKey } from '$lib/utils';
+	import RichReactions from './RichReactions.svelte';
 	import type { RichBodyProps } from '$lib/chat/registry';
 	import type { StoredChatMessage } from '$lib/services/chatGroupMessages.svelte';
 
@@ -57,8 +57,6 @@
 		return !index.deletedIds.has(message.id) && index.editMap.has(message.id);
 	}
 
-	const reactions = $derived(subject ? reactionsFor(subject.id) : []);
-	const reactionTotal = $derived(reactions.reduce((total, reaction) => total + reaction.count, 0));
 	const isDeleted = $derived(subject ? index.deletedIds.has(subject.id) : false);
 	const edit = $derived(subject ? index.editMap.get(subject.id) : undefined);
 	const displayContent = $derived(subject ? displayText(subject) : '');
@@ -122,7 +120,6 @@
 	});
 	const hasThread = $derived(threadNodes.some((node) => !node.isSubject));
 
-	let reactionsOpen = $state(false);
 	let advancedOpen = $state(false);
 	let rawEnvelopeOpen = $state(false);
 	function timeLabel(message: StoredChatMessage) {
@@ -258,53 +255,7 @@
 			</div>
 		{/if}
 
-		{#if reactions.length}
-			<section class="space-y-2">
-				<Collapsible.Root bind:open={reactionsOpen}>
-					<Collapsible.Trigger
-						class="flex w-full items-center justify-between gap-3 rounded-xl px-1 py-1 text-left"
-					>
-						<span class="text-xs font-semibold tracking-[0.18em] text-muted-foreground uppercase">
-							Reactions · {reactionTotal}
-						</span>
-						<ChevronRight
-							class={`size-4 shrink-0 text-muted-foreground transition-transform ${reactionsOpen ? 'rotate-90' : ''}`}
-						/>
-					</Collapsible.Trigger>
-
-					<div class="flex flex-wrap gap-2 px-1 pt-1">
-						{#each reactions as reaction (`${subject.id}:rxn:${reaction.emoji}`)}
-							<span
-								class={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium ${reaction.reactedByMe ? 'border-primary/30 bg-primary/10 text-foreground' : 'border-border bg-muted/40 text-muted-foreground'}`}
-							>
-								<span>{reaction.emoji}</span>
-								<span>{reaction.count}</span>
-							</span>
-						{/each}
-					</div>
-
-					<Collapsible.Content>
-						<div class="mt-2 space-y-3 px-1">
-							{#each reactions as reaction (`${subject.id}:rxn-detail:${reaction.emoji}`)}
-								<div class="rounded-2xl border p-3">
-									<div class="mb-2 flex items-center gap-2">
-										<span class="text-lg">{reaction.emoji}</span>
-										<span class="font-medium">
-											{reaction.count} reaction{reaction.count === 1 ? '' : 's'}
-										</span>
-									</div>
-									<div class="flex flex-col gap-2">
-										{#each reaction.reactors as reactor (`${subject.id}:rxn-detail:${reaction.emoji}:${reactor}`)}
-											<ProfileCard pubkey={reactor} mode="inline" showInlineAvatar={true} />
-										{/each}
-									</div>
-								</div>
-							{/each}
-						</div>
-					</Collapsible.Content>
-				</Collapsible.Root>
-			</section>
-		{/if}
+		<RichReactions {index} messageId={subject.id} />
 
 		<Collapsible.Root bind:open={advancedOpen} class="mt-auto">
 			<Collapsible.Trigger
