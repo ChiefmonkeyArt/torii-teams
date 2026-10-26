@@ -91,6 +91,27 @@ export const DEFAULT_DONATION: DonationConfig = {
  */
 const newsReleases: NewsRelease[] = [
 	{
+		id: 'cordn-news-2026-10-26-live-reactions',
+		createdAt: Date.UTC(2026, 9, 26),
+		version: 1,
+		title: 'Reactions that show up on time — in a chat that holds still',
+		body: "- 🐛 Reactions, edits and pins on the newest message now appear the moment they happen — until now you had to leave the group and come back to see them.\n- 🐛 The conversation no longer jumps when a reaction makes a message taller: the view stays put while you're at the latest messages.\n- 🐛 A sender's picture no longer goes missing when the last line under their message is a small reaction note.\n- 🔄 Messages still on their way out no longer offer reactions and edits — tapping there used to do nothing at all."
+	},
+	{
+		id: 'cordn-news-2026-10-26-nostr-highlights',
+		createdAt: Date.UTC(2026, 9, 26),
+		version: 1,
+		title: 'Nostr highlights, quoted right',
+		body: '- ✨ Paste a nostr highlight link into a chat and it now arrives as a proper quote card: the highlighted passage, any comment the highlighter added, and a tap-through to where it came from.\n- 🔄 Embedded nostr posts of every kind show their content now — whatever you paste renders as more than an empty card with a kind number on it.'
+	},
+	{
+		id: 'cordn-news-2026-10-26-attachment-captions',
+		createdAt: Date.UTC(2026, 9, 26),
+		version: 1,
+		title: 'A caption for every photo',
+		body: "- ✨ Attach several photos at once and each one can carry its own words: tap a photo's chip before sending to write its caption, flip through the rest with the arrows, and every photo goes out with its caption under it. The message box still captions the first photo, exactly as before."
+	},
+	{
 		id: 'cordn-news-2026-10-21-quiet-fixes',
 		createdAt: Date.UTC(2026, 9, 21),
 		version: 1,
