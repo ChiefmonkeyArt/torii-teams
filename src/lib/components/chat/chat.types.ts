@@ -84,3 +84,9 @@ export interface ChatMentionReference {
 	pubkey: string;
 	label: string;
 }
+
+/** One staged file leaving the composer with its own caption. */
+export interface OutgoingMediaAttachment {
+	readonly file: File;
+	readonly caption: string;
+}

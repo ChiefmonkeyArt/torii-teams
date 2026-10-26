@@ -6,6 +6,7 @@
 	import { getCachedChatMarkdownBlocks } from '$lib/components/chat/chatMessageRenderCache';
 	import { useNostrEvent } from '$lib/services/useNostrEvent.svelte';
 	import { getRenderNostrEmbeds } from '$lib/services/chatComposerSettings.svelte';
+	import { highlightSource } from './highlightSource';
 	import { openMessageLink } from '$lib/utils/groupShareLink';
 	import { formatUnixTimestamp, copyToClipboard, cn } from '$lib/utils';
 	import { MESSAGE_PART_CONTAINER_CLASS } from '$lib/chat/messageTextClasses';
@@ -23,12 +24,12 @@
 	/**
 	 * Inline card for a pasted nostr event pointer (nevent/naddr/note),
 	 * rendered where the bech32 string sat in the message. Loads the event via
-	 * the shared event store + loaders (dedup + relay hints), renders its
+	 * the shared event store + loaders (dedup + relay hints) and renders its
 	 * content through the SAME pipeline as cordn messages (markdown cache →
-	 * mention/link parts), so links/media inside remote notes work unchanged.
-	 * Content kinds beyond text notes and long-form show a label-only card —
-	 * their content is lists/metadata JSON, not prose. The ⋯ menu copies the
-	 * entity or opens it on nostr.at.
+	 * mention/link parts) for every kind, so links/media inside remote notes
+	 * work unchanged — label-only when the content is empty. NIP-84
+	 * highlights render as quotes with source attribution. The ⋯ menu copies
+	 * the entity or opens it on nostr.at.
 	 */
 	let {
 		pointer,
@@ -66,11 +67,22 @@
 		[kinds.LongFormArticle]: 'Article',
 		[kinds.Metadata]: 'Metadata',
 		[kinds.Contacts]: 'Contacts',
-		[kinds.RelayList]: 'Relays'
+		[kinds.RelayList]: 'Relays',
+		[kinds.Highlights]: 'Highlight'
 	};
 	const kindLabel = (kind: number) => KIND_LABELS[kind] ?? `Kind ${kind}`;
-	/** Prose kinds render content; everything else is a label-only card. */
-	const CONTENT_KINDS = new Set([kinds.ShortTextNote, kinds.LongFormArticle]);
+
+	// NIP-84 highlights: content is the highlighted excerpt; a comment tag
+	// turns it into a quote highlight (comment = the highlighter's prose,
+	// content = the quoted excerpt below it).
+	const isHighlight = $derived(event.current?.kind === kinds.Highlights);
+	const highlightComment = $derived(
+		isHighlight ? (event.current?.tags.find((tag) => tag[0] === 'comment')?.[1] ?? '') : ''
+	);
+	const highlightContext = $derived(
+		isHighlight ? (event.current?.tags.find((tag) => tag[0] === 'context')?.[1] ?? '') : ''
+	);
+	const highlightSrc = $derived(isHighlight ? highlightSource(event.current?.tags ?? []) : null);
 
 	// flex-col (not block): Svelte keeps single-space text nodes between the
 	// card sections, and in a block container each becomes an anonymous block
@@ -108,8 +120,15 @@
 			: ''
 	);
 	const markdownBlocks = $derived(
-		event.current && CONTENT_KINDS.has(event.current.kind)
+		event.current?.content
 			? getCachedChatMarkdownBlocks(event.current.id, event.current.content)
+			: null
+	);
+	// The comment is a second text of the same event — its own cache key, or
+	// the id-keyed markdown cache would return the excerpt for it.
+	const commentBlocks = $derived(
+		highlightComment && event.current
+			? getCachedChatMarkdownBlocks(`${event.current.id}:comment`, highlightComment)
 			: null
 	);
 </script>
@@ -180,7 +199,64 @@
 		{#if articleTitle}
 			<span class="mt-0.5 block text-sm font-semibold">{articleTitle}</span>
 		{/if}
-		{#if CONTENT_KINDS.has(event.current.kind) && event.current.content}
+		{#if isHighlight}
+			<!-- NIP-84: the excerpt is a quote, not prose — the border/italics set it
+			     apart from note cards. Quote highlights lead with the comment. -->
+			{#if highlightComment}
+				<span class="mt-1 block text-sm">
+					<CollapsibleText length={highlightComment.length} {isOwn}>
+						{#if commentBlocks}
+							<ChatMarkdown
+								blocks={commentBlocks}
+								messageId={`${event.current.id}:comment`}
+								{isOwn}
+							/>
+						{:else}
+							<MessageParts
+								messageId={`${event.current.id}:comment`}
+								text={highlightComment}
+								{isOwn}
+							/>
+						{/if}
+					</CollapsibleText>
+				</span>
+			{/if}
+			{#if event.current.content}
+				<span
+					class={cn(
+						'mt-1 block border-l-2 pl-2 text-sm italic',
+						isOwn ? 'border-primary-foreground/40' : 'border-border'
+					)}
+				>
+					<CollapsibleText length={event.current.content.length} {isOwn}>
+						{#if markdownBlocks}
+							<ChatMarkdown blocks={markdownBlocks} messageId={event.current.id} {isOwn} />
+						{:else}
+							<MessageParts messageId={event.current.id} text={event.current.content} {isOwn} />
+						{/if}
+					</CollapsibleText>
+				</span>
+			{/if}
+			{#if highlightContext}
+				<span class={cn('mt-1 block text-xs leading-4', metaClass)}>{highlightContext}</span>
+			{/if}
+			{#if highlightSrc}
+				<span class={cn('mt-1 flex min-w-0 items-center gap-1 text-xs leading-4', metaClass)}>
+					<span class="shrink-0">Source:</span>
+					{#if highlightSrc.href}
+						<button
+							type="button"
+							class="min-w-0 truncate font-medium underline-offset-2 hover:underline"
+							onclick={() => void openMessageLink(highlightSrc!.href!)}
+						>
+							{highlightSrc.label}
+						</button>
+					{:else}
+						<span class="min-w-0 truncate">{highlightSrc.label}</span>
+					{/if}
+				</span>
+			{/if}
+		{:else if event.current.content}
 			<span class="mt-1 block text-sm">
 				<CollapsibleText length={event.current.content.length} {isOwn}>
 					{#if markdownBlocks}

@@ -9,6 +9,7 @@
 	import ChatMessageItem from './ChatMessageItem.svelte';
 	import { estimateChatMessageHeight } from './chatMessageRenderCache';
 	import { shouldAnchorPrepend } from './chatListScrollAnchor';
+	import { isRunTail } from './chatRunGrouping';
 	import type { ChatMessage } from './chat.types';
 
 	let {
@@ -134,18 +135,21 @@
 	// fold; re-measure: ENTIRELY above it) minus the direction clause, plus a
 	// bottom-pin carve-out.
 	const virtualizerInstance = $virtualizer;
-	virtualizerInstance.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
-		// Never drag a viewport pinned at the bottom: rows settling from estimate to
-		// measured height (short text especially) would otherwise pull the freshly
-		// opened chat up to a deterministic mid-history spot. At the bottom the
-		// browser clamps scrollTop to the shrunken content and the totalSize effect
-		// re-pins, so the view stays glued to the latest message.
+	virtualizerInstance.shouldAdjustScrollPositionOnItemSizeChange = (item) => {
+		// Never drag a viewport that owns its bottom position: rows settling from
+		// estimate to measured height (short text, a new reaction chip growing its
+		// row) would otherwise adjust by the item delta while the totalSize re-pin
+		// below scrolls to the absolute bottom — two competing scroll targets for
+		// a frame or three, which reads as the list bouncing until they agree. The
+		// re-pin is guarded by the same wasAtBottom, so bottom-positioning belongs
+		// to it alone; the raw clamp check stays as a backstop for positions the
+		// tracker has not sampled yet (programmatic scrolls).
 		const el = container;
-		if (el && el.scrollHeight - el.scrollTop - el.clientHeight <= 2) return false;
+		if (el && (wasAtBottom || el.scrollHeight - el.scrollTop - el.clientHeight <= 2)) {
+			return false;
+		}
 		const offset = el?.scrollTop ?? 0;
-		return instance.itemSizeCache.has(item.key)
-			? item.start + item.size <= offset
-			: item.start < offset;
+		return measuredRowKeys.has(item.key) ? item.start + item.size <= offset : item.start < offset;
 	};
 
 	const virtualItems = $derived($virtualizer.getVirtualItems());
@@ -444,8 +448,20 @@
 	function measureVisibleItems() {
 		if (!browser || !container) return;
 		for (const element of container.querySelectorAll<HTMLDivElement>('[data-virtual-item]')) {
-			$virtualizer.measureElement(element);
+			measureElement(element);
 		}
+	}
+
+	// First-measure vs re-measure (the fold-straddling distinction above) needs
+	// the item size cache, which virtual-core 3.15 keeps private — so every row
+	// records its key on the first pass through measureElement instead. Both
+	// measurement paths (the batch pass and the continuous per-row action below)
+	// go through this one wrapper.
+	const measuredRowKeys = new Set<string | number | bigint>();
+	function measureElement(element: HTMLDivElement) {
+		const key = messages[Number(element.dataset.index)]?.id;
+		if (key !== undefined) measuredRowKeys.add(key);
+		$virtualizer.measureElement(element);
 	}
 
 	// Ongoing per-row measurement: the virtualizer's built-in `measureElement`
@@ -455,7 +471,7 @@
 	// ResizeObserver that keeps the layout honest post-scroll (one shared RO for
 	// all rows, as tanstack ships it).
 	function measureItem(node: HTMLDivElement) {
-		$virtualizer.measureElement(node);
+		measureElement(node);
 	}
 
 	onMount(() => {
@@ -486,6 +502,22 @@
 		const firstMessageId = messages[0]?.id ?? '';
 		const focusCursor = initialFocusCursor;
 		if (!browser || !container) return;
+		// ALWAYS advance the render snapshot, before any gating: rows render from
+		// messageSnapshot only, and content-only updates (a reaction chip landing,
+		// a peer edit/pin/delete) change no row ids or count — the applied* gate
+		// below would hold and freeze the stale snapshot until the next group
+		// re-entry. The adapter's setOptions unconditionally notifies the store,
+		// so rows repaint even when count/keys/range are identical; scroll and
+		// anchor work stays gated. Snapshot+setOptions stay atomic (the prepend
+		// franken-DOM fix) and closures still read the snapshot, never the prop.
+		untrack(() => {
+			messageSnapshot = messages;
+			$virtualizer.setOptions({
+				count: messageCount,
+				getScrollElement: () => container,
+				getItemKey: (index) => messageSnapshot[index]?.id ?? index
+			});
+		});
 		// Identity churn from the owner's `messages` derivation must not reach
 		// the scroll/read-mark continuation (see the applied* gate above).
 		if (
@@ -519,14 +551,6 @@
 		appliedLastMessageId = lastMessageId;
 		appliedFirstMessageId = firstMessageId;
 		appliedFocusCursor = focusCursor;
-		untrack(() => {
-			messageSnapshot = messages;
-			$virtualizer.setOptions({
-				count: messageCount,
-				getScrollElement: () => container,
-				getItemKey: (index) => messageSnapshot[index]?.id ?? index
-			});
-		});
 
 		void tick().then(async () => {
 			// Restore the reading anchor first — by row identity, through the
@@ -679,7 +703,7 @@
 						<!-- Pfp anchors to the NEWEST message of a run (bottom-aligned like Signal): the hop to
 							a new tail only mounts an Avatar whose picture prop is already resolved and cached
 							(loadedPictures paints it at full opacity instantly), so no fade replays. -->
-						{@const runTail = !systemRow && nextMessage?.author !== message.author}
+						{@const runTail = isRunTail(message, nextMessage)}
 						<div
 							data-index={virtualItem.index}
 							data-virtual-item
