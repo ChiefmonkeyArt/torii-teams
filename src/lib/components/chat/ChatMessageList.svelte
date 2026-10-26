@@ -136,13 +136,18 @@
 	// bottom-pin carve-out.
 	const virtualizerInstance = $virtualizer;
 	virtualizerInstance.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
-		// Never drag a viewport pinned at the bottom: rows settling from estimate to
-		// measured height (short text especially) would otherwise pull the freshly
-		// opened chat up to a deterministic mid-history spot. At the bottom the
-		// browser clamps scrollTop to the shrunken content and the totalSize effect
-		// re-pins, so the view stays glued to the latest message.
+		// Never drag a viewport that owns its bottom position: rows settling from
+		// estimate to measured height (short text, a new reaction chip growing its
+		// row) would otherwise adjust by the item delta while the totalSize re-pin
+		// below scrolls to the absolute bottom — two competing scroll targets for
+		// a frame or three, which reads as the list bouncing until they agree. The
+		// re-pin is guarded by the same wasAtBottom, so bottom-positioning belongs
+		// to it alone; the raw clamp check stays as a backstop for positions the
+		// tracker has not sampled yet (programmatic scrolls).
 		const el = container;
-		if (el && el.scrollHeight - el.scrollTop - el.clientHeight <= 2) return false;
+		if (el && (wasAtBottom || el.scrollHeight - el.scrollTop - el.clientHeight <= 2)) {
+			return false;
+		}
 		const offset = el?.scrollTop ?? 0;
 		return instance.itemSizeCache.has(item.key)
 			? item.start + item.size <= offset
