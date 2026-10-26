@@ -1,21 +1,20 @@
 <script module lang="ts">
-	// Session-wide "this src has loaded" memory: remounts (e.g. the chat list
-	// rebuilding after a settings round-trip) would otherwise hide every image
-	// behind the detached-preload round trip and flash the fallback first.
-	const loadedSrcs = new Set<string>();
-
-	// Decoded-bitmap keep-alive: holding the decoded HTMLImageElement pins its
-	// bitmap so remounts paint warm srcs on the first frame instead of the
-	// WebView re-decoding (and popping) them. Bounded LRU — re-set refreshes
-	// recency, eviction only costs a future re-decode.
-	const MAX_KEPT_IMAGES = 64;
-	const keptImages = new Map<string, HTMLImageElement>();
-	function keepDecoded(src: string, image: HTMLImageElement) {
-		keptImages.delete(src);
-		keptImages.set(src, image);
-		if (keptImages.size > MAX_KEPT_IMAGES) {
-			const oldest = keptImages.keys().next().value;
-			if (oldest !== undefined) keptImages.delete(oldest);
+	// Session-wide warm-image memory. The pinned HTMLImageElement keeps its
+	// fetched bytes (and likely decoded bitmap) alive in the browser's memory
+	// cache, so remounts (chat list rebuild, group open/close) paint the picture
+	// on the first frame instead of re-fetching and popping it in.
+	// Single source of truth for "this src is warm": an LRU-evicted src goes
+	// cold again — never claim warm without pinned bytes, or a network fetch
+	// would silently reintroduce the empty-circle redraw. Eviction only costs
+	// a future re-preload. Same bound as the decoded MLS-state cache.
+	const MAX_WARM_IMAGES = 32;
+	const warmImages = new Map<string, HTMLImageElement>();
+	function keepWarm(src: string, image: HTMLImageElement) {
+		warmImages.delete(src);
+		warmImages.set(src, image);
+		if (warmImages.size > MAX_WARM_IMAGES) {
+			const oldest = warmImages.keys().next().value;
+			if (oldest !== undefined) warmImages.delete(oldest);
 		}
 	}
 </script>
@@ -44,7 +43,7 @@
 	// Warm srcs paint on the first frame; the preload effect below now only
 	// serves first-time loads. Deliberately a one-shot read at mount.
 	untrack(() => {
-		if (src && loadedSrcs.has(src)) {
+		if (src && warmImages.has(src)) {
 			decoding = 'sync';
 			avatar.set('loaded');
 		}
@@ -58,9 +57,9 @@
 			avatar.set('error');
 			return;
 		}
-		// Warm remount: the caches already hold this bitmap — a detached
+		// Warm remount: pinned bytes already cover this src — a detached
 		// re-preload would only duplicate the fetch/decode work.
-		if (loadedSrcs.has(src)) {
+		if (warmImages.has(src)) {
 			decoding = 'sync';
 			avatar.set('loaded');
 			return;
@@ -69,11 +68,10 @@
 		const image = new Image();
 		image.src = src;
 		// A detached image is otherwise never rendered, so nothing forces its
-		// decode — request it now so the keep-alive below holds a decoded bitmap.
+		// decode — request it now so the pinned element holds decoded bytes.
 		image.decode?.().catch(() => undefined);
 		image.onload = () => {
-			loadedSrcs.add(src);
-			keepDecoded(src, image);
+			keepWarm(src, image);
 			avatar.set('loaded');
 		};
 		image.onerror = () => avatar.set('error');
@@ -96,7 +94,7 @@
 	onerror={() => {
 		// A warm src can still die later (expired link, deleted avatar): drop it so
 		// the fallback shows and the next mount re-probes instead of trusting it.
-		if (src) loadedSrcs.delete(src);
+		if (src) warmImages.delete(src);
 		avatar.set('error');
 	}}
 	{...restProps}

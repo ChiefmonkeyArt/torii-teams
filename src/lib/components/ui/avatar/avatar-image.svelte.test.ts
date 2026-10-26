@@ -46,7 +46,39 @@ function mountImage(target: HTMLElement, src: string) {
 }
 
 afterEach(() => {
+	harness.constructed.length = 0;
 	vi.unstubAllGlobals();
+});
+
+test('an LRU-evicted src goes cold again instead of claiming warm without pinned bytes', async () => {
+	vi.stubGlobal('Image', harness.ImageStub);
+	const target = document.createElement('div');
+	document.body.append(target);
+
+	// Load one avatar, then enough others to push it past the warm bound.
+	const first = `https://img.example/first-${Math.random()}.png`;
+	const a = mountImage(target, first);
+	flushSync();
+	harness.constructed[0].onload?.();
+	await vi.waitFor(() => expect(a.status()).toBe('loaded'));
+	await unmount(a.instance);
+
+	for (let i = 0; i < 32; i++) {
+		const src = `https://img.example/other-${i}-${Math.random()}.png`;
+		const other = mountImage(target, src);
+		flushSync();
+		harness.constructed.at(-1)!.onload?.();
+		await vi.waitFor(() => expect(other.status()).toBe('loaded'));
+		await unmount(other.instance);
+	}
+	const evictedRemount = mountImage(target, first);
+	flushSync();
+	// No pinned bytes → not warm: a fresh preload runs and the fallback shows
+	// until it settles (never a lying warm state that draws an empty circle).
+	expect(evictedRemount.status()).toBe('loading');
+	expect(harness.constructed.length).toBe(34); // 33 loads + the re-probe
+	await unmount(evictedRemount.instance);
+	target.remove();
 });
 
 test('a warm remount skips the preload, reports loaded immediately and decodes sync', async () => {
