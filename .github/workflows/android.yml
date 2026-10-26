@@ -16,7 +16,10 @@ concurrency:
 jobs:
   check:
     name: check (typecheck + test + lint)
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest resolved to 26.04, which Playwright 1.60 cannot
+    # install browsers for (no ubuntu26.04-x64 support yet). Unpin when
+    # Playwright catches up.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
