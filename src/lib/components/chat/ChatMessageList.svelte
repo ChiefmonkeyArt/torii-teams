@@ -502,6 +502,22 @@
 		const firstMessageId = messages[0]?.id ?? '';
 		const focusCursor = initialFocusCursor;
 		if (!browser || !container) return;
+		// ALWAYS advance the render snapshot, before any gating: rows render from
+		// messageSnapshot only, and content-only updates (a reaction chip landing,
+		// a peer edit/pin/delete) change no row ids or count — the applied* gate
+		// below would hold and freeze the stale snapshot until the next group
+		// re-entry. The adapter's setOptions unconditionally notifies the store,
+		// so rows repaint even when count/keys/range are identical; scroll and
+		// anchor work stays gated. Snapshot+setOptions stay atomic (the prepend
+		// franken-DOM fix) and closures still read the snapshot, never the prop.
+		untrack(() => {
+			messageSnapshot = messages;
+			$virtualizer.setOptions({
+				count: messageCount,
+				getScrollElement: () => container,
+				getItemKey: (index) => messageSnapshot[index]?.id ?? index
+			});
+		});
 		// Identity churn from the owner's `messages` derivation must not reach
 		// the scroll/read-mark continuation (see the applied* gate above).
 		if (
@@ -535,14 +551,6 @@
 		appliedLastMessageId = lastMessageId;
 		appliedFirstMessageId = firstMessageId;
 		appliedFocusCursor = focusCursor;
-		untrack(() => {
-			messageSnapshot = messages;
-			$virtualizer.setOptions({
-				count: messageCount,
-				getScrollElement: () => container,
-				getItemKey: (index) => messageSnapshot[index]?.id ?? index
-			});
-		});
 
 		void tick().then(async () => {
 			// Restore the reading anchor first — by row identity, through the
