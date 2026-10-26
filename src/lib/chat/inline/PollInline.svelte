@@ -11,6 +11,7 @@
 	import type { InlineBodyProps } from '$lib/chat/registry';
 	import MessageParts from '$lib/chat/inline/MessageParts.svelte';
 	import { listChatGroupMessages } from '$lib/services/chatGroups.svelte';
+	import { pollNow, retainPollNow } from '$lib/chat/pollNow.svelte';
 	import { manager } from '$lib/services/accountManager.svelte';
 	import { cn, normalizePubKey } from '$lib/utils';
 
@@ -31,7 +32,7 @@
 	// Wall clock only matters near `endsAt`; tick sparsely so an on-screen row
 	// closes its own controls at the deadline (marmot gotcha: never wait for a
 	// message to learn the poll closed).
-	let now = $state(Math.floor(Date.now() / 1000));
+	let now = $derived(pollNow());
 	const storedMessages = $derived(groupId ? listChatGroupMessages(groupId) : []);
 	const tally = $derived(
 		groupId ? buildPollTally(storedMessages, message.eventId, activePubkey, now) : null
@@ -46,8 +47,7 @@
 
 	$effect(() => {
 		if (definition?.endsAt == null) return;
-		const timer = setInterval(() => (now = Math.floor(Date.now() / 1000)), 30_000);
-		return () => clearInterval(timer);
+		return retainPollNow();
 	});
 
 	let pendingSelection = $state<string[] | null>(null);

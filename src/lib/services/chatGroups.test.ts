@@ -29,6 +29,14 @@ vi.mock('ts-mls', async () => {
 	};
 });
 
+beforeEach(async () => {
+	// The decode memo in chatGroups.svelte is content-keyed; these tests
+	// re-program the decoder mock per case while reusing dummy state bytes, so
+	// the memo must be reset between cases.
+	const { clearDecodedStateCacheForTests } = await import('./chatGroups.svelte');
+	clearDecodedStateCacheForTests();
+});
+
 vi.mock('$app/environment', () => ({ browser: false }));
 
 const withCoordinatorClientMock = vi.fn(
@@ -1354,5 +1362,43 @@ describe('store history proxying', () => {
 		// source again and history scans lost their raw-array speed.
 		expect(stored?.messages).toBeInstanceOf(StoredChatMessageList);
 		expect(stored?.messages[0]).toBe(message);
+	});
+});
+
+describe('single-group persist coalescing (latest-wins)', () => {
+	test('rapid persists for one group become a single putGroup of the newest state', async () => {
+		const { getChatStorage } = await import('$lib/storage/chatStorage');
+		const { persistGroup, replaceGroup } = await import('./chatGroups.svelte');
+		const storage = await getChatStorage();
+		const putSpy = vi.spyOn(storage, 'putGroup');
+		const groupId = 'gid-persist-coalesce';
+		const groupAt = (lastCursor: number) =>
+			({
+				id: groupId,
+				ownerPubkey: 'bb'.repeat(32),
+				coordinatorKey: 'cc'.repeat(32),
+				createdAt: 100,
+				stateBase64: 'AA==',
+				lastCursor,
+				fetchCursor: lastCursor,
+				messages: [],
+				syncIssues: [],
+				snapshots: [],
+				joinEpoch: 0n
+			}) as StoredChatGroup;
+
+		try {
+			persistGroup(groupAt(1));
+			const second = replaceGroup(groupId, groupAt(2));
+			const third = replaceGroup(groupId, groupAt(3));
+			await Promise.all([second, third]);
+			// A macrotask turn lets any wrongly-scheduled extra drain settle.
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			const calls = putSpy.mock.calls.filter((call) => call[0]?.id === groupId);
+			expect(calls).toHaveLength(1);
+			expect(calls[0][0].lastCursor).toBe(3);
+		} finally {
+			putSpy.mockRestore();
+		}
 	});
 });

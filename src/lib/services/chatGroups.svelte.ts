@@ -196,19 +196,20 @@ let persistGroupsPromise: Promise<void> = Promise.resolve();
 let groupsLoaded = false;
 
 /**
- * Memoizes the decoded MLS ClientState per StoredChatGroup object.
+ * Memoizes the decoded MLS ClientState, keyed by the base64 state bytes.
  *
  * `clientStateDecoder` is expensive and was re-run on every read/render that
- * needed members, admin checks, or removed/poisoned status. Group objects in
- * the store are never mutated in place — every state change produces a new
- * object via `replaceGroup`/`fromStoredGroupData`/`buildPersistedChatGroup`,
- * so stale entries are reclaimed automatically when the old object is GC'd.
- * The `stateBase64` guard defends against any future in-place mutation.
+ * needed members, admin checks, or removed/poisoned status. The old WeakMap
+ * keyed by the group object missed on every ingest batch — the group record
+ * is copy-on-write (a new object per window update), so the active group
+ * re-decoded its full MLS state constantly. Keying by the base64 state
+ * itself is strictly safe — the bytes determine the ClientState — and keeps
+ * the decode cached across batch churn for every consumer (watch ticks,
+ * member lists, sends, media keys). Bounded FIFO; eviction only costs a
+ * re-decode.
  */
-const decodedStateCache = new WeakMap<
-	StoredChatGroup,
-	{ stateBase64: string; state: ClientState }
->();
+const DECODED_STATE_CACHE_MAX = 32;
+const decodedStateCache = new Map<string, ClientState>();
 
 export const chatGroupsStore = $state<{ groups: StoredChatGroup[] }>({
 	groups: []
@@ -510,20 +511,58 @@ function persistGroups(groups: StoredChatGroup[]) {
  * persisting all N groups on every incoming message makes live delivery
  * latency scale with the total group count. The shared `persistGroupsPromise`
  * chain is kept so bulk loads and single-group writes still order safely.
+ *
+ * Repeated calls for one group coalesce latest-wins: N queued writes become a
+ * single `putGroup` of the newest state. `toStoredGroupData` reads the group's
+ * current fields at drain time, so the surviving write is strictly fresher
+ * than any enqueue-time snapshot it replaces, and a caller awaiting its
+ * promise still resolves only once a state at least as new as its own is
+ * durable (the commit-intent `replaceGroup` invariant).
  */
-function persistSingleGroup(group: StoredChatGroup) {
-	persistGroupsPromise = persistGroupsPromise
-		.then(async () => {
-			const storage = await getChatStorage();
-			await storage.putGroup(toStoredGroupData(group));
-		})
-		.catch((error) => {
-			// Surface, never throw: persistence failure must not crash a flow, but
-			// silent loss here is what turned a transient race into permanent
-			// divergence (report 05: frozen history + reload rollback).
-			console.error('[chat-storage] failed to persist group', { groupId: group.id, error });
-		});
-	return persistGroupsPromise;
+interface PendingGroupPersist {
+	group: StoredChatGroup;
+	waiters: Array<() => void>;
+}
+const pendingGroupPersists = new Map<string, PendingGroupPersist>();
+
+function persistSingleGroup(group: StoredChatGroup): Promise<void> {
+	const existing = pendingGroupPersists.get(group.id);
+	const entry: PendingGroupPersist = existing ?? { group, waiters: [] };
+	entry.group = group; // latest reference wins
+	if (!existing) {
+		pendingGroupPersists.set(group.id, entry);
+		persistGroupsPromise = persistGroupsPromise
+			.then(drainPendingGroupPersists)
+			.catch(() => undefined);
+	}
+	return new Promise<void>((resolve) => entry.waiters.push(resolve));
+}
+
+/** Write every pending group once, newest state first-seen. Late arrivals
+ *  during the drain land in a fresh map entry and schedule their own chained
+ *  drain, so nothing is lost and cross-group order still follows the chain. */
+async function drainPendingGroupPersists(): Promise<void> {
+	const entries = [...pendingGroupPersists.entries()];
+	pendingGroupPersists.clear();
+	let storage: Awaited<ReturnType<typeof getChatStorage>> | undefined;
+	try {
+		storage = await getChatStorage();
+	} catch (error) {
+		console.error('[chat-storage] failed to open storage for persist', { error });
+	}
+	for (const [groupId, entry] of entries) {
+		if (storage) {
+			try {
+				await storage.putGroup(toStoredGroupData(entry.group));
+			} catch (error) {
+				// Surface, never throw: persistence failure must not crash a flow, but
+				// silent loss here is what turned a transient race into permanent
+				// divergence (report 05: frozen history + reload rollback).
+				console.error('[chat-storage] failed to persist group', { groupId, error });
+			}
+		}
+		for (const resolve of entry.waiters) resolve();
+	}
 }
 
 export function reloadChatGroupsForOwner(ownerPubkey?: string) {
@@ -550,17 +589,28 @@ function encodeState(state: ClientState): string {
 }
 
 export function decodeStoredGroupState(group: StoredChatGroup): ClientState {
-	const cached = decodedStateCache.get(group);
-	if (cached && cached.stateBase64 === group.stateBase64) {
-		return cached.state;
+	const cached = decodedStateCache.get(group.stateBase64);
+	if (cached) {
+		return cached;
 	}
 	const decoded = clientStateDecoder(base64ToBytes(group.stateBase64), 0);
 	if (!decoded) {
 		throw new Error(`Unable to decode stored group state for ${group.id}`);
 	}
 	const state = decoded[0];
-	decodedStateCache.set(group, { stateBase64: group.stateBase64, state });
+	if (decodedStateCache.size >= DECODED_STATE_CACHE_MAX) {
+		const oldest = decodedStateCache.keys().next().value;
+		if (oldest !== undefined) decodedStateCache.delete(oldest);
+	}
+	decodedStateCache.set(group.stateBase64, state);
 	return state;
+}
+
+/** Test seam: the memo above assumes decode(bytes) is pure. Tests re-program
+ *  the decoder mock between cases while reusing dummy state bytes, so they must
+ *  reset the memo or a previous case's state leaks into the next. */
+export function clearDecodedStateCacheForTests(): void {
+	decodedStateCache.clear();
 }
 
 class RemovedFromGroupError extends Error {

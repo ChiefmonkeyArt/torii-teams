@@ -44,6 +44,7 @@
 				'h-full w-full object-cover transition-opacity duration-200',
 				loaded ? 'opacity-100' : 'opacity-0'
 			)}
+			loading="lazy"
 			decoding="sync"
 			onload={() => picture && loadedPictures.add(picture)}
 		/>

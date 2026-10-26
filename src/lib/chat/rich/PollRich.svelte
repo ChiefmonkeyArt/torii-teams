@@ -7,6 +7,7 @@
 	import type { RichBodyProps } from '$lib/chat/registry';
 	import ProfileCard from '$lib/components/ProfileCard.svelte';
 	import { listChatGroupMessages } from '$lib/services/chatGroups.svelte';
+	import { pollNow, retainPollNow } from '$lib/chat/pollNow.svelte';
 	import { manager } from '$lib/services/accountManager.svelte';
 	import { formatUnixTimestamp, normalizePubKey } from '$lib/utils';
 	import RichReactions from './RichReactions.svelte';
@@ -25,7 +26,7 @@
 		return pubkey ? normalizePubKey(pubkey) : '';
 	});
 
-	let now = $state(Math.floor(Date.now() / 1000));
+	let now = $derived(pollNow());
 	const storedMessages = $derived(listChatGroupMessages(groupId));
 	// Reactions ride the same annotation index DefaultRich uses — a poll's
 	// reactions fold onto its event id exactly like a text message's.
@@ -41,8 +42,7 @@
 
 	$effect(() => {
 		if (definition?.endsAt == null) return;
-		const timer = setInterval(() => (now = Math.floor(Date.now() / 1000)), 30_000);
-		return () => clearInterval(timer);
+		return retainPollNow();
 	});
 
 	const open = $derived(tally?.open ?? true);

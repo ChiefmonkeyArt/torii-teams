@@ -146,6 +146,9 @@ type WatchFetchedMessage = WatchIncomingMessage & {
 type TickOptions = {
 	/** Run the catch-up sweep (foreground/online/heartbeat triggers). */
 	catchUp?: boolean;
+	/** The sweep was triggered by the idle heartbeat (enables per-coordinator
+	 *  catch-up backoff; explicit triggers always fetch and reset the ladder). */
+	heartbeat?: boolean;
 };
 
 /**
@@ -166,6 +169,17 @@ const HEARTBEAT_INTERVAL_MS = 60_000;
 const HEARTBEAT_MISSED_MS = HEARTBEAT_INTERVAL_MS + 30_000;
 /** Min spacing between catch-up sweeps (focus/visibility events can burst). */
 const CATCH_UP_MIN_INTERVAL_MS = 5_000;
+/**
+ * Heartbeat catch-up backoff. A live, all-caught-up coordinator still gets a
+ * periodic fetch as the keepalive-green zombie backstop — but not every beat:
+ * each quiet beat doubles the wait (first step below) up to the cap. Any
+ * ingested message, any non-live watch, or any explicit (non-heartbeat)
+ * trigger — focus, online, pull-to-refresh — returns the coordinator to the
+ * base 60s cadence. Trade: the worst-case missed-message bound on a quiet
+ * zombie widens from ~2min to the cap; idle RPC cost drops ~5x.
+ */
+const HEARTBEAT_CATCHUP_QUIET_START_MS = 2 * 60_000;
+const HEARTBEAT_CATCHUP_BACKOFF_CAP_MS = 5 * 60_000;
 /** Hides the "Updating chats…" banner for ticks that finish quickly. */
 const BANNER_DELAY_MS = 500;
 /**
@@ -215,6 +229,8 @@ let lastCatchUpAt = 0;
  *  coordinator, NOT global: a dead coordinator's 20s fetch must not cause
  *  healthy coordinators' catch-ups to be skipped while it runs. */
 const catchUpInFlightCoordinators = new Set<string>();
+/** Heartbeat catch-up backoff state per coordinator (see the constants above). */
+const heartbeatCatchUpBackoff = new Map<string, { notBefore: number; quietRuns: number }>();
 let lastActiveAccountId = '';
 /** Armed once the first tick settled, so fresh opens start silently. */
 let warmed = false;
@@ -405,6 +421,30 @@ function clearCoordinatorBackoff(coordinatorKey: string) {
 
 function clearAllCoordinatorBackoff() {
 	coordinatorBackoff.clear();
+	heartbeatCatchUpBackoff.clear();
+}
+
+/** True when every watch on this coordinator is live — a coordinator with a
+ *  non-live watch is still converging and must not back its catch-up off. */
+function coordinatorWatchesAllLive(coordinatorKey: string): boolean {
+	for (const handle of currentWatches.values()) {
+		if (handle.coordinatorKey === coordinatorKey && !handle.live) return false;
+	}
+	return true;
+}
+
+function heartbeatCatchUpDelayMs(quietRuns: number): number {
+	return Math.min(
+		HEARTBEAT_CATCHUP_BACKOFF_CAP_MS,
+		HEARTBEAT_CATCHUP_QUIET_START_MS * 2 ** Math.max(0, quietRuns - 1)
+	);
+}
+
+function advanceHeartbeatCatchUpBackoff(coordinatorKey: string, now: number): void {
+	const state = heartbeatCatchUpBackoff.get(coordinatorKey) ?? { notBefore: 0, quietRuns: 0 };
+	state.quietRuns += 1;
+	state.notBefore = now + heartbeatCatchUpDelayMs(state.quietRuns);
+	heartbeatCatchUpBackoff.set(coordinatorKey, state);
 }
 
 function toWatchableGroup(groupId: string): WatchableGroup | null {
@@ -910,7 +950,11 @@ async function startMissingWatches(account: IAccount) {
  * it. The chunk-silence guard avoids false positives from the natural race
  * where a message lands between live delivery and the catch-up fetch.
  */
-async function catchUpWatchedCoordinators(account: IAccount, watchedBefore: string[]) {
+async function catchUpWatchedCoordinators(
+	account: IAccount,
+	watchedBefore: string[],
+	options: Pick<TickOptions, 'heartbeat'> = {}
+) {
 	if (watchedBefore.length === 0) return;
 
 	const groupsByCoordinator = new Map<string, WatchableGroup[]>();
@@ -928,9 +972,17 @@ async function catchUpWatchedCoordinators(account: IAccount, watchedBefore: stri
 			// skipping is scoped to THIS coordinator so a slow or dead one never
 			// withholds catch-ups from the healthy ones.
 			if (catchUpInFlightCoordinators.has(coordinatorKey)) return;
+			const heartbeat = options.heartbeat === true;
+			if (!heartbeat) {
+				// Explicit trigger: always fetch, and re-arm the base cadence.
+				heartbeatCatchUpBackoff.delete(coordinatorKey);
+			} else if (Date.now() < (heartbeatCatchUpBackoff.get(coordinatorKey)?.notBefore ?? 0)) {
+				return;
+			}
 			catchUpInFlightCoordinators.add(coordinatorKey);
 			try {
 				const client = getCoordinatorClient(account, coordinatorKey);
+				let wholeFetchFailed = false;
 				const { failedGroupIds, ingestedCount } = await fetchCoordinatorGroupBacklog({
 					account,
 					client,
@@ -943,6 +995,7 @@ async function catchUpWatchedCoordinators(account: IAccount, watchedBefore: stri
 					// Whole-fetch failure: the backlog is entirely unknown for these
 					// groups — conservatively mark them incomplete (never vouch for them
 					// on the MD send path) until a fetch succeeds.
+					wholeFetchFailed = true;
 					return {
 						failedGroupIds: new Set<string>(groups.map((group) => group.id)),
 						ingestedCount: 0
@@ -957,6 +1010,14 @@ async function catchUpWatchedCoordinators(account: IAccount, watchedBefore: stri
 					groups.filter((group) => !failedGroupIds.has(group.id)).map((group) => group.id)
 				);
 				markGroupsBacklogIncomplete([...failedGroupIds]);
+				if (ingestedCount > 0) {
+					// Found something: stay at the base cadence.
+					heartbeatCatchUpBackoff.delete(coordinatorKey);
+				} else if (wholeFetchFailed || coordinatorWatchesAllLive(coordinatorKey)) {
+					// Quiet (or dead): the heartbeat can back off. A coordinator with a
+					// non-live watch stays hot — something there still needs convergence.
+					if (heartbeat) advanceHeartbeatCatchUpBackoff(coordinatorKey, Date.now());
+				}
 				if (ingestedCount === 0) return;
 				const handle = findWatchHandleByCoordinator(coordinatorKey);
 				if (handle && !isDeliveryStale(handle)) return;
@@ -1001,7 +1062,7 @@ async function tickBody(account: IAccount, options: TickOptions): Promise<void> 
 	// wait on a slow one.
 	await startMissingWatches(account);
 	if (options.catchUp) {
-		void catchUpWatchedCoordinators(account, watchedBefore).catch(() => undefined);
+		void catchUpWatchedCoordinators(account, watchedBefore, options).catch(() => undefined);
 	}
 }
 
@@ -1073,7 +1134,7 @@ function requestTick(reason: string, options: TickOptions = {}): Promise<void> {
 
 	if (catchUp) lastCatchUpAt = Date.now();
 
-	const promise = runTick(reason, { catchUp });
+	const promise = runTick(reason, { catchUp, heartbeat: options.heartbeat === true });
 	tickPromise = promise;
 	// Outbound sends await the in-flight tick via this mirror so they never
 	// race a teardown/backlog ingestion (chatUiActions) — but only while a
@@ -1089,7 +1150,13 @@ function requestTick(reason: string, options: TickOptions = {}): Promise<void> {
 				tickDirty = false;
 				const nextCatchUp = dirtyCatchUp;
 				dirtyCatchUp = false;
-				void requestTick(`${reason} (follow-up)`, { catchUp: nextCatchUp });
+				// A catch-up request that merged into this follow-up may be an
+				// explicit trigger (focus/pull) — it must not inherit the heartbeat's
+				// backoff gating, so drop the flag whenever one merged.
+				void requestTick(`${reason} (follow-up)`, {
+					catchUp: nextCatchUp,
+					heartbeat: options.heartbeat === true && !nextCatchUp
+				});
 			}
 		}
 	});
@@ -1217,7 +1284,7 @@ if (browser) {
 		) {
 			rebuildForeground('heartbeat after suspension');
 		} else {
-			requestTick('heartbeat', { catchUp: true });
+			requestTick('heartbeat', { catchUp: true, heartbeat: true });
 		}
 	}, HEARTBEAT_INTERVAL_MS);
 }

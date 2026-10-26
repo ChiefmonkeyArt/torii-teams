@@ -210,11 +210,28 @@
 		}
 		return cursors;
 	});
+	// Memo per stored message: the messages derived rebuilds every row object on
+	// any window change, so unchanged rows churn identity and re-render their
+	// components. Stored rows are replaced (never mutated) on edits, so the
+	// object reference plus the reactive inputs below fully determine the view.
+	const toChatMessageCache = new WeakMap<
+		StoredChatMessage,
+		{ activePubkey: string; unreadCursor: number | undefined; view: ChatMessage }
+	>();
+
 	function toChatMessage(message: StoredChatMessage): ChatMessage {
 		const unreadReferenceCursor = unreadReferenceCursorByTargetId.get(message.id);
+		const cached = toChatMessageCache.get(message);
+		if (
+			cached &&
+			cached.activePubkey === activePubkey &&
+			cached.unreadCursor === unreadReferenceCursor
+		) {
+			return cached.view;
+		}
 		// Sender is peer-controlled: samePubKey can't throw on a malformed sender.
 		const isOwn = samePubKey(message.sender, activePubkey);
-		return {
+		const view: ChatMessage = {
 			id: `${message.id}:${message.cursor}`,
 			eventId: message.id,
 			author: message.sender,
@@ -231,6 +248,12 @@
 			tags: message.tags,
 			mediaKeyBase64: message.mediaKeyBase64
 		};
+		toChatMessageCache.set(message, {
+			activePubkey,
+			unreadCursor: unreadReferenceCursor,
+			view
+		});
+		return view;
 	}
 
 	function compareChatMessages(a: ChatMessage, b: ChatMessage): number {
