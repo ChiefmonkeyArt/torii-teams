@@ -2659,7 +2659,14 @@ export function deleteChatGroup(groupId: string): void {
 	chatGroupsStore.groups = chatGroupsStore.groups.filter((group) => group.id !== groupId);
 	pendingEpochOperations.delete(groupId);
 	removeSentJoinRequest(groupId);
-	void getChatStorage().then((storage) => storage.deleteGroup(groupId));
+	// Drop any coalesced persist and serialize the delete after pending writes:
+	// a queued drain landing after the delete would resurrect the record.
+	pendingGroupPersists.delete(groupId);
+	void persistGroupsPromise
+		.then(async () => {
+			(await getChatStorage()).deleteGroup(groupId);
+		})
+		.catch(() => undefined);
 }
 
 export async function deleteChatGroupsForCoordinator(coordinatorKey: string): Promise<void> {
@@ -2670,15 +2677,24 @@ export async function deleteChatGroupsForCoordinator(coordinatorKey: string): Pr
 	chatGroupsStore.groups = chatGroupsStore.groups.filter(
 		(group) => group.coordinatorKey !== normalizedCoordinator
 	);
+	for (const id of groupIds) pendingGroupPersists.delete(id);
+	// After pending writes (same resurrect guard as deleteChatGroup).
+	await persistGroupsPromise;
 	const storage = await getChatStorage();
 	await Promise.all(groupIds.map((id) => storage.deleteGroup(id)));
 }
 
 export async function deleteChatGroupsForOwner(ownerPubkey: string): Promise<void> {
 	const normalizedOwner = normalizePubKey(ownerPubkey);
+	const removedIds = chatGroupsStore.groups
+		.filter((group) => group.ownerPubkey === normalizedOwner)
+		.map((group) => group.id);
 	chatGroupsStore.groups = chatGroupsStore.groups.filter(
 		(group) => group.ownerPubkey !== normalizedOwner
 	);
+	for (const id of removedIds) pendingGroupPersists.delete(id);
+	// After pending writes (same resurrect guard as deleteChatGroup).
+	await persistGroupsPromise;
 	const storage = await getChatStorage();
 	await storage.deleteGroupsByOwner(normalizedOwner);
 }
