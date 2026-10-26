@@ -135,7 +135,7 @@
 	// fold; re-measure: ENTIRELY above it) minus the direction clause, plus a
 	// bottom-pin carve-out.
 	const virtualizerInstance = $virtualizer;
-	virtualizerInstance.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
+	virtualizerInstance.shouldAdjustScrollPositionOnItemSizeChange = (item) => {
 		// Never drag a viewport that owns its bottom position: rows settling from
 		// estimate to measured height (short text, a new reaction chip growing its
 		// row) would otherwise adjust by the item delta while the totalSize re-pin
@@ -149,9 +149,7 @@
 			return false;
 		}
 		const offset = el?.scrollTop ?? 0;
-		return instance.itemSizeCache.has(item.key)
-			? item.start + item.size <= offset
-			: item.start < offset;
+		return measuredRowKeys.has(item.key) ? item.start + item.size <= offset : item.start < offset;
 	};
 
 	const virtualItems = $derived($virtualizer.getVirtualItems());
@@ -450,8 +448,20 @@
 	function measureVisibleItems() {
 		if (!browser || !container) return;
 		for (const element of container.querySelectorAll<HTMLDivElement>('[data-virtual-item]')) {
-			$virtualizer.measureElement(element);
+			measureElement(element);
 		}
+	}
+
+	// First-measure vs re-measure (the fold-straddling distinction above) needs
+	// the item size cache, which virtual-core 3.15 keeps private — so every row
+	// records its key on the first pass through measureElement instead. Both
+	// measurement paths (the batch pass and the continuous per-row action below)
+	// go through this one wrapper.
+	const measuredRowKeys = new Set<string | number | bigint>();
+	function measureElement(element: HTMLDivElement) {
+		const key = messages[Number(element.dataset.index)]?.id;
+		if (key !== undefined) measuredRowKeys.add(key);
+		$virtualizer.measureElement(element);
 	}
 
 	// Ongoing per-row measurement: the virtualizer's built-in `measureElement`
@@ -461,7 +471,7 @@
 	// ResizeObserver that keeps the layout honest post-scroll (one shared RO for
 	// all rows, as tanstack ships it).
 	function measureItem(node: HTMLDivElement) {
-		$virtualizer.measureElement(node);
+		measureElement(node);
 	}
 
 	onMount(() => {
