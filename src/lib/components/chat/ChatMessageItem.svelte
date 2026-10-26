@@ -127,10 +127,13 @@
 	const LONG_PRESS_MS = 400;
 
 	const isOwn = $derived(message.isOwn ?? false);
-	// A queued/sending/failed bubble has no event yet — an edit would target an
-	// event id that doesn't exist and silently no-op, so the action must not
-	// appear. Confirmed rows carry 'sent' (or nothing when inbound).
-	const canEdit = $derived(message.deliveryState === undefined || message.deliveryState === 'sent');
+	// A queued/sending/failed bubble has no event yet — an edit or a reaction
+	// would target an event id that doesn't exist and silently no-op (no chip
+	// could ever land), so those actions must not appear. Confirmed rows carry
+	// 'sent' (or nothing when inbound).
+	const isStoredEvent = $derived(
+		message.deliveryState === undefined || message.deliveryState === 'sent'
+	);
 	const savedReactions = $derived(sharedSavedReactions ?? []);
 	const availableReactions = $derived.by(() => [...REACTIONS, ...savedReactions]);
 	const shouldMountInteractionControls = $derived(
@@ -694,7 +697,7 @@
 									</Tooltip>
 								{/if}
 
-								{#if !message.deleted}
+								{#if !message.deleted && isStoredEvent}
 									<DropdownMenuRoot
 										bind:open={reactionMenuOpen}
 										onOpenChange={handleReactionMenuOpenChange}
@@ -788,7 +791,7 @@
 										<!-- Collapsed-bar mode (<sm, fine pointer): the "…" menu carries
 										     everything the full bar exposes as icons. -->
 										<div class="flex flex-col gap-1 border-b border-border/70 pb-1 sm:hidden">
-											{#if !message.deleted}
+											{#if !message.deleted && isStoredEvent}
 												{@render reactionChoices()}
 												<DropdownMenuItem onSelect={handleReplyAction} class="mt-1 gap-2">
 													<CornerUpLeft class="size-4" />
@@ -821,7 +824,7 @@
 											</DropdownMenuItem>
 										{/if}
 
-										{#if isOwn && !message.deleted && canEdit && message.kind !== ChatKinds.Poll}
+										{#if isOwn && !message.deleted && isStoredEvent && message.kind !== ChatKinds.Poll}
 											<!-- Polls are immutable once cast: an edit would swap the question
 											     under standing votes. -->
 											<DropdownMenuItem onSelect={startEditing} class="gap-2">
@@ -1094,7 +1097,7 @@
 							>
 						</Sheet.Header>
 						<div class="flex flex-col gap-3 px-4 pb-4">
-							{#if !message.deleted}
+							{#if !message.deleted && isStoredEvent}
 								{@render reactionChoices(true)}
 							{/if}
 							<div class="flex flex-col gap-1">
@@ -1144,7 +1147,7 @@
 									<Info class="size-4 shrink-0 text-muted-foreground" />
 									<span>Message info</span>
 								</button>
-								{#if isOwn && !message.deleted && canEdit && message.kind !== ChatKinds.Poll}
+								{#if isOwn && !message.deleted && isStoredEvent && message.kind !== ChatKinds.Poll}
 									<button
 										type="button"
 										class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors hover:bg-muted/40"
