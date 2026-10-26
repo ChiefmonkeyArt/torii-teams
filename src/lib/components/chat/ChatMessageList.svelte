@@ -9,6 +9,7 @@
 	import ChatMessageItem from './ChatMessageItem.svelte';
 	import { estimateChatMessageHeight } from './chatMessageRenderCache';
 	import { shouldAnchorPrepend } from './chatListScrollAnchor';
+	import { isRunTail } from './chatRunGrouping';
 	import type { ChatMessage } from './chat.types';
 
 	let {
@@ -679,7 +680,7 @@
 						<!-- Pfp anchors to the NEWEST message of a run (bottom-aligned like Signal): the hop to
 							a new tail only mounts an Avatar whose picture prop is already resolved and cached
 							(loadedPictures paints it at full opacity instantly), so no fade replays. -->
-						{@const runTail = !systemRow && nextMessage?.author !== message.author}
+						{@const runTail = isRunTail(message, nextMessage)}
 						<div
 							data-index={virtualItem.index}
 							data-virtual-item
