@@ -37,7 +37,12 @@
 	import { Metadata } from 'nostr-tools/kinds';
 	import { nip19 } from 'nostr-tools';
 	import ProfileCard from '../ProfileCard.svelte';
-	import type { ChatMentionCandidate, ChatMentionReference } from './chat.types';
+	import ChatAttachmentCaptionSheet from './ChatAttachmentCaptionSheet.svelte';
+	import type {
+		ChatMentionCandidate,
+		ChatMentionReference,
+		OutgoingMediaAttachment
+	} from './chat.types';
 	import { enterKeySends } from '$lib/services/chatComposerSettings.svelte';
 	import { sanitizeImageFile } from '$lib/services/imageSanitize';
 	import { useProfileHints } from '$lib/services/useProfileHints.svelte';
@@ -72,8 +77,9 @@
 		focusKey?: number;
 		mentionCandidates?: ChatMentionCandidate[];
 		selectedMentions?: ChatMentionReference[];
-		/** Send media files (with the current draft as caption). */
-		onSendMedia?: (files: File[], caption: string) => void;
+		/** Send staged media files, each with its own caption (the composer draft
+		 *  captions the first file). */
+		onSendMedia?: (files: OutgoingMediaAttachment[]) => void;
 		/** Send a recorded voice note. The composer drives the recorder UX; this
 		 *  fires on release, on a locked-recording send tap, or on a silence-VAD
 		 *  auto-stop. */
@@ -86,18 +92,33 @@
 	let expanded = $state(false);
 
 	// Staged media attachments: added via the `+` menu (gallery, camera capture, or documents),
-	// sent on submit with the current draft as caption. Each holds a File plus a preview object URL
-	// for images; URLs are revoked on remove/send so they never leak. Each staged file becomes its
-	// own message at send time (one `imeta` per MLS message is the existing model).
+	// sent on submit. Each holds a File plus a preview object URL for images; URLs are revoked
+	// on remove/send so they never leak. Each staged file becomes its own message at send time
+	// (one `imeta` per MLS message is the existing model) with its own caption: the first file's
+	// caption is the composer draft (its chip's sheet edits the draft in place), files after it
+	// own a per-chip caption edited in the same sheet.
 	interface StagedAttachment {
 		readonly id: string;
 		readonly file: File;
 		readonly previewUrl: string;
+		/** Per-file caption (the first chip's caption is the draft, not this field). */
+		readonly caption: string;
 		/** Sanitize (EXIF strip / HEIC transcode) still running for this chip. */
 		readonly processing: boolean;
 	}
 	let pendingAttachments = $state<StagedAttachment[]>([]);
 	const attachmentsProcessing = $derived(pendingAttachments.some((entry) => entry.processing));
+
+	// Caption sheet: one visit can step through every staged file (‹ ›), so
+	// captioning a batch is not N dialogs. Opened by tapping a chip.
+	let captionSheetOpen = $state(false);
+	let captionSheetId: string | null = $state(null);
+	const captionSheetIndex = $derived(
+		pendingAttachments.findIndex((attachment) => attachment.id === captionSheetId)
+	);
+	const captionSheetAttachment = $derived(
+		captionSheetIndex >= 0 ? pendingAttachments[captionSheetIndex] : null
+	);
 
 	// Voice-note recorder. Created once; send happens only via explicit
 	// gestures/buttons (release-to-send, drag-up-to-lock, trash to cancel) — there
@@ -354,10 +375,14 @@
 	function dispatchSubmit() {
 		if (attachmentsProcessing) return;
 		if (pendingAttachments.length > 0) {
-			const files = pendingAttachments.map((attachment) => attachment.file);
-			const caption = value;
+			// First file: the draft (as today). Later files: their own captions.
+			const files = pendingAttachments.map((attachment, index) => ({
+				file: attachment.file,
+				caption: index === 0 ? value : attachment.caption
+			}));
 			clearAttachments();
-			onSendMedia(files, caption);
+			captionSheetOpen = false;
+			onSendMedia(files);
 			return;
 		}
 		onSubmit();
@@ -494,6 +519,7 @@
 						original.type.startsWith('image/') && !(isHeicMime(original.type) && isNativePlatform())
 							? URL.createObjectURL(original)
 							: '',
+					caption: '',
 					processing: true
 				}
 			];
@@ -604,6 +630,37 @@
 			if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
 		}
 		pendingAttachments = [];
+	}
+
+	// The chip's caption preview: files after the first own theirs; the first
+	// chip's caption IS the composer draft, shown live as it is typed.
+	function chipCaption(attachment: StagedAttachment, index: number): string {
+		return index === 0 ? value : attachment.caption;
+	}
+
+	function handleSheetCaptionChange(text: string) {
+		if (captionSheetIndex === 0) {
+			// Editing the draft from the sheet: the mention picker tracks the
+			// composer's caret, which did not move — drop any open picker state.
+			closeMentionDialog();
+			value = text;
+			return;
+		}
+		pendingAttachments = pendingAttachments.map((entry) =>
+			entry.id === captionSheetId ? { ...entry, caption: text } : entry
+		);
+	}
+
+	// Removing from the sheet keeps it open on the surviving neighbor (clamped)
+	// when files remain, so a batch can be pruned in one visit.
+	function handleSheetRemove() {
+		if (captionSheetIndex < 0) return;
+		const remaining = pendingAttachments.length - 1;
+		const nextId =
+			remaining > 0 ? pendingAttachments[Math.min(captionSheetIndex + 1, remaining - 1)].id : null;
+		removeAttachment(pendingAttachments[captionSheetIndex].id);
+		captionSheetId = nextId;
+		if (!nextId) captionSheetOpen = false;
 	}
 
 	// Height writes reflow the flex column, and the message list clamps its
@@ -741,36 +798,57 @@
 
 		{#if pendingAttachments.length > 0}
 			<div class="mb-3 flex flex-wrap gap-2">
-				{#each pendingAttachments as attachment (attachment.id)}
+				{#each pendingAttachments as attachment, index (attachment.id)}
 					<div
 						class="flex max-w-[16rem] items-center gap-2 rounded-xl border border-border bg-card py-1.5 pr-1 pl-1.5"
 					>
-						<div class="relative shrink-0">
-							{#if attachment.previewUrl}
-								<img
-									src={attachment.previewUrl}
-									alt={attachment.file.name}
-									class="size-10 shrink-0 rounded-lg object-cover"
-								/>
-							{:else}
-								<div class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted">
-									<Paperclip class="size-4 text-muted-foreground" />
-								</div>
-							{/if}
-							{#if attachment.processing}
-								<div
-									class="absolute inset-0 flex items-center justify-center rounded-lg bg-background/70"
-								>
-									<Spinner class="size-4" aria-label="Preparing attachment" />
-								</div>
-							{/if}
-						</div>
-						<div class="min-w-0 flex-1">
-							<p class="truncate text-xs font-medium">{attachment.file.name}</p>
-							<p class="text-[11px] text-muted-foreground">
-								{formatBytes(attachment.file.size)}
-							</p>
-						</div>
+						<!-- Tapping the chip opens its caption sheet; the ✕ stays outside the
+						     tap target so remove never needs a careful aim. -->
+						<button
+							type="button"
+							class="flex min-w-0 flex-1 items-center gap-2 rounded-lg p-0.5 text-left transition-colors hover:bg-accent/40"
+							onclick={() => {
+								captionSheetId = attachment.id;
+								captionSheetOpen = true;
+							}}
+							aria-label={`Caption ${attachment.file.name}`}
+							title="Caption"
+						>
+							<div class="relative shrink-0">
+								{#if attachment.previewUrl}
+									<img
+										src={attachment.previewUrl}
+										alt={attachment.file.name}
+										class="size-10 shrink-0 rounded-lg object-cover"
+									/>
+								{:else}
+									<div
+										class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted"
+									>
+										<Paperclip class="size-4 text-muted-foreground" />
+									</div>
+								{/if}
+								{#if attachment.processing}
+									<div
+										class="absolute inset-0 flex items-center justify-center rounded-lg bg-background/70"
+									>
+										<Spinner class="size-4" aria-label="Preparing attachment" />
+									</div>
+								{/if}
+							</div>
+							<div class="min-w-0 flex-1">
+								<p class="truncate text-xs font-medium">{attachment.file.name}</p>
+								{#if chipCaption(attachment, index)}
+									<p class="truncate text-[11px] text-muted-foreground italic">
+										{chipCaption(attachment, index)}
+									</p>
+								{:else}
+									<p class="text-[11px] text-muted-foreground">
+										{formatBytes(attachment.file.size)}
+									</p>
+								{/if}
+							</div>
+						</button>
 						<Button
 							type="button"
 							variant="ghost"
@@ -907,6 +985,19 @@
 				/>
 				<GifPicker bind:open={gifPickerOpen} onPick={insertGifUrl} />
 				<PollComposerDialog bind:open={pollDialogOpen} onCreate={onSendPoll} />
+				<ChatAttachmentCaptionSheet
+					bind:open={captionSheetOpen}
+					attachment={captionSheetAttachment}
+					caption={captionSheetIndex === 0 ? value : (captionSheetAttachment?.caption ?? '')}
+					index={Math.max(captionSheetIndex, 0)}
+					total={pendingAttachments.length}
+					onCaptionChange={handleSheetCaptionChange}
+					onPrev={() =>
+						(captionSheetId = pendingAttachments[captionSheetIndex - 1]?.id ?? captionSheetId)}
+					onNext={() =>
+						(captionSheetId = pendingAttachments[captionSheetIndex + 1]?.id ?? captionSheetId)}
+					onRemove={handleSheetRemove}
+				/>
 				<div class="flex min-w-0 flex-1 flex-col gap-2">
 					{#if activeMention && mentionMatches.length > 0}
 						<div class="rounded-xl border border-border bg-popover p-1 shadow-lg">

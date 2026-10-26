@@ -10,7 +10,12 @@
 	import { IsMobile } from '$lib/hooks/is-mobile.svelte';
 	import { page } from '$app/state';
 	import { formatChatMessagePreviewText, getChatGroupDisplayTitle } from './chatGroupDisplay';
-	import type { ChatMentionCandidate, ChatMentionReference, ChatMessage } from './chat.types';
+	import type {
+		ChatMentionCandidate,
+		ChatMentionReference,
+		ChatMessage,
+		OutgoingMediaAttachment
+	} from './chat.types';
 	import {
 		listUnreadChatGroupReferenceTargets,
 		markChatGroupMentionsRead,
@@ -567,31 +572,29 @@
 		composerFocusKey += 1;
 	}
 
-	function handleSendMedia(files: File[], caption: string) {
-		if (!group || files.length === 0) return;
-		// Mentions serialize on every send path (same as the text path): the
-		// caption keeps `nostr:npub…` + p tags, so the chip renders and the
-		// mentioned person gets their ping — a raw `@Label` would arrive as plain
-		// text with no p tag and notify nobody.
-		const serialized = serializeChatProfileMentions(caption.trim(), selectedMentions);
+	function handleSendMedia(entries: OutgoingMediaAttachment[]) {
+		if (!group || entries.length === 0) return;
 		const currentReplyTarget = replyTarget;
 		const optimisticReplyTarget = buildOptimisticReplyView();
 		// Fan out one optimistic message per file: one `imeta` per MLS message is
 		// the existing model, so each file uploads + sends independently — a slow
 		// or large file never blocks the others, and partial failures are
-		// per-message. The caption (if any) rides on the first file's message so
-		// single-file send keeps today's behavior (caption under the image) and a
-		// batch gets one descriptive line on its first item. The reply follows the
-		// same rule: one reply per send, not one per file.
-		files.forEach((file, index) =>
+		// per-message. Each file carries its own caption (the composer draft
+		// captions the first). Mentions serialize per caption (same as the text
+		// path): only labels actually present in that caption become `nostr:npub…`
+		// + p tags, so the chip renders and the mentioned person gets their ping.
+		// The reply still rides the first file only: one reply per send, not one
+		// per file.
+		entries.forEach((entry, index) => {
+			const serialized = serializeChatProfileMentions(entry.caption.trim(), selectedMentions);
 			sendOneMedia(
-				file,
-				index === 0 ? serialized.content : '',
-				index === 0 ? serialized.tags : [],
+				entry.file,
+				serialized.content,
+				serialized.tags,
 				index === 0 ? (currentReplyTarget ?? undefined) : undefined,
 				index === 0 ? optimisticReplyTarget : undefined
-			)
-		);
+			);
+		});
 
 		// Consume the caption + draft so the composer is immediately free for the
 		// next message (mirrors the text-send reset). The reply chip clears when
