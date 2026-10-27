@@ -283,7 +283,7 @@ describe('heartbeat catch-up backoff (live quiet coordinator)', () => {
 		};
 	}
 
-	test('quiet beats back off minute fetches; an explicit trigger resets the ladder', async () => {
+	test('quiet beats back off minute fetches; an explicit trigger resets the window', async () => {
 		groups.mockReturnValue([{ id: 'group', coordinatorKey: 'bb'.repeat(32), fetchCursor: 1 }]);
 		const fetchMany = vi.fn().mockResolvedValue({ messages: [] });
 		client.current = liveClient(fetchMany);
@@ -294,26 +294,26 @@ describe('heartbeat catch-up backoff (live quiet coordinator)', () => {
 		// t=60s: first heartbeat → catch-up fetch (fresh), then back off 2min.
 		await vi.advanceTimersByTimeAsync(60_000);
 		expect(fetchMany).toHaveBeenCalledTimes(2);
-		// t=120s: inside the 2min backoff → skipped.
+		// t=120s: inside the 2min window → skipped.
 		await vi.advanceTimersByTimeAsync(60_000);
 		expect(fetchMany).toHaveBeenCalledTimes(2);
-		// t=180s: backoff expired → fetch, next step doubles to 4min.
+		// t=180s: window expired → fetch, next window re-arms at 2min again.
 		await vi.advanceTimersByTimeAsync(60_000);
 		expect(fetchMany).toHaveBeenCalledTimes(3);
-		await vi.advanceTimersByTimeAsync(60_000); // t=240s
+		await vi.advanceTimersByTimeAsync(60_000); // t=240s: inside the window
 		expect(fetchMany).toHaveBeenCalledTimes(3);
-		await vi.advanceTimersByTimeAsync(120_000); // t=360s, still inside 4min
-		expect(fetchMany).toHaveBeenCalledTimes(3);
+		await vi.advanceTimersByTimeAsync(60_000); // t=300s: window expired → fetch
+		expect(fetchMany).toHaveBeenCalledTimes(4);
 
-		// Explicit trigger mid-backoff: fetches AND resets to the base cadence.
-		// (Advance past CATCH_UP_MIN_INTERVAL_MS first — the t=360s heartbeat just
+		// Explicit trigger mid-window: fetches AND resets to the base cadence.
+		// (Advance past CATCH_UP_MIN_INTERVAL_MS first — the t=300s heartbeat just
 		// armed the rate limit at the same fake-time instant.)
 		await vi.advanceTimersByTimeAsync(6_000);
 		const watch = await import('./chatGroupWatch.svelte');
 		await watch.refreshWatchedGroups();
-		expect(fetchMany).toHaveBeenCalledTimes(4);
+		expect(fetchMany).toHaveBeenCalledTimes(5);
 		// The next heartbeat is only 60s after the reset → fetches again.
 		await vi.advanceTimersByTimeAsync(60_000);
-		expect(fetchMany).toHaveBeenCalledTimes(5);
+		expect(fetchMany).toHaveBeenCalledTimes(6);
 	});
 });

@@ -172,14 +172,17 @@ const CATCH_UP_MIN_INTERVAL_MS = 5_000;
 /**
  * Heartbeat catch-up backoff. A live, all-caught-up coordinator still gets a
  * periodic fetch as the keepalive-green zombie backstop — but not every beat:
- * each quiet beat doubles the wait (first step below) up to the cap. Any
+ * after a quiet beat the next heartbeat fetch waits out the window below. Any
  * ingested message, any non-live watch, or any explicit (non-heartbeat)
  * trigger — focus, online, pull-to-refresh — returns the coordinator to the
- * base 60s cadence. Trade: the worst-case missed-message bound on a quiet
- * zombie widens from ~2min to the cap; idle RPC cost drops ~5x.
+ * base 60s cadence. The window is capped at 2min on purpose: the catch-up is
+ * also the zombie prover and the only delivery path for a quiet group's
+ * zombie stream, so the worst-case missed-message bound must stay at the
+ * pre-backoff ~2min. Idle RPC cost still drops ~2x. (A doubling ladder to
+ * 5min was tried and felt slower on-device: quiet-group messages arrived up
+ * to ~6min late.)
  */
-const HEARTBEAT_CATCHUP_QUIET_START_MS = 2 * 60_000;
-const HEARTBEAT_CATCHUP_BACKOFF_CAP_MS = 5 * 60_000;
+const HEARTBEAT_CATCHUP_QUIET_MS = 2 * 60_000;
 /** Hides the "Updating chats…" banner for ticks that finish quickly. */
 const BANNER_DELAY_MS = 500;
 /**
@@ -229,8 +232,9 @@ let lastCatchUpAt = 0;
  *  coordinator, NOT global: a dead coordinator's 20s fetch must not cause
  *  healthy coordinators' catch-ups to be skipped while it runs. */
 const catchUpInFlightCoordinators = new Set<string>();
-/** Heartbeat catch-up backoff state per coordinator (see the constants above). */
-const heartbeatCatchUpBackoff = new Map<string, { notBefore: number; quietRuns: number }>();
+/** Heartbeat catch-up backoff state per coordinator: the wall-clock ms
+ *  before its next heartbeat-triggered catch-up fetch (see the constant above). */
+const heartbeatCatchUpBackoff = new Map<string, number>();
 let lastActiveAccountId = '';
 /** Armed once the first tick settled, so fresh opens start silently. */
 let warmed = false;
@@ -433,18 +437,8 @@ function coordinatorWatchesAllLive(coordinatorKey: string): boolean {
 	return true;
 }
 
-function heartbeatCatchUpDelayMs(quietRuns: number): number {
-	return Math.min(
-		HEARTBEAT_CATCHUP_BACKOFF_CAP_MS,
-		HEARTBEAT_CATCHUP_QUIET_START_MS * 2 ** Math.max(0, quietRuns - 1)
-	);
-}
-
 function advanceHeartbeatCatchUpBackoff(coordinatorKey: string, now: number): void {
-	const state = heartbeatCatchUpBackoff.get(coordinatorKey) ?? { notBefore: 0, quietRuns: 0 };
-	state.quietRuns += 1;
-	state.notBefore = now + heartbeatCatchUpDelayMs(state.quietRuns);
-	heartbeatCatchUpBackoff.set(coordinatorKey, state);
+	heartbeatCatchUpBackoff.set(coordinatorKey, now + HEARTBEAT_CATCHUP_QUIET_MS);
 }
 
 function toWatchableGroup(groupId: string): WatchableGroup | null {
@@ -976,7 +970,7 @@ async function catchUpWatchedCoordinators(
 			if (!heartbeat) {
 				// Explicit trigger: always fetch, and re-arm the base cadence.
 				heartbeatCatchUpBackoff.delete(coordinatorKey);
-			} else if (Date.now() < (heartbeatCatchUpBackoff.get(coordinatorKey)?.notBefore ?? 0)) {
+			} else if (Date.now() < (heartbeatCatchUpBackoff.get(coordinatorKey) ?? 0)) {
 				return;
 			}
 			catchUpInFlightCoordinators.add(coordinatorKey);
@@ -1258,9 +1252,10 @@ if (browser) {
 	// visibility: a hidden tab's throttled timers still fire on Chrome's
 	// ~1-wake/min budget, and the sweep is event-driven (WS RPCs, cursor-dedup
 	// idempotent), so it bounds message loss from ANY failure mode — zombie
-	// stream, lost ack, aborted restart, blocked ladder — to ~1-2 minutes in
-	// background. This is the correctness backstop; every other health
-	// mechanism (ladder, swaps, ack gates) is latency optimization on top.
+	// stream, lost ack, aborted restart, blocked ladder — to ~2-3 minutes in
+	// background (60s beat + the ≤2min quiet backoff on an all-live coordinator).
+	// This is the correctness backstop; every other health mechanism (ladder,
+	// swaps, ack gates) is latency optimization on top.
 	// ponytail: a killswitch/simplification pass on those layers is the
 	// upgrade path if this backstop proves sufficient in practice.
 	setInterval(() => {
