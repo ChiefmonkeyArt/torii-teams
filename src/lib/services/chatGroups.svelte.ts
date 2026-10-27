@@ -2661,6 +2661,9 @@ export function deleteChatGroup(groupId: string): void {
 	removeSentJoinRequest(groupId);
 	// Drop any coalesced persist and serialize the delete after pending writes:
 	// a queued drain landing after the delete would resurrect the record.
+	// shortcut: a persist enqueued AFTER this point for the deleted group still
+	// resurrects it (replaceGroup on a missing id no-ops the store but persists);
+	// add a drain-time tombstone if a stale in-flight ingest is ever observed.
 	pendingGroupPersists.delete(groupId);
 	void persistGroupsPromise
 		.then(async () => {
