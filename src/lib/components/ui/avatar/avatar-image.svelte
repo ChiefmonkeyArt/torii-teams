@@ -1,10 +1,7 @@
 <script module lang="ts">
-	// Session-wide "this src has loaded" memory: remounts (chat list rebuild,
-	// group open/close, mobile sidebar sheet) paint the picture on the first
-	// frame instead of re-running the detached-preload round trip and flashing
-	// the fallback first. Strings only, unbounded on purpose: a bounded LRU
-	// (a past attempt) evicted older chats' avatars and reintroduced the
-	// fallback flash on every remount — the exact blink this set exists to kill.
+	// Session-wide "this src has loaded" memory: remounts (e.g. the chat list
+	// rebuilding after a settings round-trip) would otherwise hide every image
+	// behind the detached-preload round trip and flash the fallback first.
 	const loadedSrcs = new Set<string>();
 </script>
 
@@ -24,7 +21,7 @@
 
 	const avatar = getContext<AvatarStatusContext>(AVATAR_STATUS_KEY);
 
-	// Warm srcs paint on the first frame; the preload effect below only
+	// Warm srcs paint on the first frame; the preload effect below now only
 	// serves first-time loads. Deliberately a one-shot read at mount.
 	untrack(() => {
 		if (src && loadedSrcs.has(src)) avatar.set('loaded');
@@ -38,10 +35,6 @@
 			avatar.set('error');
 			return;
 		}
-		// Warm remount: the session already showed this picture and the visible
-		// <img> revalidates on its own (its onerror handles a since-dead URL),
-		// so a detached re-preload would only duplicate the fetch/decode work.
-		if (loadedSrcs.has(src)) return;
 		const image = new Image();
 		image.src = src;
 		image.onload = () => {
