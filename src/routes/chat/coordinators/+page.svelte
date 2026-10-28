@@ -44,7 +44,6 @@
 </script>
 
 <svelte:head>
-	<title>Coordinators | Cordn</title>
 	<meta name="description" content="Coordinator hub for Cordn chat." />
 </svelte:head>
 

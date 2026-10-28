@@ -48,7 +48,6 @@
 </script>
 
 <svelte:head>
-	<title>Chat behavior | Cordn</title>
 	<meta
 		name="description"
 		content="Configure how the Enter key behaves and what the message timeline shows."

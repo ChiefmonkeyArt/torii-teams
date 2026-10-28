@@ -143,7 +143,6 @@
 </script>
 
 <svelte:head>
-	<title>Backup & recovery | Cordn</title>
 	<meta
 		name="description"
 		content="Export and import local Cordn client data — accounts, MLS group secrets, and coordinators."

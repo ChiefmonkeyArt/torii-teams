@@ -53,7 +53,6 @@
 </script>
 
 <svelte:head>
-	<title>Media | Cordn</title>
 	<meta
 		name="description"
 		content="Configure the Blossom server used for encrypted media uploads."

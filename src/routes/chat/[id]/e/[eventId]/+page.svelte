@@ -5,7 +5,6 @@
 
 	import ChatRichBody from '$lib/chat/ChatRichBody.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { getChatGroup } from '$lib/services/chatGroups.svelte';
 	import { groupRouteId } from '$lib/services/chatGroupLinks.svelte';
 	import { resolveGroupLocator } from '$lib/utils/groupShareLink';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
@@ -14,7 +13,6 @@
 
 	const groupId = $derived(resolveGroupLocator(params.id, page.url.searchParams).gid);
 	const eventId = $derived(params.eventId);
-	const group = $derived(groupId ? getChatGroup(groupId) : undefined);
 	const backHref = $derived(resolve('/chat/[id]', { id: groupRouteId(groupId) }));
 
 	function navigateToEvent(id: string) {
@@ -23,7 +21,6 @@
 </script>
 
 <svelte:head>
-	<title>Message | {group?.metadata?.name ?? 'Chat'} | Cordn</title>
 	<meta name="description" content="Message detail view." />
 </svelte:head>
 

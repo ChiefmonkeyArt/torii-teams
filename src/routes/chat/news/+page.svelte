@@ -47,7 +47,6 @@
 </script>
 
 <svelte:head>
-	<title>News &amp; updates | Cordn</title>
 	<meta name="description" content="Cordn release notes and product news." />
 </svelte:head>
 

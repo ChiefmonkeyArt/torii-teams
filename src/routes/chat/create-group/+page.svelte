@@ -179,7 +179,6 @@
 </script>
 
 <svelte:head>
-	<title>Create group | Cordn</title>
 	<meta name="description" content="Create a new Cordn group." />
 </svelte:head>
 

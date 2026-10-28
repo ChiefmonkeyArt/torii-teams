@@ -88,10 +88,6 @@
 	});
 </script>
 
-<svelte:head>
-	<title>Notifications | Cordn</title>
-</svelte:head>
-
 <div class="flex h-full min-h-0 flex-col bg-background text-foreground">
 	<header
 		class="flex items-center gap-3 border-b border-border bg-background/95 px-4 py-3 backdrop-blur md:px-6"
