@@ -35,6 +35,9 @@ vi.mock('$lib/services/chatGroups.svelte', () => ({
 type PresenceModule = typeof import('./chatGroupPresence.svelte');
 let presence: PresenceModule;
 
+// 30s: the cold import below compiles a heavy module graph, which can exceed
+// the default 10s hook budget when the parallel full-suite run saturates the
+// CPU (observed flake on both slow and busy machines).
 beforeAll(async () => {
 	// Fake timers so the trailing debounce never fires mid-suite; the tests
 	// drive the flush explicitly.
@@ -54,7 +57,7 @@ beforeAll(async () => {
 		setItem: (_key: string, value: string) => harness.writes.push(value)
 	});
 	presence = await import('./chatGroupPresence.svelte');
-});
+}, 30_000);
 
 afterAll(() => {
 	vi.useRealTimers();
