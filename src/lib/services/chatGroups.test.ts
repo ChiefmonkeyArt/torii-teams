@@ -1402,3 +1402,66 @@ describe('single-group persist coalescing (latest-wins)', () => {
 		}
 	});
 });
+
+describe('group state facts cache', () => {
+	const factsGroup = (stateBase64 = 'AA=='): StoredChatGroup =>
+		({
+			id: 'facts',
+			coordinatorKey: 'cc'.repeat(32),
+			createdAt: 1,
+			stateBase64,
+			lastCursor: 0,
+			fetchCursor: 0,
+			messages: [],
+			syncIssues: [],
+			snapshots: [],
+			status: 'active',
+			joinEpoch: 0n
+		}) as StoredChatGroup;
+
+	test('derives members, removed and gid from one decode per state', async () => {
+		clientStateDecoderMock.mockClear();
+		clientStateDecoderMock.mockReturnValue([
+			{
+				groupContext: { groupId: new TextEncoder().encode('gid-1') },
+				groupActiveState: { kind: 'active' },
+				ratchetTree: []
+			}
+		]);
+		const { chatGroupsStore, isChatGroupRemoved, getChatGroupGid, listChatGroupMembers } =
+			await import('./chatGroups.svelte');
+		chatGroupsStore.groups = [factsGroup()];
+
+		const members = listChatGroupMembers('facts');
+		expect(isChatGroupRemoved(chatGroupsStore.groups[0])).toBe(false);
+		expect(getChatGroupGid(chatGroupsStore.groups[0])).toBe('gid-1');
+		expect(members).toEqual([]);
+		expect(clientStateDecoderMock).toHaveBeenCalledTimes(1);
+	});
+
+	test('re-derives the facts when the stored state bytes change', async () => {
+		clientStateDecoderMock.mockClear();
+		clientStateDecoderMock.mockReturnValueOnce([
+			{
+				groupContext: { groupId: new TextEncoder().encode('gid-1') },
+				groupActiveState: { kind: 'active' },
+				ratchetTree: []
+			}
+		]);
+		const { chatGroupsStore, isChatGroupRemoved, getChatGroupGid } =
+			await import('./chatGroups.svelte');
+		chatGroupsStore.groups = [factsGroup()];
+		expect(getChatGroupGid(chatGroupsStore.groups[0])).toBe('gid-1');
+
+		clientStateDecoderMock.mockReturnValueOnce([
+			{
+				groupContext: { groupId: new TextEncoder().encode('gid-1') },
+				groupActiveState: { kind: 'removedFromGroup' },
+				ratchetTree: []
+			}
+		]);
+		chatGroupsStore.groups = [factsGroup('AQ==')];
+		expect(isChatGroupRemoved(chatGroupsStore.groups[0])).toBe(true);
+		expect(clientStateDecoderMock).toHaveBeenCalledTimes(2);
+	});
+});

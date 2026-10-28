@@ -37,7 +37,7 @@ vi.mock('$lib/services/chatGroups.svelte', () => ({
 	getChatGroup: (id: string) => groups().find((group: { id: string }) => group.id === id),
 	isChatGroupRemoved: () => false,
 	isChatGroupPoisoned: () => false,
-	decodeStoredGroupState: () => ({ groupContext: { groupId: new TextEncoder().encode('group') } })
+	getChatGroupGid: () => 'group'
 }));
 vi.mock('$lib/services/chatRuntime', () => ({
 	rebuildAllCoordinatorClients: rebuild,

@@ -1,8 +1,8 @@
 import { browser } from '$app/environment';
 import { manager } from '$lib/services/accountManager.svelte';
 import {
-	decodeStoredGroupState,
 	getChatGroup,
+	getChatGroupGid,
 	ingestIncomingChatGroupMessages,
 	isChatGroupPoisoned,
 	isChatGroupRemoved,
@@ -221,7 +221,6 @@ const WATCH_INGEST_BATCH_SIZE = 50;
 const WATCH_INGEST_FLUSH_MS = 40;
 
 const currentWatches = new Map<string, GroupWatchTask>();
-const groupIdDecoder = new TextDecoder();
 const coordinatorBackoff = new Map<string, { failures: number; notBefore: number }>();
 
 let tickPromise: Promise<void> | null = null;
@@ -447,13 +446,11 @@ function toWatchableGroup(groupId: string): WatchableGroup | null {
 		return null;
 	}
 
-	const state = decodeStoredGroupState(group);
 	const hasCursor = group.fetchCursor > 0;
-	const gid = groupIdDecoder.decode(state.groupContext.groupId);
 	const watchable: WatchableGroup = {
 		id: group.id,
 		coordinatorKey: group.coordinatorKey,
-		gid
+		gid: getChatGroupGid(group)
 	};
 
 	if (hasCursor) {

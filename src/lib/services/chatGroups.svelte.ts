@@ -196,20 +196,58 @@ let persistGroupsPromise: Promise<void> = Promise.resolve();
 let groupsLoaded = false;
 
 /**
- * Memoizes the decoded MLS ClientState, keyed by the base64 state bytes.
+ * Per-group memo of the stored MLS state and everything read paths derive
+ * from it: the decoded ClientState itself (fat tier) plus the member roster,
+ * removed flag and protocol gid (tiny facts tier).
  *
  * `clientStateDecoder` is expensive and was re-run on every read/render that
- * needed members, admin checks, or removed/poisoned status. The old WeakMap
- * keyed by the group object missed on every ingest batch — the group record
- * is copy-on-write (a new object per window update), so the active group
- * re-decoded its full MLS state constantly. Keying by the base64 state
- * itself is strictly safe — the bytes determine the ClientState — and keeps
- * the decode cached across batch churn for every consumer (watch ticks,
- * member lists, sends, media keys). Bounded FIFO; eviction only costs a
- * re-decode.
+ * needed members, admin checks, or removed status. The first memo keyed by
+ * the group object missed on every ingest batch — the group record is
+ * copy-on-write (a new object per window update); the next keyed by the
+ * base64 bytes with a 32-slot FIFO, which thrashed across 80+ groups (every
+ * sidebar row re-decoded every state — 219MB of base64 per chat switch).
+ * Keying by group id keeps at most one epoch per group; a byte change
+ * replaces the entry in place, so the facts can never drift from the state
+ * they describe (the bytes determine the ClientState, as before).
+ * `fromStoredGroupData` seeds the facts from its load-time decode.
  */
+type GroupStateFacts = {
+	members: Array<{ leafIndex: number; stablePubkey: string }>;
+	removed: boolean;
+	gid: string;
+};
+type GroupStateEntry = {
+	stateBase64: string;
+	/** Fat tier, trimmed to DECODED_STATE_CACHE_MAX; only crypto paths need it. */
+	state?: ClientState;
+	/** Tiny facts tier; survives trimming. */
+	facts?: GroupStateFacts;
+};
 const DECODED_STATE_CACHE_MAX = 32;
-const decodedStateCache = new Map<string, ClientState>();
+const groupStateEntries = new Map<string, GroupStateEntry>();
+
+function groupStateEntry(groupId: string, stateBase64: string): GroupStateEntry {
+	let entry = groupStateEntries.get(groupId);
+	if (entry?.stateBase64 !== stateBase64) {
+		entry = { stateBase64 };
+		groupStateEntries.set(groupId, entry);
+	}
+	return entry;
+}
+
+function deriveGroupStateFacts(state: ClientState): GroupStateFacts {
+	return {
+		members: listGroupMembers(state),
+		removed: state.groupActiveState?.kind === 'removedFromGroup',
+		gid: groupIdDecoder.decode(state.groupContext.groupId)
+	};
+}
+
+function groupFacts(group: StoredChatGroup): GroupStateFacts {
+	const entry = groupStateEntry(group.id, group.stateBase64);
+	entry.facts ??= deriveGroupStateFacts(decodeStoredGroupState(group));
+	return entry.facts;
+}
 
 export const chatGroupsStore = $state<{ groups: StoredChatGroup[] }>({
 	groups: []
@@ -372,12 +410,19 @@ function fromStoredGroupData(group: StoredChatGroupData): StoredChatGroup {
 	const metadata = decoded
 		? toPersistedGroupMetadata(getCordnGroupMetadataExtension(decoded[0]))
 		: undefined;
+	const stateBase64 = bytesToBase64(group.stateBytes);
+	// Seed the read-side facts from this load-time decode (see groupStateEntries)
+	// so the first paint never re-decodes for rosters or the removed flag. The
+	// fat decoded state is deliberately NOT retained — boot must not pin 80.
+	if (decoded) {
+		groupStateEntry(group.id, stateBase64).facts ??= deriveGroupStateFacts(decoded[0]);
+	}
 	return {
 		id: group.id,
 		ownerPubkey: group.ownerPubkey,
 		coordinatorKey: group.coordinatorKey,
 		createdAt: group.createdAt,
-		stateBase64: bytesToBase64(group.stateBytes),
+		stateBase64,
 		lastCursor: group.lastCursor ?? 0,
 		fetchCursor: group.fetchCursor ?? 0,
 		// Shallow spread only: both storage backends return freshly-cloned
@@ -446,6 +491,7 @@ async function loadGroups(ownerPubkey?: string) {
 	// carries its own not-yet-finalized ops, so a reload no longer strands a
 	// pending Welcome (the next watch sync finalizes + delivers it).
 	pendingEpochOperations.clear();
+	groupStateEntries.clear();
 	const storage = await getChatStorage();
 	const normalizedOwner = ownerPubkey ? normalizePubKey(ownerPubkey) : undefined;
 
@@ -589,28 +635,38 @@ function encodeState(state: ClientState): string {
 }
 
 export function decodeStoredGroupState(group: StoredChatGroup): ClientState {
-	const cached = decodedStateCache.get(group.stateBase64);
-	if (cached) {
-		return cached;
-	}
+	const entry = groupStateEntry(group.id, group.stateBase64);
+	if (entry.state) return entry.state;
 	const decoded = clientStateDecoder(base64ToBytes(group.stateBase64), 0);
 	if (!decoded) {
 		throw new Error(`Unable to decode stored group state for ${group.id}`);
 	}
 	const state = decoded[0];
-	if (decodedStateCache.size >= DECODED_STATE_CACHE_MAX) {
-		const oldest = decodedStateCache.keys().next().value;
-		if (oldest !== undefined) decodedStateCache.delete(oldest);
-	}
-	decodedStateCache.set(group.stateBase64, state);
+	entry.state = state;
+	trimDecodedStates(entry);
 	return state;
+}
+
+/** Keep only the fat tier bounded — the facts stay. FIFO by entry age (first
+ *  seen); with one entry per group a trim costs at most one re-decode of a
+ *  cold group, never a thrash. */
+function trimDecodedStates(keep: GroupStateEntry): void {
+	let fat = 0;
+	for (const entry of groupStateEntries.values()) if (entry.state) fat++;
+	for (const entry of groupStateEntries.values()) {
+		if (fat <= DECODED_STATE_CACHE_MAX) return;
+		if (entry.state && entry !== keep) {
+			entry.state = undefined;
+			fat--;
+		}
+	}
 }
 
 /** Test seam: the memo above assumes decode(bytes) is pure. Tests re-program
  *  the decoder mock between cases while reusing dummy state bytes, so they must
  *  reset the memo or a previous case's state leaks into the next. */
 export function clearDecodedStateCacheForTests(): void {
-	decodedStateCache.clear();
+	groupStateEntries.clear();
 }
 
 class RemovedFromGroupError extends Error {
@@ -704,7 +760,7 @@ export function isChatGroupRemoved(group: StoredChatGroup | undefined): boolean 
 	if (!group) return false;
 	if (group.status === 'removed') return true;
 	try {
-		return decodeStoredGroupState(group).groupActiveState?.kind === 'removedFromGroup';
+		return groupFacts(group).removed;
 	} catch {
 		return false;
 	}
@@ -717,6 +773,12 @@ function isPoisoningSyncIssue(issue: StoredChatSyncIssue): boolean {
 export function isChatGroupPoisoned(group: StoredChatGroup | undefined): boolean {
 	if (!group) return false;
 	return group.status === 'poisoned' || group.syncIssues.some(isPoisoningSyncIssue);
+}
+
+/** The protocol gid (MLS group id) the coordinator routes by — immutable per
+ *  group, so one decode ever per stored state. */
+export function getChatGroupGid(group: StoredChatGroup): string {
+	return groupFacts(group).gid;
 }
 
 function assertChatGroupIsActive(group: StoredChatGroup): void {
@@ -844,7 +906,7 @@ export async function confirmChatGroupDelivery(groupId: string): Promise<boolean
 		const account = requireActiveAccount('You must be logged in to confirm message delivery');
 		const group = requireChatGroup(groupId);
 		assertChatGroupIsActive(group);
-		const gid = groupIdDecoder.decode(decodeStoredGroupState(group).groupContext.groupId);
+		const gid = getChatGroupGid(group);
 		const result = await withCoordinatorClient(account, group.coordinatorKey, (client) =>
 			client.FetchManyGroupMessages(
 				{
@@ -1970,7 +2032,6 @@ export function listChatGroupMembers(
 	isSelf: boolean;
 }> {
 	const group = requireChatGroup(groupId);
-	const state = decodeStoredGroupState(group);
 	const normalizedActivePubkey = activePubkey ? normalizePubKey(activePubkey) : '';
 	const adminPubkeys = group.metadata?.adminPubkeys;
 	// No admin list (or empty) means everyone is an admin. Build the normalized
@@ -1978,7 +2039,9 @@ export function listChatGroupMembers(
 	const adminSet = adminPubkeys?.length
 		? new SvelteSet(adminPubkeys.map(safeNormalizePubKey).filter(Boolean))
 		: null;
-	return listGroupMembers(state).map((member) => {
+	// The roster is state-pure and cached per state (groupFacts); isAdmin/isSelf
+	// depend on mutable metadata and the caller, so they map per call.
+	return groupFacts(group).members.map((member) => {
 		const normalizedMember = normalizePubKey(member.stablePubkey);
 		return {
 			...member,
@@ -2665,6 +2728,7 @@ export function deleteChatGroup(groupId: string): void {
 	// resurrects it (replaceGroup on a missing id no-ops the store but persists);
 	// add a drain-time tombstone if a stale in-flight ingest is ever observed.
 	pendingGroupPersists.delete(groupId);
+	groupStateEntries.delete(groupId);
 	void persistGroupsPromise
 		.then(async () => {
 			(await getChatStorage()).deleteGroup(groupId);
@@ -2680,7 +2744,10 @@ export async function deleteChatGroupsForCoordinator(coordinatorKey: string): Pr
 	chatGroupsStore.groups = chatGroupsStore.groups.filter(
 		(group) => group.coordinatorKey !== normalizedCoordinator
 	);
-	for (const id of groupIds) pendingGroupPersists.delete(id);
+	for (const id of groupIds) {
+		pendingGroupPersists.delete(id);
+		groupStateEntries.delete(id);
+	}
 	// After pending writes (same resurrect guard as deleteChatGroup).
 	await persistGroupsPromise;
 	const storage = await getChatStorage();
@@ -2695,7 +2762,10 @@ export async function deleteChatGroupsForOwner(ownerPubkey: string): Promise<voi
 	chatGroupsStore.groups = chatGroupsStore.groups.filter(
 		(group) => group.ownerPubkey !== normalizedOwner
 	);
-	for (const id of removedIds) pendingGroupPersists.delete(id);
+	for (const id of removedIds) {
+		pendingGroupPersists.delete(id);
+		groupStateEntries.delete(id);
+	}
 	// After pending writes (same resurrect guard as deleteChatGroup).
 	await persistGroupsPromise;
 	const storage = await getChatStorage();
