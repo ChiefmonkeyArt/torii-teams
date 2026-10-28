@@ -92,13 +92,19 @@ function getBaseTitle(pathname: string) {
 		const name = group?.metadata?.name || locator.shareMetadata?.name;
 		const sub = pathname.split('/')[3];
 		if (sub === 'info') {
-			const displayTitle = group
-				? getChatGroupDisplayTitle({
-						group,
-						activePubkey: manager.active?.pubkey,
-						memberPubkeys: listChatGroupMembers(group.id).map((member) => member.stablePubkey)
-					})
-				: '';
+			let displayTitle = '';
+			try {
+				displayTitle = group
+					? getChatGroupDisplayTitle({
+							group,
+							activePubkey: manager.active?.pubkey,
+							memberPubkeys: listChatGroupMembers(group.id).map((member) => member.stablePubkey)
+						})
+					: '';
+			} catch {
+				// Corrupt stored state: the info page reports it on its own — a throw
+				// here would kill the attention effect (and the badge) for good.
+			}
 			return `${displayTitle || 'Group info'} | Cordn`;
 		}
 		if (sub === 'e') return `Message | ${name ?? 'Chat'} | Cordn`;
