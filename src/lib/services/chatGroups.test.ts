@@ -29,6 +29,14 @@ vi.mock('ts-mls', async () => {
 	};
 });
 
+beforeEach(async () => {
+	// The decode memo in chatGroups.svelte is content-keyed; these tests
+	// re-program the decoder mock per case while reusing dummy state bytes, so
+	// the memo must be reset between cases.
+	const { clearDecodedStateCacheForTests } = await import('./chatGroups.svelte');
+	clearDecodedStateCacheForTests();
+});
+
 vi.mock('$app/environment', () => ({ browser: false }));
 
 const withCoordinatorClientMock = vi.fn(
@@ -1354,5 +1362,119 @@ describe('store history proxying', () => {
 		// source again and history scans lost their raw-array speed.
 		expect(stored?.messages).toBeInstanceOf(StoredChatMessageList);
 		expect(stored?.messages[0]).toBe(message);
+	});
+});
+
+describe('single-group persist coalescing (latest-wins)', () => {
+	const groupAt = (groupId: string, lastCursor: number) =>
+		({
+			id: groupId,
+			ownerPubkey: 'bb'.repeat(32),
+			coordinatorKey: 'cc'.repeat(32),
+			createdAt: 100,
+			stateBase64: 'AA==',
+			lastCursor,
+			fetchCursor: lastCursor,
+			messages: [],
+			syncIssues: [],
+			snapshots: [],
+			joinEpoch: 0n
+		}) as StoredChatGroup;
+
+	test('rapid persists for one group become a single putGroup of the newest state', async () => {
+		const { getChatStorage } = await import('$lib/storage/chatStorage');
+		const { persistGroup, replaceGroup } = await import('./chatGroups.svelte');
+		const storage = await getChatStorage();
+		const putSpy = vi.spyOn(storage, 'putGroup');
+		const groupId = 'gid-persist-coalesce';
+
+		try {
+			persistGroup(groupAt(groupId, 1));
+			const second = replaceGroup(groupId, groupAt(groupId, 2));
+			const third = replaceGroup(groupId, groupAt(groupId, 3));
+			await Promise.all([second, third]);
+			// A macrotask turn lets any wrongly-scheduled extra drain settle.
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			const calls = putSpy.mock.calls.filter((call) => call[0]?.id === groupId);
+			expect(calls).toHaveLength(1);
+			expect(calls[0][0].lastCursor).toBe(3);
+		} finally {
+			putSpy.mockRestore();
+		}
+	});
+
+	test('a delete resolves a queued persist waiter instead of hanging', async () => {
+		const { chatGroupsStore, replaceGroup, deleteChatGroup } = await import('./chatGroups.svelte');
+		const groupId = 'gid-delete-race';
+		chatGroupsStore.groups = [groupAt(groupId, 1)];
+		const pending = replaceGroup(groupId, groupAt(groupId, 2));
+		// The delete lands before the coalesced write drains; the waiter must
+		// still resolve (it hung forever before dropPendingGroupPersist).
+		deleteChatGroup(groupId);
+		await pending;
+		expect(chatGroupsStore.groups.some((group) => group.id === groupId)).toBe(false);
+	});
+});
+
+describe('group state facts cache', () => {
+	const factsGroup = (stateBase64 = 'AA=='): StoredChatGroup =>
+		({
+			id: 'facts',
+			coordinatorKey: 'cc'.repeat(32),
+			createdAt: 1,
+			stateBase64,
+			lastCursor: 0,
+			fetchCursor: 0,
+			messages: [],
+			syncIssues: [],
+			snapshots: [],
+			status: 'active',
+			joinEpoch: 0n
+		}) as StoredChatGroup;
+
+	test('derives members, removed and gid from one decode per state', async () => {
+		clientStateDecoderMock.mockClear();
+		clientStateDecoderMock.mockReturnValue([
+			{
+				groupContext: { groupId: new TextEncoder().encode('gid-1') },
+				groupActiveState: { kind: 'active' },
+				ratchetTree: []
+			}
+		]);
+		const { chatGroupsStore, isChatGroupRemoved, getChatGroupGid, listChatGroupMembers } =
+			await import('./chatGroups.svelte');
+		chatGroupsStore.groups = [factsGroup()];
+
+		const members = listChatGroupMembers('facts');
+		expect(isChatGroupRemoved(chatGroupsStore.groups[0])).toBe(false);
+		expect(getChatGroupGid(chatGroupsStore.groups[0])).toBe('gid-1');
+		expect(members).toEqual([]);
+		expect(clientStateDecoderMock).toHaveBeenCalledTimes(1);
+	});
+
+	test('re-derives the facts when the stored state bytes change', async () => {
+		clientStateDecoderMock.mockClear();
+		clientStateDecoderMock.mockReturnValueOnce([
+			{
+				groupContext: { groupId: new TextEncoder().encode('gid-1') },
+				groupActiveState: { kind: 'active' },
+				ratchetTree: []
+			}
+		]);
+		const { chatGroupsStore, isChatGroupRemoved, getChatGroupGid } =
+			await import('./chatGroups.svelte');
+		chatGroupsStore.groups = [factsGroup()];
+		expect(getChatGroupGid(chatGroupsStore.groups[0])).toBe('gid-1');
+
+		clientStateDecoderMock.mockReturnValueOnce([
+			{
+				groupContext: { groupId: new TextEncoder().encode('gid-1') },
+				groupActiveState: { kind: 'removedFromGroup' },
+				ratchetTree: []
+			}
+		]);
+		chatGroupsStore.groups = [factsGroup('AQ==')];
+		expect(isChatGroupRemoved(chatGroupsStore.groups[0])).toBe(true);
+		expect(clientStateDecoderMock).toHaveBeenCalledTimes(2);
 	});
 });

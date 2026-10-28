@@ -271,7 +271,6 @@
 </script>
 
 <svelte:head>
-	<title>{coordinatorDisplayLabel} | Cordn</title>
 	<meta name="description" content="Coordinator detail workspace for Cordn." />
 </svelte:head>
 

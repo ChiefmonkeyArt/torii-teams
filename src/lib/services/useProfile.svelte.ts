@@ -29,6 +29,10 @@ export function useProfile(getPubkey: () => string): {
 		boundPubkey = pubkey;
 		// Reset on pubkey change so a stale profile never shows for the new key.
 		profile = undefined;
+		// Empty key means "no subject" (e.g. a chat row's unset system committer/
+		// target): skip the store subscription entirely — message lists mount one
+		// of these per row, so the no-op case must not allocate an RxJS subject.
+		if (!pubkey) return;
 		// The shared model replays its cached value synchronously on subscribe
 		// (ReplaySubject), so a profile seen before resolves during init — before
 		// the first paint — instead of leaving a blank/fallback frame behind an

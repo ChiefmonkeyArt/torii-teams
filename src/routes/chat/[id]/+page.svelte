@@ -207,7 +207,6 @@
 </script>
 
 <svelte:head>
-	<title>{group?.metadata?.name || shareMetadata?.name || 'Chat'} | Cordn</title>
 	<meta name="description" content="Cordn group chat route." />
 </svelte:head>
 

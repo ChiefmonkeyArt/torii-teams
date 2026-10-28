@@ -50,7 +50,6 @@
 </script>
 
 <svelte:head>
-	<title>Settings | Cordn</title>
 	<meta name="description" content="Cordn settings." />
 </svelte:head>
 

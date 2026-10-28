@@ -32,7 +32,6 @@
 </script>
 
 <svelte:head>
-	<title>Appearance | Cordn</title>
 	<meta name="description" content="Choose and customize Cordn themes." />
 </svelte:head>
 

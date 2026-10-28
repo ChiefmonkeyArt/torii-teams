@@ -33,7 +33,8 @@ import {
 	type StoredChatGroup
 } from '$lib/services/chatGroups.svelte';
 import { samePubKey } from '$lib/utils';
-import { activeGroupId } from '$lib/utils/groupShareLink';
+import { resolveGroupLocator } from '$lib/utils/groupShareLink';
+import { getCoordinatorLabel } from '$lib/services/chatCoordinators.svelte';
 import { eventStore } from '$lib/services/eventStore';
 import { firstValueFrom } from 'applesauce-core/observable';
 import { ProfileModel } from 'applesauce-core/models';
@@ -61,18 +62,54 @@ function rememberNotifiedMessage(messageId: string): void {
 	}
 }
 
+/** The one page-title table. syncChatAttention is the single writer (route
+ *  heads must not set <title>, or the unread badge flips between writers);
+ *  labels mirror the route titles these replaced. */
 function getBaseTitle(pathname: string) {
-	if (pathname.startsWith('/chat/news')) {
-		return 'News | Cordn';
+	if (pathname === '/chat') return manager.active ? 'Chats | Cordn' : DEFAULT_TITLE;
+	if (pathname.startsWith('/chat/news')) return 'News & updates | Cordn';
+	if (pathname.startsWith('/chat/create-group')) return 'Create group | Cordn';
+	if (pathname.startsWith('/chat/share')) return 'Share to… | Cordn';
+	if (pathname.startsWith('/chat/config/chat')) return 'Chat behavior | Cordn';
+	if (pathname.startsWith('/chat/config/notifications')) return 'Notifications | Cordn';
+	if (pathname.startsWith('/chat/config/appearance')) return 'Appearance | Cordn';
+	if (pathname.startsWith('/chat/config/backup')) return 'Backup & recovery | Cordn';
+	if (pathname.startsWith('/chat/config/key-packages')) return 'Key packages | Cordn';
+	if (pathname.startsWith('/chat/config/media')) return 'Media | Cordn';
+	if (pathname.startsWith('/chat/config')) return 'Settings | Cordn';
+	if (pathname.startsWith('/chat/coordinators/')) {
+		const key = decodeURIComponent(pathname.slice('/chat/coordinators/'.length));
+		return key ? `${getCoordinatorLabel(key)} | Cordn` : 'Coordinators | Cordn';
 	}
+	if (pathname.startsWith('/chat/coordinators')) return 'Coordinators | Cordn';
 	if (pathname.startsWith('/chat/')) {
-		// The [id] segment may be a cordn1 ref — decode to the gid before lookup.
-		const gid = activeGroupId(pathname);
-		const group = gid ? getChatGroup(gid) : undefined;
-		return group?.metadata?.name ? `${group.metadata.name} | Cordn` : 'Chat | Cordn';
+		// Group routes incl. /info and /e sub-paths: the [id] segment may be a
+		// cordn1 ref or a bare gid — resolve like the route does, so an unjoined
+		// share-link page still titles with the shared name.
+		const segment = pathname.split('/')[2] ?? '';
+		const locator = resolveGroupLocator(segment, page.url.searchParams);
+		const group = locator.gid ? getChatGroup(locator.gid) : undefined;
+		const name = group?.metadata?.name || locator.shareMetadata?.name;
+		const sub = pathname.split('/')[3];
+		if (sub === 'info') {
+			let displayTitle = '';
+			try {
+				displayTitle = group
+					? getChatGroupDisplayTitle({
+							group,
+							activePubkey: manager.active?.pubkey,
+							memberPubkeys: listChatGroupMembers(group.id).map((member) => member.stablePubkey)
+						})
+					: '';
+			} catch {
+				// Corrupt stored state: the info page reports it on its own — a throw
+				// here would kill the attention effect (and the badge) for good.
+			}
+			return `${displayTitle || 'Group info'} | Cordn`;
+		}
+		if (sub === 'e') return `Message | ${name ?? 'Chat'} | Cordn`;
+		return `${name || 'Chat'} | Cordn`;
 	}
-
-	if (pathname === '/chat') return 'Chat home | Cordn';
 	return DEFAULT_TITLE;
 }
 
@@ -124,8 +161,12 @@ function ensureFaviconLink() {
 
 export function syncChatAttention() {
 	if (!browser) return;
-	document.title = buildBadgedTitle(page.url.pathname);
-	ensureFaviconLink().href = DEFAULT_FAVICON;
+	// Write-on-change: the caller effect re-runs per ingested batch, and
+	// identical title/favicon writes are pure churn (measured 50/s in bursts).
+	const title = buildBadgedTitle(page.url.pathname);
+	if (document.title !== title) document.title = title;
+	const favicon = ensureFaviconLink();
+	if (favicon.getAttribute('href') !== DEFAULT_FAVICON) favicon.href = DEFAULT_FAVICON;
 }
 
 function getNotificationBody(

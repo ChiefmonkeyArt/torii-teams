@@ -202,7 +202,6 @@
 </script>
 
 <svelte:head>
-	<title>{displayTitle || 'Group info'} | Cordn</title>
 	<meta name="description" content="Inspect Cordn group metadata and membership." />
 </svelte:head>
 

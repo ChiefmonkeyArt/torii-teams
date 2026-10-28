@@ -1,8 +1,8 @@
 import { browser } from '$app/environment';
 import { manager } from '$lib/services/accountManager.svelte';
 import {
-	decodeStoredGroupState,
 	getChatGroup,
+	getChatGroupGid,
 	ingestIncomingChatGroupMessages,
 	isChatGroupPoisoned,
 	isChatGroupRemoved,
@@ -146,6 +146,9 @@ type WatchFetchedMessage = WatchIncomingMessage & {
 type TickOptions = {
 	/** Run the catch-up sweep (foreground/online/heartbeat triggers). */
 	catchUp?: boolean;
+	/** The sweep was triggered by the idle heartbeat (enables per-coordinator
+	 *  catch-up backoff; explicit triggers always fetch and reset the ladder). */
+	heartbeat?: boolean;
 };
 
 /**
@@ -166,6 +169,20 @@ const HEARTBEAT_INTERVAL_MS = 60_000;
 const HEARTBEAT_MISSED_MS = HEARTBEAT_INTERVAL_MS + 30_000;
 /** Min spacing between catch-up sweeps (focus/visibility events can burst). */
 const CATCH_UP_MIN_INTERVAL_MS = 5_000;
+/**
+ * Heartbeat catch-up backoff. A live, all-caught-up coordinator still gets a
+ * periodic fetch as the keepalive-green zombie backstop — but not every beat:
+ * after a quiet beat the next heartbeat fetch waits out the window below. Any
+ * ingested message, any non-live watch, or any explicit (non-heartbeat)
+ * trigger — focus, online, pull-to-refresh — returns the coordinator to the
+ * base 60s cadence. The window is capped at 2min on purpose: the catch-up is
+ * also the zombie prover and the only delivery path for a quiet group's
+ * zombie stream, so the worst-case missed-message bound must stay at the
+ * pre-backoff ~2min. Idle RPC cost still drops ~2x. (A doubling ladder to
+ * 5min was tried and felt slower on-device: quiet-group messages arrived up
+ * to ~6min late.)
+ */
+const HEARTBEAT_CATCHUP_QUIET_MS = 2 * 60_000;
 /** Hides the "Updating chats…" banner for ticks that finish quickly. */
 const BANNER_DELAY_MS = 500;
 /**
@@ -204,7 +221,6 @@ const WATCH_INGEST_BATCH_SIZE = 50;
 const WATCH_INGEST_FLUSH_MS = 40;
 
 const currentWatches = new Map<string, GroupWatchTask>();
-const groupIdDecoder = new TextDecoder();
 const coordinatorBackoff = new Map<string, { failures: number; notBefore: number }>();
 
 let tickPromise: Promise<void> | null = null;
@@ -215,6 +231,9 @@ let lastCatchUpAt = 0;
  *  coordinator, NOT global: a dead coordinator's 20s fetch must not cause
  *  healthy coordinators' catch-ups to be skipped while it runs. */
 const catchUpInFlightCoordinators = new Set<string>();
+/** Heartbeat catch-up backoff state per coordinator: the wall-clock ms
+ *  before its next heartbeat-triggered catch-up fetch (see the constant above). */
+const heartbeatCatchUpBackoff = new Map<string, number>();
 let lastActiveAccountId = '';
 /** Armed once the first tick settled, so fresh opens start silently. */
 let warmed = false;
@@ -405,6 +424,20 @@ function clearCoordinatorBackoff(coordinatorKey: string) {
 
 function clearAllCoordinatorBackoff() {
 	coordinatorBackoff.clear();
+	heartbeatCatchUpBackoff.clear();
+}
+
+/** True when every watch on this coordinator is live — a coordinator with a
+ *  non-live watch is still converging and must not back its catch-up off. */
+function coordinatorWatchesAllLive(coordinatorKey: string): boolean {
+	for (const handle of currentWatches.values()) {
+		if (handle.coordinatorKey === coordinatorKey && !handle.live) return false;
+	}
+	return true;
+}
+
+function advanceHeartbeatCatchUpBackoff(coordinatorKey: string, now: number): void {
+	heartbeatCatchUpBackoff.set(coordinatorKey, now + HEARTBEAT_CATCHUP_QUIET_MS);
 }
 
 function toWatchableGroup(groupId: string): WatchableGroup | null {
@@ -413,13 +446,11 @@ function toWatchableGroup(groupId: string): WatchableGroup | null {
 		return null;
 	}
 
-	const state = decodeStoredGroupState(group);
 	const hasCursor = group.fetchCursor > 0;
-	const gid = groupIdDecoder.decode(state.groupContext.groupId);
 	const watchable: WatchableGroup = {
 		id: group.id,
 		coordinatorKey: group.coordinatorKey,
-		gid
+		gid: getChatGroupGid(group)
 	};
 
 	if (hasCursor) {
@@ -910,7 +941,11 @@ async function startMissingWatches(account: IAccount) {
  * it. The chunk-silence guard avoids false positives from the natural race
  * where a message lands between live delivery and the catch-up fetch.
  */
-async function catchUpWatchedCoordinators(account: IAccount, watchedBefore: string[]) {
+async function catchUpWatchedCoordinators(
+	account: IAccount,
+	watchedBefore: string[],
+	options: Pick<TickOptions, 'heartbeat'> = {}
+) {
 	if (watchedBefore.length === 0) return;
 
 	const groupsByCoordinator = new Map<string, WatchableGroup[]>();
@@ -928,9 +963,17 @@ async function catchUpWatchedCoordinators(account: IAccount, watchedBefore: stri
 			// skipping is scoped to THIS coordinator so a slow or dead one never
 			// withholds catch-ups from the healthy ones.
 			if (catchUpInFlightCoordinators.has(coordinatorKey)) return;
+			const heartbeat = options.heartbeat === true;
+			if (!heartbeat) {
+				// Explicit trigger: always fetch, and re-arm the base cadence.
+				heartbeatCatchUpBackoff.delete(coordinatorKey);
+			} else if (Date.now() < (heartbeatCatchUpBackoff.get(coordinatorKey) ?? 0)) {
+				return;
+			}
 			catchUpInFlightCoordinators.add(coordinatorKey);
 			try {
 				const client = getCoordinatorClient(account, coordinatorKey);
+				let wholeFetchFailed = false;
 				const { failedGroupIds, ingestedCount } = await fetchCoordinatorGroupBacklog({
 					account,
 					client,
@@ -943,6 +986,7 @@ async function catchUpWatchedCoordinators(account: IAccount, watchedBefore: stri
 					// Whole-fetch failure: the backlog is entirely unknown for these
 					// groups — conservatively mark them incomplete (never vouch for them
 					// on the MD send path) until a fetch succeeds.
+					wholeFetchFailed = true;
 					return {
 						failedGroupIds: new Set<string>(groups.map((group) => group.id)),
 						ingestedCount: 0
@@ -957,6 +1001,14 @@ async function catchUpWatchedCoordinators(account: IAccount, watchedBefore: stri
 					groups.filter((group) => !failedGroupIds.has(group.id)).map((group) => group.id)
 				);
 				markGroupsBacklogIncomplete([...failedGroupIds]);
+				if (ingestedCount > 0) {
+					// Found something: stay at the base cadence.
+					heartbeatCatchUpBackoff.delete(coordinatorKey);
+				} else if (wholeFetchFailed || coordinatorWatchesAllLive(coordinatorKey)) {
+					// Quiet (or dead): the heartbeat can back off. A coordinator with a
+					// non-live watch stays hot — something there still needs convergence.
+					if (heartbeat) advanceHeartbeatCatchUpBackoff(coordinatorKey, Date.now());
+				}
 				if (ingestedCount === 0) return;
 				const handle = findWatchHandleByCoordinator(coordinatorKey);
 				if (handle && !isDeliveryStale(handle)) return;
@@ -1001,7 +1053,7 @@ async function tickBody(account: IAccount, options: TickOptions): Promise<void> 
 	// wait on a slow one.
 	await startMissingWatches(account);
 	if (options.catchUp) {
-		void catchUpWatchedCoordinators(account, watchedBefore).catch(() => undefined);
+		void catchUpWatchedCoordinators(account, watchedBefore, options).catch(() => undefined);
 	}
 }
 
@@ -1073,7 +1125,7 @@ function requestTick(reason: string, options: TickOptions = {}): Promise<void> {
 
 	if (catchUp) lastCatchUpAt = Date.now();
 
-	const promise = runTick(reason, { catchUp });
+	const promise = runTick(reason, { catchUp, heartbeat: options.heartbeat === true });
 	tickPromise = promise;
 	// Outbound sends await the in-flight tick via this mirror so they never
 	// race a teardown/backlog ingestion (chatUiActions) — but only while a
@@ -1089,7 +1141,13 @@ function requestTick(reason: string, options: TickOptions = {}): Promise<void> {
 				tickDirty = false;
 				const nextCatchUp = dirtyCatchUp;
 				dirtyCatchUp = false;
-				void requestTick(`${reason} (follow-up)`, { catchUp: nextCatchUp });
+				// A catch-up request that merged into this follow-up may be an
+				// explicit trigger (focus/pull) — it must not inherit the heartbeat's
+				// backoff gating, so drop the flag whenever one merged.
+				void requestTick(`${reason} (follow-up)`, {
+					catchUp: nextCatchUp,
+					heartbeat: options.heartbeat === true && !nextCatchUp
+				});
 			}
 		}
 	});
@@ -1191,9 +1249,10 @@ if (browser) {
 	// visibility: a hidden tab's throttled timers still fire on Chrome's
 	// ~1-wake/min budget, and the sweep is event-driven (WS RPCs, cursor-dedup
 	// idempotent), so it bounds message loss from ANY failure mode — zombie
-	// stream, lost ack, aborted restart, blocked ladder — to ~1-2 minutes in
-	// background. This is the correctness backstop; every other health
-	// mechanism (ladder, swaps, ack gates) is latency optimization on top.
+	// stream, lost ack, aborted restart, blocked ladder — to ~2-3 minutes in
+	// background (60s beat + the ≤2min quiet backoff on an all-live coordinator).
+	// This is the correctness backstop; every other health mechanism (ladder,
+	// swaps, ack gates) is latency optimization on top.
 	// ponytail: a killswitch/simplification pass on those layers is the
 	// upgrade path if this backstop proves sufficient in practice.
 	setInterval(() => {
@@ -1217,7 +1276,7 @@ if (browser) {
 		) {
 			rebuildForeground('heartbeat after suspension');
 		} else {
-			requestTick('heartbeat', { catchUp: true });
+			requestTick('heartbeat', { catchUp: true, heartbeat: true });
 		}
 	}, HEARTBEAT_INTERVAL_MS);
 }

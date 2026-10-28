@@ -121,10 +121,6 @@
 	}
 </script>
 
-<svelte:head>
-	<title>Share to… | Cordn</title>
-</svelte:head>
-
 <div class="flex h-full min-h-0 flex-col bg-background text-foreground">
 	<header class="border-b border-border bg-background/95 px-4 py-3 backdrop-blur md:px-6">
 		<div class="mx-auto flex w-full max-w-3xl items-center gap-3">

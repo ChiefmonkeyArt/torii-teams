@@ -188,7 +188,6 @@
 </script>
 
 <svelte:head>
-	<title>{hasAccount ? 'Chats' : 'Cordn'} | Cordn</title>
 	<meta name="description" content="Your Cordn chats." />
 </svelte:head>
 

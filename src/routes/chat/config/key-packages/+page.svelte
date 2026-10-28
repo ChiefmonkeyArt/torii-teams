@@ -274,7 +274,6 @@
 </script>
 
 <svelte:head>
-	<title>Key packages | Cordn</title>
 	<meta name="description" content="Manage locally generated Cordn key packages." />
 </svelte:head>
 
