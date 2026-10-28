@@ -594,6 +594,13 @@ const newsReleases: NewsRelease[] = [
 		version: 1,
 		title: 'Long chats stay fast, search sees everything',
 		body: "- ✨ Chats with thousands of messages no longer slow down the longer you use the app: history loads in small pages on demand, so switching between chats and scrolling back stays smooth no matter how far back the conversation goes.\n- ✨ Search now looks through a chat's entire history, not just what's on screen: older matches appear as they're found, and edited or deleted messages are handled correctly.\n- ✨ Unread and mention badges stay exact even with a big backlog — no more wrong counts when hundreds of messages piled up while you were away.\n- 🐛 A message that arrived while you were reading older history could stay invisible until the app was restarted.\n- 🔄 Opening a chat with unread messages lands on the first unread one even when the backlog goes back much further than what first loads.\n- 🔄 The app performs far fewer background checks and wake-ups, which means less battery drain and fewer stutters during long sessions."
+	},
+	{
+		id: 'cordn-news-2026-10-28-snappy-switching',
+		createdAt: Date.UTC(2026, 9, 28),
+		version: 1,
+		title: 'Faster chat switching, steadier titles',
+		body: '- ✨ Switching between chats — and typing right after — is dramatically faster: each group\u2019s members and status are figured out once per change instead of being re-derived over and over while you browse.\n- ✨ The tab title no longer flickers between the unread count and the page name while messages arrive, and the unread badge now shows consistently on every screen.\n- 🔄 The app does far less busywork in the background: group updates are saved in batches, quiet chats are checked less often, and poll countdowns share one clock — less memory, battery use, and stutter during long sessions.\n- 🐛 Deleting a chat while a message was still being saved no longer risks leaving that send stuck forever.'
 	}
 ];
 
