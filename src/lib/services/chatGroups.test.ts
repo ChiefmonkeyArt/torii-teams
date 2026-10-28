@@ -1366,31 +1366,32 @@ describe('store history proxying', () => {
 });
 
 describe('single-group persist coalescing (latest-wins)', () => {
+	const groupAt = (groupId: string, lastCursor: number) =>
+		({
+			id: groupId,
+			ownerPubkey: 'bb'.repeat(32),
+			coordinatorKey: 'cc'.repeat(32),
+			createdAt: 100,
+			stateBase64: 'AA==',
+			lastCursor,
+			fetchCursor: lastCursor,
+			messages: [],
+			syncIssues: [],
+			snapshots: [],
+			joinEpoch: 0n
+		}) as StoredChatGroup;
+
 	test('rapid persists for one group become a single putGroup of the newest state', async () => {
 		const { getChatStorage } = await import('$lib/storage/chatStorage');
 		const { persistGroup, replaceGroup } = await import('./chatGroups.svelte');
 		const storage = await getChatStorage();
 		const putSpy = vi.spyOn(storage, 'putGroup');
 		const groupId = 'gid-persist-coalesce';
-		const groupAt = (lastCursor: number) =>
-			({
-				id: groupId,
-				ownerPubkey: 'bb'.repeat(32),
-				coordinatorKey: 'cc'.repeat(32),
-				createdAt: 100,
-				stateBase64: 'AA==',
-				lastCursor,
-				fetchCursor: lastCursor,
-				messages: [],
-				syncIssues: [],
-				snapshots: [],
-				joinEpoch: 0n
-			}) as StoredChatGroup;
 
 		try {
-			persistGroup(groupAt(1));
-			const second = replaceGroup(groupId, groupAt(2));
-			const third = replaceGroup(groupId, groupAt(3));
+			persistGroup(groupAt(groupId, 1));
+			const second = replaceGroup(groupId, groupAt(groupId, 2));
+			const third = replaceGroup(groupId, groupAt(groupId, 3));
 			await Promise.all([second, third]);
 			// A macrotask turn lets any wrongly-scheduled extra drain settle.
 			await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1400,6 +1401,18 @@ describe('single-group persist coalescing (latest-wins)', () => {
 		} finally {
 			putSpy.mockRestore();
 		}
+	});
+
+	test('a delete resolves a queued persist waiter instead of hanging', async () => {
+		const { chatGroupsStore, replaceGroup, deleteChatGroup } = await import('./chatGroups.svelte');
+		const groupId = 'gid-delete-race';
+		chatGroupsStore.groups = [groupAt(groupId, 1)];
+		const pending = replaceGroup(groupId, groupAt(groupId, 2));
+		// The delete lands before the coalesced write drains; the waiter must
+		// still resolve (it hung forever before dropPendingGroupPersist).
+		deleteChatGroup(groupId);
+		await pending;
+		expect(chatGroupsStore.groups.some((group) => group.id === groupId)).toBe(false);
 	});
 });
 

@@ -2718,6 +2718,16 @@ export async function recoverPoisonedChatGroup(groupId: string): Promise<boolean
 	});
 }
 
+/** Drop a queued persist for a deleted group (resurrect guard in the delete
+ *  paths below). Resolves the entry's waiters so flows awaiting their persist
+ *  — persistCommitIntent before a wire send — don't hang forever on a write
+ *  that must not happen. */
+function dropPendingGroupPersist(groupId: string): void {
+	const entry = pendingGroupPersists.get(groupId);
+	pendingGroupPersists.delete(groupId);
+	for (const resolve of entry?.waiters ?? []) resolve();
+}
+
 export function deleteChatGroup(groupId: string): void {
 	chatGroupsStore.groups = chatGroupsStore.groups.filter((group) => group.id !== groupId);
 	pendingEpochOperations.delete(groupId);
@@ -2727,11 +2737,11 @@ export function deleteChatGroup(groupId: string): void {
 	// shortcut: a persist enqueued AFTER this point for the deleted group still
 	// resurrects it (replaceGroup on a missing id no-ops the store but persists);
 	// add a drain-time tombstone if a stale in-flight ingest is ever observed.
-	pendingGroupPersists.delete(groupId);
+	dropPendingGroupPersist(groupId);
 	groupStateEntries.delete(groupId);
 	void persistGroupsPromise
 		.then(async () => {
-			(await getChatStorage()).deleteGroup(groupId);
+			await (await getChatStorage()).deleteGroup(groupId);
 		})
 		.catch(() => undefined);
 }
@@ -2745,7 +2755,7 @@ export async function deleteChatGroupsForCoordinator(coordinatorKey: string): Pr
 		(group) => group.coordinatorKey !== normalizedCoordinator
 	);
 	for (const id of groupIds) {
-		pendingGroupPersists.delete(id);
+		dropPendingGroupPersist(id);
 		groupStateEntries.delete(id);
 	}
 	// After pending writes (same resurrect guard as deleteChatGroup).
@@ -2763,7 +2773,7 @@ export async function deleteChatGroupsForOwner(ownerPubkey: string): Promise<voi
 		(group) => group.ownerPubkey !== normalizedOwner
 	);
 	for (const id of removedIds) {
-		pendingGroupPersists.delete(id);
+		dropPendingGroupPersist(id);
 		groupStateEntries.delete(id);
 	}
 	// After pending writes (same resurrect guard as deleteChatGroup).
