@@ -408,6 +408,40 @@ describe('loadLastResortKeyPackage() adoption (spec §11.5)', () => {
 		expect(await loadLastResortKeyPackage(entry)).toBe(false);
 		expect(chatKeyPackagesStore.keyPackages).toHaveLength(1);
 	});
+
+	test('replace-on-adopt: the current claim set retracts stale claims; absent field is a no-op', async () => {
+		const { chatKeyPackagesStore, loadLastResortKeyPackage } =
+			await import('./chatKeyPackages.svelte');
+		keyPackageDecoderMock.mockReturnValue([
+			{ leafNode: { lifetime: { notBefore: 1_700_000_000n } } },
+			0
+		]);
+		privateKeyPackageDecoderMock.mockReturnValue([{}, 0]);
+		makeKeyPackageRefMock.mockResolvedValue(new Uint8Array([1, 2, 3]));
+
+		chatKeyPackagesStore.keyPackages = [];
+		await loadLastResortKeyPackage({
+			keyPackage: 'AA==',
+			privateKeyPackage: 'AA==',
+			coordinators: [COORD_A, COORD_B]
+		});
+		expect(chatKeyPackagesStore.keyPackages[0].publishedCoordinatorKeys).toEqual([
+			COORD_A,
+			COORD_B
+		]);
+
+		// Peer retracts COORD_B: the current set replaces — not unions — the claims.
+		await loadLastResortKeyPackage({
+			keyPackage: 'AA==',
+			privateKeyPackage: 'AA==',
+			coordinators: [COORD_A]
+		});
+		expect(chatKeyPackagesStore.keyPackages[0].publishedCoordinatorKeys).toEqual([COORD_A]);
+
+		// Legacy doc without the field: no claim information — never a retraction.
+		await loadLastResortKeyPackage({ keyPackage: 'AA==', privateKeyPackage: 'AA==' });
+		expect(chatKeyPackagesStore.keyPackages[0].publishedCoordinatorKeys).toEqual([COORD_A]);
+	});
 });
 
 describe('repairLastResortAlignment() (spec §11.5 resolution order)', () => {

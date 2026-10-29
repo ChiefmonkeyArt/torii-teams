@@ -607,12 +607,24 @@ export async function removeChatKeyPackage(
 							}
 				)
 			);
+			if (record.isLastResort) {
+				// spec §10.5/§11.5: a retracted publish claim must leave the meta
+				// document too — replace-on-adopt (§4.2) makes the current
+				// `coordinators` set authoritative, so a claim left in the doc is
+				// restored on every adoption (and the coordinator with it).
+				onMetaStateChange();
+			}
 			return;
 		}
 
 		await setKeyPackages(
 			chatKeyPackagesStore.keyPackages.filter((entry) => entry.keyPackageRef !== keyPackageRef)
 		);
+		if (record.isLastResort) {
+			// Record gone → the meta document must drop the lastResort entry,
+			// else the next adoption re-creates it from the stale doc.
+			onMetaStateChange();
+		}
 	}
 }
 
@@ -773,11 +785,19 @@ export function getLastResortKeyPackageEntry(): LastResortKeyPackageEntry | unde
 	};
 }
 
+/** Set equality over coordinator pubkeys (claim sets are deduped by construction). */
+function sameClaimSet(a: string[], b: string[]): boolean {
+	if (a.length !== b.length) return false;
+	const set = new Set(a.map(normalizePubKey));
+	return b.every((key) => set.has(key));
+}
+
 /**
  * Load the account's last-resort key package from a meta document (spec §11.5)
  * so this device can process a Welcome built against it. Idempotent by
- * `keyPackageRef`: a package already held is not re-added. Returns true if
- * newly loaded, false if it was already present.
+ * `keyPackageRef`: a package already held is not re-added — but its publish
+ * claims are re-adopted (replace-on-adopt, spec §4.2 `coordinators`). Returns
+ * true if newly loaded, false if it was already present.
  */
 export async function loadLastResortKeyPackage(entry: LastResortKeyPackageEntry): Promise<boolean> {
 	const ownerPubkey = normalizePubKey(getActivePubkey());
@@ -785,7 +805,29 @@ export async function loadLastResortKeyPackage(entry: LastResortKeyPackageEntry)
 	if (!keyPackageDecoded) throw new Error('Unable to decode last-resort key package');
 	const cipherSuite = await getCipherSuite();
 	const keyPackageRef = bytesToHex(await makeKeyPackageRef(keyPackageDecoded[0], cipherSuite.hash));
-	if (chatKeyPackagesStore.keyPackages.some((kp) => kp.keyPackageRef === keyPackageRef)) {
+	const coordinators = (entry.coordinators ?? []).map((c) => normalizePubKey(c));
+	const held = chatKeyPackagesStore.keyPackages.find((kp) => kp.keyPackageRef === keyPackageRef);
+	if (held) {
+		// Replace-on-adopt: `coordinators` is the CURRENT claim set of the carried
+		// package (spec §4.2), so a peer's retraction lands here too — without it a
+		// purged coordinator's claim survives every adoption and the coordinator
+		// resurrects with it. Absent field = legacy doc: no claim information, never
+		// read as a retraction. A local claim newer than the peer's snapshot may be
+		// dropped by this replace; repairLastResortAlignment re-marks it from what
+		// the coordinator actually serves.
+		if (
+			entry.coordinators !== undefined &&
+			!sameClaimSet(held.publishedCoordinatorKeys, coordinators)
+		) {
+			await setKeyPackages(
+				chatKeyPackagesStore.keyPackages.map((kp) =>
+					kp.keyPackageRef === keyPackageRef
+						? { ...kp, publishedCoordinatorKeys: coordinators }
+						: kp
+				)
+			);
+			for (const coordinator of coordinators) markCoordinatorUsed(coordinator);
+		}
 		return false; // already held
 	}
 	const privateKeyPackageDecoded = privateKeyPackageDecoder(
@@ -800,7 +842,6 @@ export async function loadLastResortKeyPackage(entry: LastResortKeyPackageEntry)
 	// list (markCoordinatorUsed). Mirrors seedGroup marking the group's coordinator
 	// on adoption; fires only on first load (early-return above), so once-per-kp —
 	// same frequency profile as seedGroup.
-	const coordinators = (entry.coordinators ?? []).map((c) => normalizePubKey(c));
 	// Mint time travels inside the authenticated KeyPackage bytes
 	// (leafNode.lifetime.notBefore, seconds, mint − 24h slack): derive createdAt
 	// from it instead of adoption time so store order reflects mint order on
