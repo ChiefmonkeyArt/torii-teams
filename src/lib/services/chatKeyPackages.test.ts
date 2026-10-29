@@ -366,17 +366,46 @@ describe('getLastResortKeyPackageEntry() pick (spec §11.5)', () => {
 		// Retracting the final claim must re-publish THIS package with
 		// coordinators: [] — not rotate to the other published record, which would
 		// strand the retraction (peers would adopt a rotation, never an empty set).
-		setLastResortClaimBaseline({ keyPackageRef: 'kp-old', coordinators: [COORD_A] });
+		// The other claim-bearer is OLDER (a pre-rotation leftover) — that is the
+		// shape a purge runs in.
+		setLastResortClaimBaseline({ keyPackageRef: 'kp-tip', coordinators: [COORD_A] });
 		chatKeyPackagesStore.keyPackages = [
-			makeRecord('kp-new', [COORD_B], {
+			makeRecord('kp-tip', [], {
 				isLastResort: true,
-				createdAt: 200,
-				keyPackageBase64: 'kp-new'
+				createdAt: 300,
+				keyPackageBase64: 'kp-tip'
 			}),
-			makeRecord('kp-old', [], { isLastResort: true, createdAt: 100, keyPackageBase64: 'kp-old' })
+			makeRecord('kp-leftover', [COORD_B], {
+				isLastResort: true,
+				createdAt: 100,
+				keyPackageBase64: 'kp-leftover'
+			})
 		];
-		expect(getLastResortKeyPackageEntry()?.keyPackage).toBe('kp-old');
+		expect(getLastResortKeyPackageEntry()?.keyPackage).toBe('kp-tip');
 		expect(getLastResortKeyPackageEntry()?.coordinators).toEqual([]);
+	});
+
+	test('rotation: a NEWER claim-bearing record displaces the sticky identity', async () => {
+		const { chatKeyPackagesStore, getLastResortKeyPackageEntry, setLastResortClaimBaseline } =
+			await import('./chatKeyPackages.svelte');
+		// The config page rotates by minting a fresh last-resort and publishing
+		// it (markKeyPackagePublished moves the claim). If sticky won here, the
+		// meta doc would keep carrying the stale package and peers' repair would
+		// publish it right back over the rotation.
+		setLastResortClaimBaseline({ keyPackageRef: 'kp-stale', coordinators: [COORD_A] });
+		chatKeyPackagesStore.keyPackages = [
+			makeRecord('kp-rotated', [COORD_A], {
+				isLastResort: true,
+				createdAt: 300,
+				keyPackageBase64: 'kp-rotated'
+			}),
+			makeRecord('kp-stale', [], {
+				isLastResort: true,
+				createdAt: 100,
+				keyPackageBase64: 'kp-stale'
+			})
+		];
+		expect(getLastResortKeyPackageEntry()?.keyPackage).toBe('kp-rotated');
 	});
 
 	test('undefined when the account holds no last-resort', async () => {

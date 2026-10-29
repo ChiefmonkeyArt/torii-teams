@@ -1629,8 +1629,10 @@ async function publish(plan: PublishPlan, attempt = 0): Promise<void> {
 	let sealedLastResort: LastResortKeyPackageEntry | undefined;
 	if (plan.resealMeta) {
 		// Read the entry ONCE: the sealed bytes and the recorded baselines must
-		// describe the same view even if the store changes mid-publish.
+		// describe the same view even if the store changes mid-publish — so the
+		// ref is derived in the SAME tick, before the upload await below.
 		sealedLastResort = getLastResortKeyPackageEntry();
+		const sealedRef = sealedLastResort ? getLastResortKeyPackageRef() : undefined;
 		const result = await publishMetaDocument({
 			seal: dekSeal,
 			dekPubkey,
@@ -1645,17 +1647,19 @@ async function publish(plan: PublishPlan, attempt = 0): Promise<void> {
 		config.lastPublishedLastResortHash = metaViewHash({ lastResortKeyPackage: sealedLastResort });
 		// Claim baseline for the same sealed entry: the sticky pick and the
 		// tip-vs-tip retraction diff treat this as "what the tip carries" until
-		// the self-echo adoption re-derives it from the document.
-		if (sealedLastResort) {
-			const sealedRef = getLastResortKeyPackageRef();
-			if (sealedRef) {
-				setLastResortClaimBaseline({
+		// the self-echo adoption re-derives it from the document. Pinned to
+		// config.ownerPubkey — an account switch mid-publish must not write the
+		// baseline onto the other identity (same discipline as saveConfig).
+		if (sealedRef && sealedLastResort) {
+			setLastResortClaimBaseline(
+				{
 					keyPackageRef: sealedRef,
 					coordinators: [...(sealedLastResort.coordinators ?? [])]
-				});
-			}
-		} else {
-			setLastResortClaimBaseline(undefined);
+				},
+				config.ownerPubkey
+			);
+		} else if (!sealedLastResort) {
+			setLastResortClaimBaseline(undefined, config.ownerPubkey);
 		}
 	}
 

@@ -780,19 +780,29 @@ async function markKeyPackagePublished(
  * winner over a published one. Explicit sort: do not rely on store order.
  *
  * Sticky identity: the package the tip currently carries (the claim baseline)
- * keeps the slot even when every local claim is gone — a full unpublish must
+ * keeps the slot while a retraction of it is pending — a full unpublish must
  * re-publish the SAME entry with `coordinators: []` (the only readable
  * retraction), never rotate to another local record, which would strand the
- * retraction: peers would adopt a rotation and never see the empty set.
+ * retraction: peers would adopt a rotation and never see the empty set. The
+ * sticky record only beats OLDER claim-bearers (pre-rotation leftovers): a
+ * NEWER claim-bearing record is an explicit rotation (the config page mints
+ * then publishes) and must displace the tip identity, or the rotation never
+ * replicates — peers' repair would publish the stale sticky package right
+ * back over it.
  */
 function pickLastResortRecord(ownerPubkey: string): StoredKeyPackageRecord | undefined {
 	const candidates = chatKeyPackagesStore.keyPackages
 		.filter((kp) => kp.isLastResort && normalizePubKey(kp.ownerPubkey) === ownerPubkey)
 		.sort((a, b) => b.createdAt - a.createdAt);
-	const tipRef = getLastResortClaimBaseline(ownerPubkey)?.keyPackageRef;
-	const sticky = tipRef ? candidates.find((kp) => kp.keyPackageRef === tipRef) : undefined;
-	if (sticky) return sticky;
-	return candidates.find((kp) => kp.publishedCoordinatorKeys.length > 0) ?? candidates[0];
+	const baseline = getLastResortClaimBaseline(ownerPubkey);
+	const stickyIdx = baseline
+		? candidates.findIndex((kp) => kp.keyPackageRef === baseline.keyPackageRef)
+		: -1;
+	const publishedIdx = candidates.findIndex((kp) => kp.publishedCoordinatorKeys.length > 0);
+	if (stickyIdx !== -1 && (publishedIdx === -1 || stickyIdx < publishedIdx)) {
+		return candidates[stickyIdx]!;
+	}
+	return candidates[publishedIdx] ?? candidates[0];
 }
 
 export function getLastResortKeyPackageEntry(): LastResortKeyPackageEntry | undefined {
