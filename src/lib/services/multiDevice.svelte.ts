@@ -3120,6 +3120,9 @@ export async function softDeleteGroup(groupId: string): Promise<Tombstone> {
  */
 export async function softDeleteGroups(groupIds: string[]): Promise<Tombstone[]> {
 	const tombstones: Tombstone[] = [];
+	const groupsToDelete: string[] = [];
+	// Decode the whole batch before any mutation: one bad record must not leave
+	// earlier groups deleted locally without their tombstones reaching the tip.
 	for (const groupId of groupIds) {
 		const group = getChatGroup(groupId);
 		if (!group) continue;
@@ -3128,11 +3131,14 @@ export async function softDeleteGroups(groupIds: string[]): Promise<Tombstone[]>
 			gid: getProtocolGroupId(state),
 			epoch: Number(state.groupContext.epoch)
 		});
+		groupsToDelete.push(groupId);
+	}
+	if (tombstones.length === 0) return [];
+	for (const groupId of groupsToDelete) {
 		// Drop the local group. The watch driver reconciles its watch set against
 		// the store, so removing it here unwatches it (no parallel unwatch needed).
 		deleteChatGroup(groupId);
 	}
-	if (tombstones.length === 0) return [];
 	dbg('softDeleteGroups dropped local', tombstones);
 
 	// Append the tombstones + publish atomically on the serialized lane so a

@@ -18,6 +18,7 @@ const requireActiveAccountMock = vi.fn(() => ({ pubkey: 'aa'.repeat(32) }));
 const fetchQueryMock = vi.fn();
 const invalidateQueriesMock = vi.fn().mockResolvedValue(undefined);
 const getQueryDataMock = vi.fn();
+const listStoredKeyPackagesMock = vi.fn().mockResolvedValue([]);
 const markCoordinatorUsedMock = vi.fn();
 const listKnownCoordinatorKeysMock = vi.fn((): string[] => []);
 const retireAutoCoverageMock = vi.fn();
@@ -445,9 +446,9 @@ describe('loadLastResortKeyPackage() adoption (spec §11.5)', () => {
 		expect(loaded).toBe(true);
 		expect(chatKeyPackagesStore.keyPackages).toHaveLength(1);
 		const record = chatKeyPackagesStore.keyPackages[0];
-		// Mint time rides inside the authenticated bytes (notBefore, seconds);
-		// adoption must not reorder the canonical-pick tie-break via Date.now().
-		expect(record.createdAt).toBe(1_700_000_000_000);
+		// Mint time rides inside the authenticated bytes (notBefore + the 24h
+		// generation slack), matching a locally-created copy of the same package.
+		expect(record.createdAt).toBe(1_700_086_400_000);
 		expect(record.publishedCoordinatorKeys).toEqual([COORD_A]);
 		expect(record.isLastResort).toBe(true);
 	});
@@ -541,6 +542,11 @@ describe('loadLastResortKeyPackage() adoption (spec §11.5)', () => {
 			kp.publishedCoordinatorKeys.length > 1 ? { ...kp, publishedCoordinatorKeys: [COORD_A] } : kp
 		);
 		retireAutoCoverageMock.mockClear();
+		// Against the previous tip, the observation-pruned local entry looks like
+		// an unpublished edit. The incoming document matches it exactly, so the
+		// gate must NOT defer: adoption cannot overwrite anything, and this is the
+		// only remaining opportunity to retire B.
+		hasUnpublishedLastResortChangeMock.mockReturnValue(true);
 
 		await loadLastResortKeyPackage({
 			keyPackage: 'AA==',
@@ -752,7 +758,10 @@ describe('ensureLastResortPublished() mint single-flight', () => {
 		makeKeyPackageRefMock.mockReset();
 		makeKeyPackageRefMock.mockResolvedValue(new Uint8Array([7]));
 		generateKeyPackageMock.mockReset();
-		generateKeyPackageMock.mockResolvedValue({ publicPackage: {}, privatePackage: {} });
+		generateKeyPackageMock.mockResolvedValue({
+			publicPackage: { leafNode: { lifetime: { notBefore: 1_700_000_000n } } },
+			privatePackage: {}
+		});
 		encodeMock.mockReset();
 		encodeMock.mockReturnValue(new Uint8Array([1]));
 		isLastResortKeyPackageMock.mockReset();
@@ -774,6 +783,7 @@ describe('ensureLastResortPublished() mint single-flight', () => {
 		expect(results[0].keyPackageRef).toBe(results[1].keyPackageRef);
 		// A second mint would evict the first everywhere (quota = 1).
 		expect(chatKeyPackagesStore.keyPackages.filter((entry) => entry.isLastResort)).toHaveLength(1);
+		expect(chatKeyPackagesStore.keyPackages[0].createdAt).toBe(1_700_086_400_000);
 	});
 });
 
@@ -894,5 +904,40 @@ describe('maintainReachability()', () => {
 		} finally {
 			nowSpy.mockRestore();
 		}
+	});
+});
+
+describe('stored last-resort mint ordering', () => {
+	test('normalizes legacy local/replicated timestamps from the authenticated bytes', async () => {
+		// This must be a fresh module: storage is loaded once at module init.
+		vi.resetModules();
+		listStoredKeyPackagesMock.mockResolvedValueOnce([
+			{
+				id: 'legacy-local',
+				ownerPubkey: OWNER,
+				label: 'Last resort',
+				isLastResort: true,
+				keyPackageRef: 'kp-legacy',
+				keyPackageBytes: new Uint8Array([1]),
+				privateKeyPackageBytes: new Uint8Array([2]),
+				cipherSuite: '1',
+				createdAt: 1_800_000_000_000, // legacy local Date.now() value
+				publishedCoordinatorKeys: []
+			}
+		]);
+		keyPackageDecoderMock.mockReset();
+		keyPackageDecoderMock.mockReturnValue([
+			{ leafNode: { lifetime: { notBefore: 1_700_000_000n } } },
+			0
+		]);
+
+		vi.doMock('$lib/storage/chatStorage', () => ({
+			getChatStorage: async () => ({ listKeyPackages: listStoredKeyPackagesMock })
+		}));
+		const { chatKeyPackagesStore } = await import('./chatKeyPackages.svelte');
+		expect(listStoredKeyPackagesMock).toHaveBeenCalled();
+		await vi.waitFor(() => expect(chatKeyPackagesStore.keyPackages).toHaveLength(1));
+
+		expect(chatKeyPackagesStore.keyPackages[0].createdAt).toBe(1_700_086_400_000);
 	});
 });

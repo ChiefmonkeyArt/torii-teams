@@ -44,7 +44,11 @@ import { bytesToHex } from 'applesauce-core/helpers';
 import { queryClient } from '$lib/query-client';
 import { chatQueryKeys } from '$lib/queries/chatQueryKeys';
 import { fetchCoordinatorAvailableKeyPackages } from '$lib/queries/chatKeyPackageQueries';
-import { planLastResortRepair, type LastResortKeyPackageEntry } from '$lib/services/multiDevice';
+import {
+	metaViewHash,
+	planLastResortRepair,
+	type LastResortKeyPackageEntry
+} from '$lib/services/multiDevice';
 import {
 	hasUnpublishedLastResortChange,
 	onMetaStateChange
@@ -73,7 +77,27 @@ export const chatKeyPackagesStore = $state<{ keyPackages: StoredKeyPackageRecord
 let storageReady: Promise<void> | null = null;
 let persistKeyPackagesPromise: Promise<void> = Promise.resolve();
 
+/** Authenticated mint ordering shared by local and replicated last-resorts.
+ *  Generation sets `notBefore = mint - 24h`; add the slack back. */
+const KEY_PACKAGE_NOT_BEFORE_SLACK_SECONDS = 86_400n;
+
+function keyPackageMintedAt(keyPackage: KeyPackage, fallback: number): number {
+	const notBefore = keyPackage.leafNode.lifetime?.notBefore;
+	return notBefore && notBefore > 0n
+		? Number(notBefore + KEY_PACKAGE_NOT_BEFORE_SLACK_SECONDS) * 1000
+		: fallback;
+}
+
 function fromStoredRecord(record: StoredBinaryChatKeyPackageRecord): StoredKeyPackageRecord {
+	let createdAt = record.createdAt;
+	if (record.isLastResort) {
+		try {
+			const decoded = keyPackageDecoder(record.keyPackageBytes, 0);
+			if (decoded) createdAt = keyPackageMintedAt(decoded[0], createdAt);
+		} catch {
+			// Keep the stored fallback for a corrupt record; later decode errors still surface.
+		}
+	}
 	return {
 		id: record.id,
 		ownerPubkey: record.ownerPubkey,
@@ -83,7 +107,7 @@ function fromStoredRecord(record: StoredBinaryChatKeyPackageRecord): StoredKeyPa
 		keyPackageBase64: bytesToBase64(record.keyPackageBytes),
 		privateKeyPackageBase64: bytesToBase64(record.privateKeyPackageBytes),
 		cipherSuite: record.cipherSuite,
-		createdAt: record.createdAt,
+		createdAt,
 		publishedCoordinatorKeys: [...record.publishedCoordinatorKeys]
 	};
 }
@@ -317,7 +341,7 @@ export async function createChatKeyPackage(input?: {
 		capabilities: createCordnMetadataCapabilities(),
 		extensions: input?.isLastResort ? ensureLastResortKeyPackageExtension([]) : undefined,
 		lifetime: {
-			notBefore: BigInt(nowSeconds - 86400),
+			notBefore: BigInt(nowSeconds) - KEY_PACKAGE_NOT_BEFORE_SLACK_SECONDS,
 			// ~100-year notAfter: effectively disables MLS-level key package expiry
 			notAfter: BigInt(nowSeconds + 3153600000)
 		}
@@ -343,7 +367,8 @@ export async function createChatKeyPackage(input?: {
 			encode(privateKeyPackageEncoder, generated.privatePackage)
 		),
 		cipherSuite: CLI_CIPHERSUITE,
-		createdAt: timestamp,
+		// Last-resort ordering must match the replicated copy of these same bytes.
+		createdAt: isLastResort ? keyPackageMintedAt(generated.publicPackage, timestamp) : timestamp,
 		publishedCoordinatorKeys: []
 	};
 
@@ -915,8 +940,15 @@ export async function loadLastResortKeyPackage(entry: LastResortKeyPackageEntry)
 		// unsaved to the tip (reconcile-before-push would otherwise re-import the
 		// peer's older snapshot and erase this device's retraction/rotation before
 		// it reaches the wire); the owed-publish sweep pushes it, then adoption
-		// resumes.
-		if (entry.coordinators !== undefined && !hasUnpublishedLastResortChange()) {
+		// resumes. An incoming entry identical to the local view is never deferred:
+		// observation may have pruned its markers first, and adoption is then the
+		// only remaining retraction/retirement signal. Nothing would be overwritten.
+		const canAdoptClaims =
+			entry.coordinators !== undefined &&
+			(metaViewHash({ lastResortKeyPackage: entry }) ===
+				metaViewHash({ lastResortKeyPackage: getLastResortKeyPackageEntry() }) ||
+				!hasUnpublishedLastResortChange());
+		if (canAdoptClaims) {
 			// The retraction is tip-vs-tip — the previous EXPLICIT claim set for
 			// this package minus this document's — not local-markers-vs-doc: the
 			// startup observation reconcile can prune the local marker first,
@@ -959,13 +991,10 @@ export async function loadLastResortKeyPackage(entry: LastResortKeyPackageEntry)
 	// list (markCoordinatorUsed). Mirrors seedGroup marking the group's coordinator
 	// on adoption; fires only on first load (early-return above), so once-per-kp —
 	// same frequency profile as seedGroup.
-	// Mint time travels inside the authenticated KeyPackage bytes
-	// (leafNode.lifetime.notBefore, seconds, mint − 24h slack): derive createdAt
-	// from it instead of adoption time so store order reflects mint order on
-	// every device — adoption must never reorder the canonical-pick tie-break.
-	const mintedAtSeconds = keyPackageDecoded[0].leafNode.lifetime?.notBefore;
-	const timestamp =
-		mintedAtSeconds && mintedAtSeconds > 0n ? Number(mintedAtSeconds) * 1000 : Date.now();
+	// Mint time travels inside the authenticated KeyPackage bytes. Local mints,
+	// replicas, and records loaded from storage all use the same derived value,
+	// so the canonical-pick rotation order cannot differ between devices.
+	const timestamp = keyPackageMintedAt(keyPackageDecoded[0], Date.now());
 	const record: StoredKeyPackageRecord = {
 		id: `${ownerPubkey.slice(0, 8)}-lr-${timestamp}`,
 		ownerPubkey,
