@@ -16,7 +16,7 @@ import { stopWatchingGroup } from '$lib/services/chatGroupWatch.svelte';
 import {
 	isMultiDeviceActive,
 	onMetaStateChange,
-	softDeleteGroup
+	softDeleteGroups
 } from '$lib/services/multiDevice.svelte';
 import { normalizePubKey } from '$lib/utils';
 
@@ -112,9 +112,9 @@ export async function purgeChatCoordinator(coordinatorKey: string): Promise<void
 		// so the tip stops listing the group. A hard local delete leaves the tip
 		// as-is, and the next reconcile re-seeds every group — and via seedGroup's
 		// markCoordinatorUsed, the purged coordinator itself (the "deleted
-		// coordinator reappears on restart" bug). softDeleteGroup drops the local
-		// group record itself.
-		await Promise.all(groupIds.map((id) => softDeleteGroup(id)));
+		// coordinator reappears on restart" bug). Batched: ONE tombstone publish
+		// for the whole coordinator, not one per group.
+		await softDeleteGroups(groupIds);
 	} else {
 		await deleteChatGroupsForCoordinator(normalized);
 	}

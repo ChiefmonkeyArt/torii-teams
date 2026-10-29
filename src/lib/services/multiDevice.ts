@@ -960,9 +960,15 @@ export function diffStaleGroupEpochs(params: {
  * Pure + local-only: the hash never leaves the device. It carries the
  * `privateKeyPackage` because that field IS part of the published meta doc and
  * so affects its content-addressed address — excluding it would miss a rotation.
- * The `coordinators` hint is NOT hashed (fork-MR scenario H): it is a
- * per-device advisory that differs between devices, and hashing it made every
- * device see the others' meta as diverged — a meta reseal ping-pong.
+ * The `coordinators` set IS hashed (canonically sorted; absent ≠ empty): claims
+ * are current-state and every device converges to the document's set (§4.2
+ * replace-on-adopt), so hashing them cannot ping-pong — while EXCLUDING them
+ * would blind the owed-publish diff to a crashed retraction (the old
+ * scenario-H exclusion predates replace-on-adopt, when claims unioned and
+ * diverged per device). shortcut: a baseline recorded from a legacy doc (no
+ * `coordinators` field) mismatches any local view once, causing one extra
+ * republish that upgrades the doc to an explicit claim set; transient tip
+ * flapping in that window self-heals through observation reconcile.
  */
 export function metaViewHash(params: {
 	lastResortKeyPackage?: LastResortKeyPackageEntry;
@@ -974,7 +980,10 @@ export function metaViewHash(params: {
 	const kp = params.lastResortKeyPackage
 		? {
 				keyPackage: params.lastResortKeyPackage.keyPackage,
-				privateKeyPackage: params.lastResortKeyPackage.privateKeyPackage
+				privateKeyPackage: params.lastResortKeyPackage.privateKeyPackage,
+				coordinators: params.lastResortKeyPackage.coordinators
+					? [...params.lastResortKeyPackage.coordinators].sort()
+					: undefined
 			}
 		: undefined;
 	return bytesToHex(sha256(new TextEncoder().encode(JSON.stringify({ kp, removed }))));

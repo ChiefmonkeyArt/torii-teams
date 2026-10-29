@@ -20,9 +20,11 @@ import {
 	getCordnCipherSuite
 } from '$lib/services/chatMlsUtils';
 import {
+	getCoordinatorLabel,
+	isAutoCoverageRetired,
 	listKnownCoordinatorKeys,
 	markCoordinatorUsed,
-	getCoordinatorLabel
+	retireAutoCoverage
 } from '$lib/services/chatCoordinators.svelte';
 import {
 	requireActiveAccount,
@@ -43,7 +45,10 @@ import { queryClient } from '$lib/query-client';
 import { chatQueryKeys } from '$lib/queries/chatQueryKeys';
 import { fetchCoordinatorAvailableKeyPackages } from '$lib/queries/chatKeyPackageQueries';
 import { planLastResortRepair, type LastResortKeyPackageEntry } from '$lib/services/multiDevice';
-import { onMetaStateChange } from '$lib/services/multiDevice.svelte';
+import {
+	hasUnpublishedLastResortChange,
+	onMetaStateChange
+} from '$lib/services/multiDevice.svelte';
 import { manager } from '$lib/services/accountManager.svelte';
 import { persistedChatBool } from '$lib/services/chatComposerSettings.svelte';
 
@@ -181,8 +186,15 @@ export async function purgeCoordinatorKeyPackages(
 	// Never nuke records attributable to another coordinator's groups — the old
 	// global "publishedCoordinatorKeys.length === 0" sweep did exactly that.
 	if (deleteRefs.length > 0) {
+		// Last-resort records are exempt: they are the account's replicated
+		// material and the meta document must keep carrying them (with this
+		// coordinator pruned from `coordinators`, above) — dropping the record
+		// would publish an absent entry, which no peer can read as a retraction
+		// (spec §4.2: absent ≠ empty).
 		await setKeyPackages(
-			chatKeyPackagesStore.keyPackages.filter((entry) => !deleteRefs.includes(entry.keyPackageRef))
+			chatKeyPackagesStore.keyPackages.filter(
+				(entry) => entry.isLastResort || !deleteRefs.includes(entry.keyPackageRef)
+			)
 		);
 	}
 	// ponytail: no reconcile here. It fetches ListAvailableKeyPackages from every
@@ -620,11 +632,10 @@ export async function removeChatKeyPackage(
 		await setKeyPackages(
 			chatKeyPackagesStore.keyPackages.filter((entry) => entry.keyPackageRef !== keyPackageRef)
 		);
-		if (record.isLastResort) {
-			// Record gone → the meta document must drop the lastResort entry,
-			// else the next adoption re-creates it from the stale doc.
-			onMetaStateChange();
-		}
+		// No meta trigger on a full record drop: an absent lastResort entry is
+		// indistinguishable from a legacy document (spec §4.2), so pushing it
+		// retracts nothing — peers converge by observation instead (the §11.5
+		// resolution prunes claims once the coordinator no longer serves the ref).
 	}
 }
 
@@ -812,12 +823,15 @@ export async function loadLastResortKeyPackage(entry: LastResortKeyPackageEntry)
 		// package (spec §4.2), so a peer's retraction lands here too — without it a
 		// purged coordinator's claim survives every adoption and the coordinator
 		// resurrects with it. Absent field = legacy doc: no claim information, never
-		// read as a retraction. A local claim newer than the peer's snapshot may be
-		// dropped by this replace; repairLastResortAlignment re-marks it from what
-		// the coordinator actually serves.
+		// read as a retraction. Skipped while a local last-resort edit is still
+		// unsaved to the tip (reconcile-before-push would otherwise re-import the
+		// peer's older snapshot and erase this device's retraction/rotation before
+		// it reaches the wire); the owed-publish sweep pushes it, then adoption
+		// resumes.
 		if (
 			entry.coordinators !== undefined &&
-			!sameClaimSet(held.publishedCoordinatorKeys, coordinators)
+			!sameClaimSet(held.publishedCoordinatorKeys, coordinators) &&
+			!hasUnpublishedLastResortChange()
 		) {
 			await setKeyPackages(
 				chatKeyPackagesStore.keyPackages.map((kp) =>
@@ -827,6 +841,12 @@ export async function loadLastResortKeyPackage(entry: LastResortKeyPackageEntry)
 				)
 			);
 			for (const coordinator of coordinators) markCoordinatorUsed(coordinator);
+			// A coordinator the peer's current set just dropped was purged
+			// fleet-wide: retire it from automatic coverage (device-local; any later
+			// use re-arms it) or the reachability pass would re-publish the
+			// last-resort to it and resurrect the deletion.
+			const retracted = held.publishedCoordinatorKeys.filter((key) => !coordinators.includes(key));
+			if (retracted.length) retireAutoCoverage(retracted);
 		}
 		return false; // already held
 	}
@@ -894,9 +914,15 @@ export async function repairLastResortAlignment(): Promise<void> {
 		if (!pick) return;
 		const implicated = pick.publishedCoordinatorKeys.map(normalizePubKey);
 		// (c) observe every known coordinator in parallel (cached; one offline
-		// leg must not stall the rest).
+		// leg must not stall the rest). Retired coordinators (an adopted
+		// retraction) stay out: their orphaned remote copies must not be
+		// re-adopted as claims (spec §11.5).
 		const observations = await Promise.all(
-			dedupeStrings(listKnownCoordinatorKeys().map(normalizePubKey)).map(async (coordinatorKey) => {
+			dedupeStrings(
+				listKnownCoordinatorKeys()
+					.map(normalizePubKey)
+					.filter((coordinatorKey) => !isAutoCoverageRetired(coordinatorKey))
+			).map(async (coordinatorKey) => {
 				try {
 					const available = await queryClient.fetchQuery({
 						queryKey: chatQueryKeys.availableKeyPackages(ownerPubkey, coordinatorKey),
@@ -1055,7 +1081,12 @@ async function runMaintainReachability(options: { publish?: boolean }): Promise<
 	const localKeyPackages = listChatKeyPackages(ownerPubkey);
 	const heldRefs = new Set(localKeyPackages.map((entry) => entry.keyPackageRef));
 	const holdsLastResort = localKeyPackages.some((entry) => entry.isLastResort);
-	const coordinatorKeys = dedupeStrings(listKnownCoordinatorKeys().map(normalizePubKey));
+	// Auto-coverage targets only: coordinators retired by an adopted retraction
+	// (fleet-wide purge) stay out of the automatic pass — explicit per-
+	// coordinator actions still reach them through ensureLastResortPublished.
+	const coordinatorKeys = dedupeStrings(listKnownCoordinatorKeys().map(normalizePubKey)).filter(
+		(key) => !isAutoCoverageRetired(key)
+	);
 	// Sweep dedupe stamp: the heartbeat sweep skips while this holds — a
 	// changed account or coordinator set (a group's coordinator, an added one)
 	// re-checks immediately, so a newly joined coordinator publishes without

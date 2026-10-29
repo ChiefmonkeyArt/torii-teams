@@ -46,7 +46,8 @@
 				consumed local record{impact.keyPackagesLocal === 1 ? '' : 's'}, and {impact.welcomes} invitation{impact.welcomes ===
 				1
 					? ''
-					: 's'}. Messages and membership on other devices or coordinators are not affected.
+					: 's'}. On linked devices, these groups are removed as well. Other members are not
+				affected.
 			</Dialog.Description>
 		</Dialog.Header>
 		<Dialog.Footer>

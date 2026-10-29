@@ -20,6 +20,9 @@ const invalidateQueriesMock = vi.fn().mockResolvedValue(undefined);
 const getQueryDataMock = vi.fn();
 const markCoordinatorUsedMock = vi.fn();
 const listKnownCoordinatorKeysMock = vi.fn((): string[] => []);
+const retireAutoCoverageMock = vi.fn();
+const isAutoCoverageRetiredMock = vi.fn((): boolean => false);
+const hasUnpublishedLastResortChangeMock = vi.fn((): boolean => false);
 const keyPackageDecoderMock = vi.fn();
 const privateKeyPackageDecoderMock = vi.fn();
 const makeKeyPackageRefMock = vi.fn();
@@ -54,6 +57,8 @@ vi.mock('$lib/services/chatRuntime', () => ({
 vi.mock('$lib/services/chatCoordinators.svelte', () => ({
 	markCoordinatorUsed: markCoordinatorUsedMock,
 	listKnownCoordinatorKeys: listKnownCoordinatorKeysMock,
+	retireAutoCoverage: retireAutoCoverageMock,
+	isAutoCoverageRetired: isAutoCoverageRetiredMock,
 	getCoordinatorLabel: vi.fn((key: string) => `Coordinator ${key.slice(0, 8)}`)
 }));
 
@@ -82,7 +87,10 @@ vi.mock('$lib/services/chatMlsUtils', () => ({
 	getCordnCipherSuite: vi.fn(() => 1)
 }));
 
-vi.mock('$lib/services/multiDevice.svelte', () => ({ onMetaStateChange: vi.fn() }));
+vi.mock('$lib/services/multiDevice.svelte', () => ({
+	onMetaStateChange: vi.fn(),
+	hasUnpublishedLastResortChange: hasUnpublishedLastResortChangeMock
+}));
 
 vi.mock('$lib/services/chatStorage', () => ({
 	getChatStorage: vi.fn().mockResolvedValue({
@@ -412,6 +420,8 @@ describe('loadLastResortKeyPackage() adoption (spec §11.5)', () => {
 	test('replace-on-adopt: the current claim set retracts stale claims; absent field is a no-op', async () => {
 		const { chatKeyPackagesStore, loadLastResortKeyPackage } =
 			await import('./chatKeyPackages.svelte');
+		retireAutoCoverageMock.mockClear();
+		hasUnpublishedLastResortChangeMock.mockReturnValue(false);
 		keyPackageDecoderMock.mockReturnValue([
 			{ leafNode: { lifetime: { notBefore: 1_700_000_000n } } },
 			0
@@ -437,9 +447,22 @@ describe('loadLastResortKeyPackage() adoption (spec §11.5)', () => {
 			coordinators: [COORD_A]
 		});
 		expect(chatKeyPackagesStore.keyPackages[0].publishedCoordinatorKeys).toEqual([COORD_A]);
+		// The retracted coordinator is retired from automatic coverage (the
+		// fleet-wide purge signal).
+		expect(retireAutoCoverageMock).toHaveBeenCalledWith([COORD_B]);
 
 		// Legacy doc without the field: no claim information — never a retraction.
 		await loadLastResortKeyPackage({ keyPackage: 'AA==', privateKeyPackage: 'AA==' });
+		expect(chatKeyPackagesStore.keyPackages[0].publishedCoordinatorKeys).toEqual([COORD_A]);
+
+		// An unsaved local last-resort edit (this device's own retraction still in
+		// flight) is protected: the peer's older snapshot must not re-import.
+		hasUnpublishedLastResortChangeMock.mockReturnValue(true);
+		await loadLastResortKeyPackage({
+			keyPackage: 'AA==',
+			privateKeyPackage: 'AA==',
+			coordinators: [COORD_A, COORD_B]
+		});
 		expect(chatKeyPackagesStore.keyPackages[0].publishedCoordinatorKeys).toEqual([COORD_A]);
 	});
 });

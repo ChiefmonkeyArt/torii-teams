@@ -88,6 +88,7 @@ import {
 	type GroupDocument,
 	type GroupSnapshot,
 	type MetaDocument,
+	type LastResortKeyPackageEntry,
 	type Tombstone,
 	type ReconcileTarget,
 	type ReconcileOutcome,
@@ -295,6 +296,17 @@ export interface MultiDeviceOwnerConfig {
 	 * only pre-first-tip-read (a brand-new link) — the first adopt/publish sets it.
 	 */
 	lastPublishedMetaHash?: string;
+	/**
+	 * Content hash of just the `lastResortKeyPackage` entry the device believes
+	 * is currently on the tip (claim-aware), recorded on meta publish and on
+	 * meta adopt. Gates claim adoption (§4.2 replace-on-adopt): a local
+	 * last-resort edit (retraction / rotation) that has not reached the wire yet
+	 * must not be re-imported from a peer's older snapshot by reconcile-before-
+	 * push. Scoped to the last-resort entry — NOT the full meta view — so a
+	 * pending tombstone never blocks claim adoption. Undefined until the first
+	 * meta publish/adopt; an undefined baseline reads as "no edit in flight".
+	 */
+	lastPublishedLastResortHash?: string;
 }
 
 interface MultiDeviceConfigStore {
@@ -1093,6 +1105,27 @@ export function onMetaStateChange(): void {
 	scheduleRepublish({ resealGroups: [], resealMeta: true });
 }
 
+/**
+ * Whether the local last-resort entry diverges from the one last recorded for
+ * the tip — i.e. a local last-resort edit (claim retraction / rotation) has not
+ * reached the wire yet (pending, deferred, or the push crashed mid-flight; the
+ * startup owed-publish sweep heals the last one). Adoption paths use this to
+ * keep reconcile-before-push from re-importing a peer's older snapshot over
+ * the in-flight edit (spec §4.2 replace-on-adopt defers to it). No baseline
+ * (never published or adopted a meta document) reads as "not diverged" —
+ * shortcut: an edit made before the first meta publish/adopt can still be
+ * erased by adoption; the window is enable→first-sync and heals via the
+ * observation reconcile.
+ */
+export function hasUnpublishedLastResortChange(): boolean {
+	const config = getMultiDeviceConfig();
+	if (!config?.lastPublishedLastResortHash) return false;
+	return (
+		metaViewHash({ lastResortKeyPackage: getLastResortKeyPackageEntry() }) !==
+		config.lastPublishedLastResortHash
+	);
+}
+
 /** An empty tip pointer (used when the fetched tip parses to nothing). */
 function emptyTipPointer(config: MultiDeviceOwnerConfig): TipPointer {
 	return { groups: [], servers: config.blossomServers };
@@ -1437,6 +1470,11 @@ async function applyTip(
 				lastResortKeyPackage: doc.lastResortKeyPackage,
 				removed: doc.removed
 			});
+			// Entry-level baseline for the §4.2 adoption gate (see
+			// hasUnpublishedLastResortChange): what the tip's last-resort entry is.
+			config.lastPublishedLastResortHash = metaViewHash({
+				lastResortKeyPackage: doc.lastResortKeyPackage
+			});
 			// §11.5 repair: converge the last-resort each coordinator serves with
 			// the adopted entry (re-adopt theirs when held, else publish ours).
 			// Fire-and-forget: coordinator IO bounded to known coordinators,
@@ -1586,16 +1624,23 @@ async function publish(plan: PublishPlan, attempt = 0): Promise<void> {
 
 	// Re-seal the meta document (tombstones + last-resort key package) only when asked.
 	let metaAddress = pointer.metaAddress;
+	let sealedLastResort: LastResortKeyPackageEntry | undefined;
 	if (plan.resealMeta) {
+		// Read the entry ONCE: the sealed bytes and the recorded baselines must
+		// describe the same view even if the store changes mid-publish.
+		sealedLastResort = getLastResortKeyPackageEntry();
 		const result = await publishMetaDocument({
 			seal: dekSeal,
 			dekPubkey,
 			store: writeStore,
 			removed,
-			lastResortKeyPackage: getLastResortKeyPackageEntry()
+			lastResortKeyPackage: sealedLastResort
 		});
 		metaAddress = result.address;
 		dbg('publish meta doc', { address: result.address.slice(0, 12), removed: removed.length });
+		// Record the entry-level baseline from the SEALED value (not a re-read):
+		// this is the adoption gate's notion of "what's on the tip".
+		config.lastPublishedLastResortHash = metaViewHash({ lastResortKeyPackage: sealedLastResort });
 	}
 
 	// Fork-MR scenario F: the tip is last-writer-wins. Re-read it right before
@@ -1655,7 +1700,7 @@ async function publish(plan: PublishPlan, attempt = 0): Promise<void> {
 		// meta view matches the tip and needs no `resealMeta` push. Computed from
 		// the same `removed` + last-resort entry the doc was sealed from.
 		config.lastPublishedMetaHash = metaViewHash({
-			lastResortKeyPackage: getLastResortKeyPackageEntry(),
+			lastResortKeyPackage: sealedLastResort,
 			removed
 		});
 		saveConfig(config);
@@ -3039,29 +3084,48 @@ async function catchUpGroupFromChain(params: {
  * the tombstone only propagates when enabled.
  */
 export async function softDeleteGroup(groupId: string): Promise<Tombstone> {
-	const group = getChatGroup(groupId);
-	if (!group) throw new Error(`Cannot soft-delete: group ${groupId} not found`);
-	const state = decodeStoredGroupState(group);
-	const tombstone: Tombstone = {
-		gid: getProtocolGroupId(state),
-		epoch: Number(state.groupContext.epoch)
-	};
-	// Drop the local group. The watch driver reconciles its watch set against
-	// the store, so removing it here unwatches it (no parallel unwatch needed).
-	deleteChatGroup(groupId);
-	dbg('softDeleteGroup dropped local', tombstone);
+	if (!getChatGroup(groupId)) {
+		throw new Error(`Cannot soft-delete: group ${groupId} not found`);
+	}
+	const [tombstone] = await softDeleteGroups([groupId]);
+	return tombstone!;
+}
 
-	// Append the tombstone + publish atomically on the serialized lane so a
+/**
+ * Batched soft-delete: N groups → one local sweep + ONE tombstone publish
+ * (each per-group publish is a full fetch-tip/reconcile/upload cycle, so a
+ * coordinator purge must not fire one per group). A group that vanished since
+ * the caller listed it is skipped, not thrown — purge lists groups before
+ * awaits. Same per-group semantics as {@link softDeleteGroup} otherwise.
+ */
+export async function softDeleteGroups(groupIds: string[]): Promise<Tombstone[]> {
+	const tombstones: Tombstone[] = [];
+	for (const groupId of groupIds) {
+		const group = getChatGroup(groupId);
+		if (!group) continue;
+		const state = decodeStoredGroupState(group);
+		tombstones.push({
+			gid: getProtocolGroupId(state),
+			epoch: Number(state.groupContext.epoch)
+		});
+		// Drop the local group. The watch driver reconciles its watch set against
+		// the store, so removing it here unwatches it (no parallel unwatch needed).
+		deleteChatGroup(groupId);
+	}
+	if (tombstones.length === 0) return [];
+	dbg('softDeleteGroups dropped local', tombstones);
+
+	// Append the tombstones + publish atomically on the serialized lane so a
 	// concurrent meta publish can't clear `pendingTombstones` between the append
 	// and the republish (§10.5: a deletion must stick across the fleet).
 	runSerialized(async () => {
 		const cfg = getMultiDeviceConfig();
 		if (!cfg) return;
-		cfg.pendingTombstones = [...(cfg.pendingTombstones ?? []), tombstone];
+		cfg.pendingTombstones = [...(cfg.pendingTombstones ?? []), ...tombstones];
 		saveConfig(cfg);
 		await publish({ resealGroups: [], resealMeta: true });
 	});
-	return tombstone;
+	return tombstones;
 }
 
 // ---------------------------------------------------------------------------

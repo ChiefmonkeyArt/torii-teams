@@ -25,6 +25,12 @@ export interface StoredCoordinator {
 	/** When this relay set was last adopted or verified (staleness marker for
 	 *  the automatic relay refresh; absent = never checked → stale). */
 	relaysResolvedAt?: number;
+	/** Device-local retirement from automatic key-package coverage: set when a
+	 *  multi-device meta adoption retracts this coordinator's last-resort claim
+	 *  (fleet-wide purge) and no live group uses it — the auto reachability pass
+	 *  would otherwise re-publish the last-resort to it and resurrect the
+	 *  deletion. Cleared by any later use (markCoordinatorUsed). Absent = active. */
+	autoPublishRetiredAt?: number;
 	isDefault: boolean;
 	color?: string;
 	createdAt: number;
@@ -425,9 +431,43 @@ export function markCoordinatorUsed(pubkey: string, relayHints?: string[]) {
 		upsertChatCoordinator({ pubkey: normalized, relays: hints });
 	}
 	chatCoordinatorsStore.coordinators = chatCoordinatorsStore.coordinators.map((entry) =>
-		entry.pubkey === normalized ? { ...entry, lastUsedAt: Date.now() } : entry
+		entry.pubkey === normalized
+			? // Real usage re-arms automatic coverage (clears a purge retirement).
+				{ ...entry, lastUsedAt: Date.now(), autoPublishRetiredAt: undefined }
+			: entry
 	);
 	saveCoordinators();
+}
+
+/**
+ * Retire coordinators from automatic key-package coverage (see
+ * `StoredCoordinator.autoPublishRetiredAt`). Called when a meta adoption
+ * retracts their last-resort claim — the fleet-wide purge signal. Only
+ * existing entries with no live group are retired: usage is the re-arm.
+ */
+export function retireAutoCoverage(pubkeys: string[]): void {
+	const targets = new Set(pubkeys.map(normalizePubKey));
+	if (!targets.size) return;
+	const liveCoordinators = new Set(
+		listChatGroups().map((group) => normalizePubKey(group.coordinatorKey))
+	);
+	let changed = false;
+	chatCoordinatorsStore.coordinators = chatCoordinatorsStore.coordinators.map((entry) => {
+		if (
+			!targets.has(entry.pubkey) ||
+			liveCoordinators.has(entry.pubkey) ||
+			entry.autoPublishRetiredAt
+		)
+			return entry;
+		changed = true;
+		return { ...entry, autoPublishRetiredAt: Date.now() };
+	});
+	if (changed) saveCoordinators();
+}
+
+/** Whether automatic coverage skips this coordinator (retired by an adopted retraction). */
+export function isAutoCoverageRetired(pubkey: string): boolean {
+	return Boolean(getChatCoordinator(pubkey)?.autoPublishRetiredAt);
 }
 
 /**

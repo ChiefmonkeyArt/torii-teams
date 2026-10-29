@@ -1431,26 +1431,34 @@ describe('diffStaleGroupEpochs (spec §10.5 owed-push record: strictly-ahead loc
 	});
 });
 
-describe('metaViewHash (fork-MR scenario H: no ping-pong over the hint)', () => {
-	test('the per-device coordinators hint does not change the hash', () => {
-		const mine = {
-			keyPackage: 'kp',
-			privateKeyPackage: 'priv',
-			coordinators: ['relay-a']
-		};
-		const theirs = {
-			keyPackage: 'kp',
-			privateKeyPackage: 'priv',
-			coordinators: ['relay-b', 'relay-c']
-		};
-		expect(metaViewHash({ lastResortKeyPackage: mine as never })).toBe(
-			metaViewHash({ lastResortKeyPackage: theirs as never })
+describe('metaViewHash (claim-aware since replace-on-adopt)', () => {
+	test('a different coordinators set changes the hash (retraction/addition detected)', () => {
+		// Claims are current-state and converge to the document's set (§4.2
+		// replace-on-adopt), so hashing them cannot ping-pong — while excluding
+		// them would blind the owed-publish diff to a crashed retraction (the
+		// old scenario-H exclusion predates replace-on-adopt).
+		const mine = { keyPackage: 'kp', privateKeyPackage: 'priv', coordinators: ['c1'] };
+		const retracted = { keyPackage: 'kp', privateKeyPackage: 'priv', coordinators: [] };
+		const added = { keyPackage: 'kp', privateKeyPackage: 'priv', coordinators: ['c1', 'c2'] };
+		expect(metaViewHash({ lastResortKeyPackage: mine as never })).not.toBe(
+			metaViewHash({ lastResortKeyPackage: retracted as never })
+		);
+		expect(metaViewHash({ lastResortKeyPackage: mine as never })).not.toBe(
+			metaViewHash({ lastResortKeyPackage: added as never })
 		);
 		// the private material still hashes: a rotation must still register
 		expect(metaViewHash({ lastResortKeyPackage: mine as never })).not.toBe(
 			metaViewHash({
 				lastResortKeyPackage: { ...mine, privateKeyPackage: 'rotated' } as never
 			})
+		);
+	});
+
+	test('absent coordinators (legacy doc) differs from an explicit empty set', () => {
+		const legacy = { keyPackage: 'kp', privateKeyPackage: 'priv' };
+		const empty = { ...legacy, coordinators: [] };
+		expect(metaViewHash({ lastResortKeyPackage: legacy as never })).not.toBe(
+			metaViewHash({ lastResortKeyPackage: empty as never })
 		);
 	});
 });
