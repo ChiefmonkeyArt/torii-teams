@@ -51,6 +51,7 @@ import {
 } from '$lib/services/multiDevice.svelte';
 import { manager } from '$lib/services/accountManager.svelte';
 import { persistedChatBool } from '$lib/services/chatComposerSettings.svelte';
+import { browser } from '$app/environment';
 
 export interface StoredKeyPackageRecord {
 	id: string;
@@ -210,6 +211,7 @@ export async function deleteChatKeyPackagesForOwner(ownerPubkey: string): Promis
 	chatKeyPackagesStore.keyPackages = chatKeyPackagesStore.keyPackages.filter(
 		(entry) => normalizePubKey(entry.ownerPubkey) !== normalizedOwner
 	);
+	setLastResortClaimBaseline(undefined, normalizedOwner);
 	const storage = await getChatStorage();
 	await storage.deleteKeyPackagesByOwner(normalizedOwner);
 }
@@ -776,11 +778,20 @@ async function markKeyPackagePublished(
  * publish claim — it is the invite surface coordinators serve — with newest
  * mint as tie-break; an unpublished local mint is the fallback, never the
  * winner over a published one. Explicit sort: do not rely on store order.
+ *
+ * Sticky identity: the package the tip currently carries (the claim baseline)
+ * keeps the slot even when every local claim is gone — a full unpublish must
+ * re-publish the SAME entry with `coordinators: []` (the only readable
+ * retraction), never rotate to another local record, which would strand the
+ * retraction: peers would adopt a rotation and never see the empty set.
  */
 function pickLastResortRecord(ownerPubkey: string): StoredKeyPackageRecord | undefined {
 	const candidates = chatKeyPackagesStore.keyPackages
 		.filter((kp) => kp.isLastResort && normalizePubKey(kp.ownerPubkey) === ownerPubkey)
 		.sort((a, b) => b.createdAt - a.createdAt);
+	const tipRef = getLastResortClaimBaseline(ownerPubkey)?.keyPackageRef;
+	const sticky = tipRef ? candidates.find((kp) => kp.keyPackageRef === tipRef) : undefined;
+	if (sticky) return sticky;
 	return candidates.find((kp) => kp.publishedCoordinatorKeys.length > 0) ?? candidates[0];
 }
 
@@ -794,6 +805,73 @@ export function getLastResortKeyPackageEntry(): LastResortKeyPackageEntry | unde
 		// coordinator list + the kp's coordinator markers (spec §11.5 extension).
 		coordinators: record.publishedCoordinatorKeys
 	};
+}
+
+/** Ref of the canonical last-resort pick — the §11.5 identity the tip carries.
+ *  Used by the multi-device publish path to record the claim baseline for the
+ *  entry it just sealed. */
+export function getLastResortKeyPackageRef(): string | undefined {
+	return pickLastResortRecord(normalizePubKey(getActivePubkey()))?.keyPackageRef;
+}
+
+// --- Tip claim baseline (device-local, per owner) ------------------------------
+//
+// The last ADOPTED or SEALED last-resort entry: which package the tip carries
+// and its explicit claim set. Two readers:
+//  - the sticky pick above (a full unpublish keeps the identity); and
+//  - the tip-vs-tip retraction diff in loadLastResortKeyPackage — adoption must
+//    not infer a retraction from mutable local markers, because the startup
+//    observation reconcile can prune those before adoption runs, erasing the
+//    retirement signal and letting the reachability pass resurrect the purge.
+// Memory-first so non-browser callers behave; persisted per owner.
+
+interface LastResortClaimBaseline {
+	keyPackageRef: string;
+	coordinators: string[];
+}
+
+const LAST_RESORT_BASELINE_KEY = 'cordn.lastResortClaimBaseline';
+let claimBaselines: Record<string, LastResortClaimBaseline> | null = null;
+
+function loadClaimBaselines(): Record<string, LastResortClaimBaseline> {
+	if (!claimBaselines) {
+		claimBaselines = {};
+		if (browser) {
+			try {
+				claimBaselines = JSON.parse(
+					localStorage.getItem(LAST_RESORT_BASELINE_KEY) ?? '{}'
+				) as Record<string, LastResortClaimBaseline>;
+			} catch {
+				/* corrupted → start empty */
+			}
+		}
+	}
+	return claimBaselines;
+}
+
+export function getLastResortClaimBaseline(
+	ownerPubkey?: string
+): LastResortClaimBaseline | undefined {
+	return loadClaimBaselines()[normalizePubKey(ownerPubkey ?? getActivePubkey())];
+}
+
+export function setLastResortClaimBaseline(
+	baseline: LastResortClaimBaseline | undefined,
+	ownerPubkey?: string
+): void {
+	const owner = normalizePubKey(ownerPubkey ?? getActivePubkey());
+	const baselines = loadClaimBaselines();
+	if (baseline) {
+		baselines[owner] = {
+			keyPackageRef: baseline.keyPackageRef,
+			coordinators: [...baseline.coordinators]
+		};
+	} else {
+		delete baselines[owner];
+	}
+	if (browser) {
+		localStorage.setItem(LAST_RESORT_BASELINE_KEY, JSON.stringify(baselines));
+	}
 }
 
 /** Set equality over coordinator pubkeys (claim sets are deduped by construction). */
@@ -828,25 +906,34 @@ export async function loadLastResortKeyPackage(entry: LastResortKeyPackageEntry)
 		// peer's older snapshot and erase this device's retraction/rotation before
 		// it reaches the wire); the owed-publish sweep pushes it, then adoption
 		// resumes.
-		if (
-			entry.coordinators !== undefined &&
-			!sameClaimSet(held.publishedCoordinatorKeys, coordinators) &&
-			!hasUnpublishedLastResortChange()
-		) {
-			await setKeyPackages(
-				chatKeyPackagesStore.keyPackages.map((kp) =>
-					kp.keyPackageRef === keyPackageRef
-						? { ...kp, publishedCoordinatorKeys: coordinators }
-						: kp
-				)
-			);
-			for (const coordinator of coordinators) markCoordinatorUsed(coordinator);
-			// A coordinator the peer's current set just dropped was purged
-			// fleet-wide: retire it from automatic coverage (device-local; any later
+		if (entry.coordinators !== undefined && !hasUnpublishedLastResortChange()) {
+			// The retraction is tip-vs-tip — the previous EXPLICIT claim set for
+			// this package minus this document's — not local-markers-vs-doc: the
+			// startup observation reconcile can prune the local marker first,
+			// which would erase the signal (and the retirement) while the purge
+			// still needs it.
+			const baseline = getLastResortClaimBaseline(ownerPubkey);
+			const previousClaims =
+				baseline?.keyPackageRef === keyPackageRef
+					? baseline.coordinators
+					: held.publishedCoordinatorKeys;
+			const retracted = previousClaims.filter((key) => !coordinators.includes(key));
+			if (!sameClaimSet(held.publishedCoordinatorKeys, coordinators)) {
+				await setKeyPackages(
+					chatKeyPackagesStore.keyPackages.map((kp) =>
+						kp.keyPackageRef === keyPackageRef
+							? { ...kp, publishedCoordinatorKeys: coordinators }
+							: kp
+					)
+				);
+				for (const coordinator of coordinators) markCoordinatorUsed(coordinator);
+			}
+			// A coordinator the current set just dropped was purged fleet-wide:
+			// retire it from automatic coverage (device-local, per owner; any later
 			// use re-arms it) or the reachability pass would re-publish the
 			// last-resort to it and resurrect the deletion.
-			const retracted = held.publishedCoordinatorKeys.filter((key) => !coordinators.includes(key));
-			if (retracted.length) retireAutoCoverage(retracted);
+			if (retracted.length) retireAutoCoverage(ownerPubkey, retracted);
+			setLastResortClaimBaseline({ keyPackageRef, coordinators }, ownerPubkey);
 		}
 		return false; // already held
 	}
@@ -885,6 +972,10 @@ export async function loadLastResortKeyPackage(entry: LastResortKeyPackageEntry)
 	// Establish each coordinator relationship so they appear in the coordinator
 	// list + operational queries — idempotent if already known.
 	for (const c of coordinators) markCoordinatorUsed(c);
+	if (entry.coordinators !== undefined) {
+		// First adoption of this package: it IS what the tip carries now.
+		setLastResortClaimBaseline({ keyPackageRef, coordinators }, ownerPubkey);
+	}
 	return true;
 }
 
@@ -921,7 +1012,7 @@ export async function repairLastResortAlignment(): Promise<void> {
 			dedupeStrings(
 				listKnownCoordinatorKeys()
 					.map(normalizePubKey)
-					.filter((coordinatorKey) => !isAutoCoverageRetired(coordinatorKey))
+					.filter((coordinatorKey) => !isAutoCoverageRetired(ownerPubkey, coordinatorKey))
 			).map(async (coordinatorKey) => {
 				try {
 					const available = await queryClient.fetchQuery({
@@ -1085,7 +1176,7 @@ async function runMaintainReachability(options: { publish?: boolean }): Promise<
 	// (fleet-wide purge) stay out of the automatic pass — explicit per-
 	// coordinator actions still reach them through ensureLastResortPublished.
 	const coordinatorKeys = dedupeStrings(listKnownCoordinatorKeys().map(normalizePubKey)).filter(
-		(key) => !isAutoCoverageRetired(key)
+		(key) => !isAutoCoverageRetired(ownerPubkey, key)
 	);
 	// Sweep dedupe stamp: the heartbeat sweep skips while this holds — a
 	// changed account or coordinator set (a group's coordinator, an added one)

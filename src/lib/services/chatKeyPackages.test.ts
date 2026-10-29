@@ -311,8 +311,10 @@ describe('reconcilePublishedKeyPackagesForActiveAccount()', () => {
 
 describe('getLastResortKeyPackageEntry() pick (spec §11.5)', () => {
 	beforeEach(async () => {
-		const { chatKeyPackagesStore } = await import('./chatKeyPackages.svelte');
+		const { chatKeyPackagesStore, setLastResortClaimBaseline } =
+			await import('./chatKeyPackages.svelte');
 		chatKeyPackagesStore.keyPackages = [];
+		setLastResortClaimBaseline(undefined);
 	});
 
 	test('prefers a published record over a newer unpublished mint', async () => {
@@ -358,6 +360,25 @@ describe('getLastResortKeyPackageEntry() pick (spec §11.5)', () => {
 		expect(getLastResortKeyPackageEntry()?.keyPackage).toBe('kp-only');
 	});
 
+	test('sticky: the tip-carried identity keeps the slot through a full unpublish', async () => {
+		const { chatKeyPackagesStore, getLastResortKeyPackageEntry, setLastResortClaimBaseline } =
+			await import('./chatKeyPackages.svelte');
+		// Retracting the final claim must re-publish THIS package with
+		// coordinators: [] — not rotate to the other published record, which would
+		// strand the retraction (peers would adopt a rotation, never an empty set).
+		setLastResortClaimBaseline({ keyPackageRef: 'kp-old', coordinators: [COORD_A] });
+		chatKeyPackagesStore.keyPackages = [
+			makeRecord('kp-new', [COORD_B], {
+				isLastResort: true,
+				createdAt: 200,
+				keyPackageBase64: 'kp-new'
+			}),
+			makeRecord('kp-old', [], { isLastResort: true, createdAt: 100, keyPackageBase64: 'kp-old' })
+		];
+		expect(getLastResortKeyPackageEntry()?.keyPackage).toBe('kp-old');
+		expect(getLastResortKeyPackageEntry()?.coordinators).toEqual([]);
+	});
+
 	test('undefined when the account holds no last-resort', async () => {
 		const { chatKeyPackagesStore, getLastResortKeyPackageEntry } =
 			await import('./chatKeyPackages.svelte');
@@ -367,10 +388,12 @@ describe('getLastResortKeyPackageEntry() pick (spec §11.5)', () => {
 });
 
 describe('loadLastResortKeyPackage() adoption (spec §11.5)', () => {
-	beforeEach(() => {
+	beforeEach(async () => {
 		keyPackageDecoderMock.mockReset();
 		privateKeyPackageDecoderMock.mockReset();
 		makeKeyPackageRefMock.mockReset();
+		const { setLastResortClaimBaseline } = await import('./chatKeyPackages.svelte');
+		setLastResortClaimBaseline(undefined);
 	});
 
 	test('derives createdAt from the key package mint time, not adoption time', async () => {
@@ -449,7 +472,7 @@ describe('loadLastResortKeyPackage() adoption (spec §11.5)', () => {
 		expect(chatKeyPackagesStore.keyPackages[0].publishedCoordinatorKeys).toEqual([COORD_A]);
 		// The retracted coordinator is retired from automatic coverage (the
 		// fleet-wide purge signal).
-		expect(retireAutoCoverageMock).toHaveBeenCalledWith([COORD_B]);
+		expect(retireAutoCoverageMock).toHaveBeenCalledWith(OWNER, [COORD_B]);
 
 		// Legacy doc without the field: no claim information — never a retraction.
 		await loadLastResortKeyPackage({ keyPackage: 'AA==', privateKeyPackage: 'AA==' });
@@ -464,6 +487,42 @@ describe('loadLastResortKeyPackage() adoption (spec §11.5)', () => {
 			coordinators: [COORD_A, COORD_B]
 		});
 		expect(chatKeyPackagesStore.keyPackages[0].publishedCoordinatorKeys).toEqual([COORD_A]);
+	});
+
+	test('retraction is tip-vs-tip: retirement fires even when observation pruned the marker first', async () => {
+		const { chatKeyPackagesStore, loadLastResortKeyPackage } =
+			await import('./chatKeyPackages.svelte');
+		retireAutoCoverageMock.mockClear();
+		hasUnpublishedLastResortChangeMock.mockReturnValue(false);
+		keyPackageDecoderMock.mockReturnValue([{ leafNode: {} }, 0]);
+		privateKeyPackageDecoderMock.mockReturnValue([{}, 0]);
+		makeKeyPackageRefMock.mockResolvedValue(new Uint8Array([1, 2, 3]));
+
+		// Fresh adoption: the previous tip claimed A+B (this also records the
+		// claim baseline for the package).
+		chatKeyPackagesStore.keyPackages = [];
+		await loadLastResortKeyPackage({
+			keyPackage: 'AA==',
+			privateKeyPackage: 'AA==',
+			coordinators: [COORD_A, COORD_B]
+		});
+		// The startup observation reconcile pruned B from the LOCAL markers (the
+		// coordinator no longer serves the ref remotely) BEFORE this adoption ran.
+		chatKeyPackagesStore.keyPackages = chatKeyPackagesStore.keyPackages.map((kp) =>
+			kp.publishedCoordinatorKeys.length > 1 ? { ...kp, publishedCoordinatorKeys: [COORD_A] } : kp
+		);
+		retireAutoCoverageMock.mockClear();
+
+		await loadLastResortKeyPackage({
+			keyPackage: 'AA==',
+			privateKeyPackage: 'AA==',
+			coordinators: [COORD_A]
+		});
+
+		// Markers already match the document (no rewrite), yet the B retirement
+		// still fires — without it the next reachability pass would silently
+		// re-publish over the purge.
+		expect(retireAutoCoverageMock).toHaveBeenCalledWith(OWNER, [COORD_B]);
 	});
 });
 

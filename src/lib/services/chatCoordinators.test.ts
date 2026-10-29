@@ -1,11 +1,20 @@
-import { describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+
+const activePubkeyMock = vi.fn((): string | undefined => undefined);
+const listChatGroupsMock = vi.fn((): { coordinatorKey: string }[] => []);
 
 vi.mock('$app/environment', () => ({ browser: false }));
 vi.mock('$lib/services/accountManager.svelte', () => ({
-	manager: { getActive: () => undefined, active: undefined }
+	manager: {
+		getActive: () => {
+			const pubkey = activePubkeyMock();
+			return pubkey ? { pubkey } : undefined;
+		},
+		active: undefined
+	}
 }));
 vi.mock('$lib/services/chatGroups.svelte', () => ({
-	listChatGroups: () => []
+	listChatGroups: () => listChatGroupsMock()
 }));
 vi.mock('$lib/services/chatKeyPackages.svelte', () => ({
 	listChatKeyPackages: () => []
@@ -16,9 +25,11 @@ import { defaultRelays } from '$lib/services/relay-pool';
 import {
 	ensureDefaultCoordinatorRelays,
 	getChatCoordinator,
+	isAutoCoverageRetired,
 	markCoordinatorRelaysChecked,
 	markCoordinatorRelaysResolved,
 	markCoordinatorUsed,
+	retireAutoCoverage,
 	upsertChatCoordinator
 } from './chatCoordinators.svelte';
 
@@ -151,5 +162,61 @@ describe('relaysResolvedAt staleness marker', () => {
 	test('markCoordinatorRelaysChecked is a no-op for unknown coordinators', () => {
 		markCoordinatorRelaysChecked('34'.repeat(32));
 		expect(getChatCoordinator('34'.repeat(32))).toBeUndefined();
+	});
+});
+
+describe('automatic-coverage retirement (per owner, device-local)', () => {
+	const OWNER_A = 'aa'.repeat(32);
+	const OWNER_B = 'bb'.repeat(32);
+	// Distinct coordinator keys per test: the in-memory store persists across
+	// tests in this file, so each test's arrange must not depend on order.
+	const COORD_1 = 'c1'.repeat(16);
+	const COORD_2 = 'c2'.repeat(16);
+	const COORD_3 = 'c3'.repeat(16);
+	const COORD_4 = 'c4'.repeat(16);
+
+	beforeEach(() => {
+		activePubkeyMock.mockReturnValue(OWNER_A);
+		listChatGroupsMock.mockReturnValue([]);
+	});
+
+	test('retirement is scoped to the owner that adopted the retraction', () => {
+		markCoordinatorUsed(COORD_1); // creates the shared profile under A
+
+		retireAutoCoverage(OWNER_A, [COORD_1]);
+
+		expect(isAutoCoverageRetired(OWNER_A, COORD_1)).toBe(true);
+		// Same browser, another identity: its coverage is untouched.
+		expect(isAutoCoverageRetired(OWNER_B, COORD_1)).toBe(false);
+	});
+
+	test('usage re-arms only the acting owner; the other keeps its retirement', () => {
+		markCoordinatorUsed(COORD_2); // profile under A
+		activePubkeyMock.mockReturnValue(OWNER_B);
+		markCoordinatorUsed(COORD_2); // B knows it too
+		retireAutoCoverage(OWNER_A, [COORD_2]);
+		retireAutoCoverage(OWNER_B, [COORD_2]);
+		expect(isAutoCoverageRetired(OWNER_A, COORD_2)).toBe(true);
+		expect(isAutoCoverageRetired(OWNER_B, COORD_2)).toBe(true);
+
+		// B uses the coordinator (joins a group on it): only B re-arms.
+		activePubkeyMock.mockReturnValue(OWNER_B);
+		markCoordinatorUsed(COORD_2);
+		expect(isAutoCoverageRetired(OWNER_B, COORD_2)).toBe(false);
+		expect(isAutoCoverageRetired(OWNER_A, COORD_2)).toBe(true);
+	});
+
+	test('a live group on the coordinator blocks retirement (usage is the re-arm)', () => {
+		markCoordinatorUsed(COORD_3);
+		listChatGroupsMock.mockReturnValue([{ coordinatorKey: COORD_3 }]);
+
+		retireAutoCoverage(OWNER_A, [COORD_3]);
+
+		expect(isAutoCoverageRetired(OWNER_A, COORD_3)).toBe(false);
+	});
+
+	test('a coordinator without a saved profile is never retired', () => {
+		retireAutoCoverage(OWNER_A, [COORD_4]);
+		expect(isAutoCoverageRetired(OWNER_A, COORD_4)).toBe(false);
 	});
 });

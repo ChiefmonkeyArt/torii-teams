@@ -101,8 +101,10 @@ import {
 } from '$lib/services/multiDevice';
 import {
 	getLastResortKeyPackageEntry,
+	getLastResortKeyPackageRef,
 	loadLastResortKeyPackage,
-	repairLastResortAlignment
+	repairLastResortAlignment,
+	setLastResortClaimBaseline
 } from '$lib/services/chatKeyPackages.svelte';
 
 /**
@@ -1641,6 +1643,20 @@ async function publish(plan: PublishPlan, attempt = 0): Promise<void> {
 		// Record the entry-level baseline from the SEALED value (not a re-read):
 		// this is the adoption gate's notion of "what's on the tip".
 		config.lastPublishedLastResortHash = metaViewHash({ lastResortKeyPackage: sealedLastResort });
+		// Claim baseline for the same sealed entry: the sticky pick and the
+		// tip-vs-tip retraction diff treat this as "what the tip carries" until
+		// the self-echo adoption re-derives it from the document.
+		if (sealedLastResort) {
+			const sealedRef = getLastResortKeyPackageRef();
+			if (sealedRef) {
+				setLastResortClaimBaseline({
+					keyPackageRef: sealedRef,
+					coordinators: [...(sealedLastResort.coordinators ?? [])]
+				});
+			}
+		} else {
+			setLastResortClaimBaseline(undefined);
+		}
 	}
 
 	// Fork-MR scenario F: the tip is last-writer-wins. Re-read it right before
