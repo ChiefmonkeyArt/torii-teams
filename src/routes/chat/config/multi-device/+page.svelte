@@ -82,14 +82,18 @@
 		relaysDraft = (cfg?.relays ?? DEFAULT_MULTI_DEVICE_RELAYS).join('\n');
 		const servers = cfg ? cfg.blossomServers : DEFAULT_BLOSSOM_SERVERS;
 		blossomChecked.clear();
-		blossomCustoms = [];
+		// Accumulate customs in a plain array and assign ONCE: pushing into the
+		// $state array below would read+write it inside this effect and loop
+		// forever (effect_update_depth_exceeded, which kills the page's reactivity).
+		const customs: string[] = [];
 		for (const s of servers) {
 			// A stored host outside the preset list is a custom entry — keeping it
 			// here stops a save from silently dropping it (the presets-only filter
 			// used to do exactly that).
 			if ((BLOSSOM_SERVERS as readonly string[]).includes(s)) blossomChecked.add(s);
-			else blossomCustoms.push(s);
+			else customs.push(s);
 		}
+		blossomCustoms = customs;
 	});
 
 	const hasConfig = $derived(!!config);
