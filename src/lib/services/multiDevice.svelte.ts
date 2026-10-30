@@ -100,6 +100,11 @@ import {
 	type TipPointer
 } from '$lib/services/multiDevice';
 import {
+	multiDeviceActivity,
+	prependActivity,
+	type MultiDeviceActivityEntry
+} from '$lib/services/multiDeviceActivity.svelte';
+import {
 	getLastResortKeyPackageEntry,
 	getLastResortKeyPackageRef,
 	loadLastResortKeyPackage,
@@ -142,12 +147,27 @@ export const DEFAULT_BLOSSOM_SERVERS = [
  * Dev-only debug log. Filter the console by `[multi-device]` to trace the
  * enable/disable → save → publish → reconcile flow. Silent in production —
  * `dev` is the SvelteKit dev-server flag (not NODE_ENV/MODE), so dbg only
- * fires under `pnpm dev`. Add a `localStorage` read on top if prod debug is
- * ever needed.
+ * fires under `pnpm dev`. Persisted release diagnostics use noteActivity.
  */
 function dbg(label: string, detail?: unknown): void {
 	if (!browser || !dev) return;
 	console.debug('[multi-device]', label, detail ?? '');
+}
+
+/** Persist one concise diagnostic without overwriting newer in-flight config. */
+function noteActivity(
+	config: MultiDeviceOwnerConfig,
+	level: MultiDeviceActivityEntry['level'],
+	text: string
+): void {
+	if (!browser) return;
+	const latest = getMultiDeviceConfig(config.ownerPubkey) ?? config;
+	const previous = latest.activityLog?.[0];
+	if (previous?.level === level && previous.text === text) return;
+	const entries = prependActivity(latest.activityLog ?? [], { at: Date.now(), level, text });
+	latest.activityLog = entries;
+	multiDeviceActivity[latest.ownerPubkey] = entries;
+	saveConfig(latest);
 }
 
 /**
@@ -252,6 +272,9 @@ export interface MultiDeviceOwnerConfig {
 	 * visibility; never read by sync logic.
 	 */
 	tipHistory?: TipTransition[];
+	/** Device-local user-readable sync diagnostics (newest first, capped at 100).
+	 * Never included in a document or tip. */
+	activityLog?: MultiDeviceActivityEntry[];
 	/**
 	 * Own soft-delete tombstones awaiting their first publish (§10.5). Queued by
 	 * `softDeleteGroup`, merged into {@link carriedTombstones} + cleared once
@@ -421,6 +444,11 @@ export function enableMultiDevice(
 	if (blossomServers && blossomServers.length) config.blossomServers = blossomServers;
 	saveConfig(config);
 	dbg('enableMultiDevice done', { dTag: config.dTag.slice(0, 8) });
+	noteActivity(
+		config,
+		'info',
+		`Sync enabled (${config.relays.length} relays, ${config.blossomServers.length} document hosts)`
+	);
 	// Spec §11: the connection string is only usable once documents + a tip exist.
 	// Publish every local group document + the meta document + the tip in one shot
 	// so the string is live (the hooks otherwise only fire on individual
@@ -444,6 +472,7 @@ export function clearMultiDeviceConfig(ownerPubkey: string): void {
 	if (!browser) return;
 	const all = readAllConfigs();
 	delete all[normalizePubKey(ownerPubkey)];
+	delete multiDeviceActivity[normalizePubKey(ownerPubkey)];
 	writeAllConfigs(all);
 }
 
@@ -528,6 +557,7 @@ export function setMultiDeviceBlossomServers(servers: string[]): void {
 		return;
 	config.blossomServers = next;
 	saveConfig(config);
+	noteActivity(config, 'info', `Document hosts updated (${next.length}); republishing inventory`);
 	// A real host change re-uploads every document so each advertised host holds
 	// the full inventory, then re-publishes the tip with the new server list.
 	void scheduleRepublish({ resealGroups: 'all', resealMeta: true });
@@ -1058,6 +1088,10 @@ function publishPlan(batch: PublishPlan): void {
 			await publish(batch);
 		} catch (error) {
 			console.warn('[multi-device] re-publish failed; will retry', error);
+			const config = getMultiDeviceConfig();
+			if (config) {
+				noteActivity(config, 'warn', `Publish failed; retrying: ${errorMessage(error)}`);
+			}
 			queuePublishRetry(batch);
 		}
 	});
@@ -1428,6 +1462,11 @@ async function applyTip(
 				}
 				scheduleUnresolvedRetry();
 				dbg('applyTip group reconcile failed', { gid: group.gid, error });
+				noteActivity(
+					config,
+					'warn',
+					`Group ${group.gid.slice(0, 8)} reconcile failed: ${errorMessage(error)}`
+				);
 			}
 		} finally {
 			// Advance the per-group counter for an active user-initiated flow (link).
@@ -1492,6 +1531,7 @@ async function applyTip(
 			void repairLastResortAlignment();
 		} catch (error) {
 			dbg('applyTip meta reconcile failed', { error });
+			noteActivity(config, 'warn', `Meta reconcile failed: ${errorMessage(error)}`);
 		}
 	}
 
@@ -1521,6 +1561,7 @@ async function publish(plan: PublishPlan, attempt = 0): Promise<void> {
 	if (deferred) {
 		// Scenario D: an unreadable tip DEFERS the push — the plan is kept and
 		// retried (the stale-epoch sweep makes a later publish self-healing too).
+		noteActivity(config, 'warn', 'Publish deferred: the current tip is unreachable');
 		queuePublishRetry(plan);
 		return;
 	}
@@ -1680,6 +1721,7 @@ async function publish(plan: PublishPlan, attempt = 0): Promise<void> {
 		if ((latest?.id ?? undefined) !== tipEventId) {
 			if (attempt >= 3) {
 				dbg('tip keeps moving mid-publish; deferring to the retry ladder');
+				noteActivity(config, 'warn', 'Publish deferred: the tip kept moving during upload');
 				queuePublishRetry(plan);
 				return;
 			}
@@ -1748,6 +1790,11 @@ async function publish(plan: PublishPlan, attempt = 0): Promise<void> {
 		meta: plan.resealMeta,
 		groups: groups.length
 	});
+	noteActivity(
+		config,
+		'info',
+		`Published ${gidsToReseal.length} group document${gidsToReseal.length === 1 ? '' : 's'}${plan.resealMeta ? ' + meta' : ''}; tip carries ${groups.length} groups`
+	);
 }
 
 /**
@@ -2381,6 +2428,11 @@ async function handleTipEvent(
 				groups: localAheadUnion.length,
 				meta: metaAhead
 			});
+			noteActivity(
+				config,
+				'warn',
+				`Local state ahead: republishing ${localAheadUnion.length} groups${metaAhead ? ' + meta' : ''}`
+			);
 			scheduleRepublish({
 				resealGroups: localAheadUnion,
 				resealMeta: metaAhead
@@ -2388,6 +2440,11 @@ async function handleTipEvent(
 		}
 
 		dbg('handleTipEvent done', { counts });
+		noteActivity(
+			config,
+			'info',
+			`Tip reconciled: ${counts.seeded} seeded, ${counts.fastForwarded} advanced, ${counts.ignored} up-to-date, ${counts.skipped} ahead, ${counts.dropped} removed`
+		);
 		return counts;
 	} finally {
 		if (inflightTipEventId === outer.id) inflightTipEventId = null;
@@ -3232,6 +3289,11 @@ export async function linkDeviceFromConnectionString(connection: string): Promis
 		// Mark the session reconciled: link just applied the tip directly, so the
 		// watch's §10.6 gate (awaitMultiDeviceReconciled) should not re-run it.
 		mdReconcilePromise = Promise.resolve();
+		noteActivity(
+			config,
+			'info',
+			`Linked: ${result.seeded} groups seeded, ${result.fastForwarded} advanced, ${result.skipped} ahead`
+		);
 		return result;
 	} finally {
 		clearMdProgress();
