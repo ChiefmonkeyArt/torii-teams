@@ -100,6 +100,7 @@ import {
 	type TipPointer
 } from '$lib/services/multiDevice';
 import {
+	mergeActivityLogs,
 	multiDeviceActivity,
 	prependActivity,
 	type MultiDeviceActivityEntry
@@ -380,8 +381,15 @@ function saveConfig(config: MultiDeviceOwnerConfig): void {
 	// account's config. `ownerPubkey` is always set at creation + backfilled on
 	// read, so this is the account that owns the in-flight operation.
 	if (!config.ownerPubkey) return;
+	const owner = normalizePubKey(config.ownerPubkey);
 	const all = readAllConfigs();
-	all[normalizePubKey(config.ownerPubkey)] = config;
+	// A long-running publish may save an older snapshot after a reconcile has
+	// appended activity. Merge the bounded diagnostics instead of losing them.
+	if (config.activityLog?.length || all[owner]?.activityLog?.length) {
+		config.activityLog = mergeActivityLogs(config.activityLog ?? [], all[owner]?.activityLog ?? []);
+		multiDeviceActivity[owner] = config.activityLog;
+	}
+	all[owner] = config;
 	writeAllConfigs(all);
 	dbg('saveConfig', {
 		owner: config.ownerPubkey.slice(0, 8),

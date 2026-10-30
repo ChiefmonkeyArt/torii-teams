@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
 	formatActivityLog,
+	mergeActivityLogs,
 	MULTI_DEVICE_ACTIVITY_CAP,
 	prependActivity,
 	type MultiDeviceActivityEntry
@@ -20,6 +21,12 @@ describe('multi-device activity log', () => {
 		expect(entries).toHaveLength(MULTI_DEVICE_ACTIVITY_CAP);
 		expect(entries[0].text).toBe(`event ${MULTI_DEVICE_ACTIVITY_CAP + 4}`);
 		expect(entries.at(-1)?.text).toBe('event 5');
+	});
+
+	test('overlapping config snapshots merge newest-first without duplicates', () => {
+		const merged = mergeActivityLogs([entry(1), entry(0)], [entry(2), entry(1)]);
+
+		expect(merged.map((item) => item.at)).toEqual([2, 1, 0]);
 	});
 
 	test('copy format includes timestamp, level, and text', () => {

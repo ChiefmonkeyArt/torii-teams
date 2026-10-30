@@ -17,6 +17,21 @@ export function prependActivity(
 	return [entry, ...entries].slice(0, MULTI_DEVICE_ACTIVITY_CAP);
 }
 
+/** Merge overlapping config snapshots without dropping or reordering entries. */
+export function mergeActivityLogs(
+	incoming: MultiDeviceActivityEntry[],
+	persisted: MultiDeviceActivityEntry[]
+): MultiDeviceActivityEntry[] {
+	const seen = new Set<string>();
+	return [...incoming, ...persisted]
+		.filter((entry) => {
+			const key = `${entry.at}:${entry.level}:${entry.text}`;
+			return seen.has(key) ? false : (seen.add(key), true);
+		})
+		.sort((a, b) => b.at - a.at)
+		.slice(0, MULTI_DEVICE_ACTIVITY_CAP);
+}
+
 /** Stable, timezone-unambiguous text for bug reports. */
 export function formatActivityLog(entries: MultiDeviceActivityEntry[]): string {
 	return entries
