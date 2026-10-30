@@ -1,15 +1,14 @@
 import { browser } from '$app/environment';
-import { kinds } from 'nostr-tools';
-import { createUserRelayListByPubkeyLoader } from '$lib/services/loaders.svelte';
-import { eventStore } from '$lib/services/eventStore';
 import {
 	getChatCoordinator,
 	listKnownCoordinatorKeys,
 	markCoordinatorRelaysChecked,
 	upsertChatCoordinator
 } from '$lib/services/chatCoordinators.svelte';
-import { resolveCoordinatorRelaysFromNetwork } from '$lib/services/chatRuntime';
-import { defaultRelays, metadataRelays } from '$lib/services/relay-pool';
+import {
+	fetchAnnouncedCoordinatorRelays,
+	verifyCoordinatorRelays
+} from '$lib/services/chatRuntime';
 import { errorMessage, normalizePubKey } from '$lib/utils';
 
 /**
@@ -17,7 +16,7 @@ import { errorMessage, normalizePubKey } from '$lib/utils';
  *
  * Coordinators can move to a new relay set; a stored set is otherwise frozen
  * for the lifetime of the entry and a moved coordinator stays unreachable
- * until a human clicks "re-resolve". This module heals that automatically,
+ * until a human clicks "Refetch relays". This module heals that automatically,
  * non-intrusively and bounded:
  *
  *   - Staleness sweep: a coordinator whose stored set was last checked over
@@ -27,26 +26,21 @@ import { errorMessage, normalizePubKey } from '$lib/utils';
  *     triggers the same refresh ignoring the TTL, capped by
  *     {@link OUTAGE_REFRESH_MIN_INTERVAL_MS}.
  *   - Adoption happens only on VERIFIED change: the announced set differs AND
- *     a fresh resolution (full MCP connect) returns a subset of the announced
- *     URLs — a resolution fallback answer (SDK default relays) is never
- *     evidence about this coordinator, so it is never adopted.
+ *     the coordinator answers a full MCP connect on exactly the announced
+ *     relays (`verifyCoordinatorRelays`), so the announced set is adopted
+ *     verbatim. The SDK's own discovery/fallback answer is never evidence
+ *     about this coordinator — a stale app-default fallback can never be
+ *     re-adopted as if it were the coordinator's move.
  *
  * Isolation: everything is per coordinator — the in-flight guard, the stamp
  * clock, the store writes, and error containment (every entry point is
  * no-throw; one coordinator's failure never delays or dents another).
- *
- * ponytail: kind:10002 is queried on stored ∪ default ∪ metadata relays, not
- * the SDK bootstrap set — an announcement published ONLY to e.g. damus/snort
- * is invisible here (the manual re-resolve button covers that case). Upgrade
- * path: add the SDK bootstrap relays to the search set.
  */
 
 /** Healthy staleness TTL: how long ago a coordinator's relays were last checked. */
 const RELAYS_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 /** Outage-triggered refresh cadence floor per coordinator. */
 const OUTAGE_REFRESH_MIN_INTERVAL_MS = 15 * 60 * 1000;
-/** Cheap kind:10002 read deadline. */
-const RELAY_LIST_READ_TIMEOUT_MS = 10_000;
 
 /** One refresh at a time per coordinator (never a cross-coordinator lock). */
 const refreshInFlight = new Set<string>();
@@ -55,46 +49,6 @@ function sameRelaySet(a: readonly string[], b: readonly string[]): boolean {
 	const setA = new Set(a);
 	const setB = new Set(b);
 	return setA.size === setB.size && [...setA].every((url) => setB.has(url));
-}
-
-/** Latest kind:10002 for the coordinator, leniently filtered (raw tags can
- *  hold garbage that a strict normalize would throw on). All markers kept —
- *  any announced URL is legitimate evidence for the adoption subset check. */
-function announcedRelayUrls(pubkey: string): string[] {
-	const event = eventStore.getReplaceable(kinds.RelayList, pubkey);
-	if (!event) return [];
-	const urls = new Set<string>();
-	for (const tag of event.tags) {
-		if (tag[0] !== 'r' || typeof tag[1] !== 'string') continue;
-		const url = tag[1].trim();
-		if (/^wss?:\/\//.test(url)) urls.add(url);
-	}
-	return [...urls];
-}
-
-/** One bounded kind:10002 request; resolves when the loader reports done or
- *  the deadline passes. The raw result is read from the event store after. */
-function loadCoordinatorRelayList(pubkey: string, relays: string[]): Promise<void> {
-	return new Promise((resolve) => {
-		const handles: {
-			loader?: { unsubscribe: () => void };
-			timer?: ReturnType<typeof setTimeout>;
-		} = {};
-		let settled = false;
-		const done = () => {
-			if (settled) return;
-			settled = true;
-			if (handles.timer) clearTimeout(handles.timer);
-			handles.loader?.unsubscribe();
-			resolve();
-		};
-		handles.loader = createUserRelayListByPubkeyLoader(pubkey, relays).subscribe({
-			error: done,
-			complete: done
-		});
-		// Loader may complete synchronously (store already warm); skip the timer.
-		if (!settled) handles.timer = setTimeout(done, RELAY_LIST_READ_TIMEOUT_MS);
-	});
 }
 
 /**
@@ -120,26 +74,19 @@ async function refreshCoordinatorRelays(
 	}
 	refreshInFlight.add(normalized);
 	try {
-		const searchRelays = [...new Set([...stored.relays, ...defaultRelays, ...metadataRelays])];
-		await loadCoordinatorRelayList(normalized, searchRelays);
-		const announced = announcedRelayUrls(normalized);
+		const announced = await fetchAnnouncedCoordinatorRelays(normalized);
 		// No announcement (self-hosted static config): our set is all there is.
 		if (!announced.length) return false;
 		// Unchanged announcement: a working set is never swapped.
 		if (sameRelaySet(announced, stored.relays)) return false;
-		// Changed: adopt only a set the coordinator actually answered a full
-		// MCP connect on, and only if it is derived from the announcement —
-		// resolution can fall back to SDK default relays, which is not evidence
-		// about this coordinator. On any failure the current set is kept.
-		const resolved = await resolveCoordinatorRelaysFromNetwork(normalized, {
-			discoveryRelayUrls: searchRelays
-		});
-		if (!resolved.length || !resolved.every((url) => announced.includes(url))) return false;
-		upsertChatCoordinator({ pubkey: normalized, relays: resolved });
+		// Changed: adopt only a set the coordinator actually answered a full MCP
+		// connect on, exactly as announced. On any failure the current set is kept.
+		if (!(await verifyCoordinatorRelays(normalized, announced))) return false;
+		upsertChatCoordinator({ pubkey: normalized, relays: announced });
 		console.debug('[coordinator] relays refreshed', {
 			coordinatorKey: normalized,
 			reason,
-			relays: resolved
+			relays: announced
 		});
 		return true;
 	} catch (error) {

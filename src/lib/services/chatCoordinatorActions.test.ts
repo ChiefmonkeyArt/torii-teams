@@ -2,6 +2,14 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 const listChatGroupsMock = vi.fn();
 const listChatKeyPackagesMock = vi.fn();
+const isMultiDeviceActiveMock = vi.fn();
+const onMetaStateChangeMock = vi.fn();
+const softDeleteGroupsMock = vi.fn(async () => []);
+const deleteChatGroupsForCoordinatorMock = vi.fn();
+const purgeCoordinatorKeyPackagesMock = vi.fn();
+const removeChatCoordinatorMock = vi.fn();
+const stopWatchingGroupMock = vi.fn();
+const disconnectCoordinatorClientMock = vi.fn(async () => {});
 
 vi.mock('$app/environment', () => ({ browser: false }));
 
@@ -11,18 +19,18 @@ vi.mock('$lib/services/accountManager.svelte', () => ({
 
 vi.mock('$lib/services/chatGroups.svelte', () => ({
 	listChatGroups: () => listChatGroupsMock(),
-	deleteChatGroupsForCoordinator: vi.fn(),
+	deleteChatGroupsForCoordinator: deleteChatGroupsForCoordinatorMock,
 	chatGroupsStore: { groups: [] }
 }));
 
 vi.mock('$lib/services/chatKeyPackages.svelte', () => ({
 	listChatKeyPackages: () => listChatKeyPackagesMock(),
-	purgeCoordinatorKeyPackages: vi.fn(),
+	purgeCoordinatorKeyPackages: purgeCoordinatorKeyPackagesMock,
 	chatKeyPackagesStore: { keyPackages: [] }
 }));
 
 vi.mock('$lib/services/chatCoordinators.svelte', () => ({
-	removeChatCoordinator: vi.fn()
+	removeChatCoordinator: removeChatCoordinatorMock
 }));
 
 vi.mock('$lib/services/chatWelcomeNotifications.svelte', () => ({
@@ -31,11 +39,17 @@ vi.mock('$lib/services/chatWelcomeNotifications.svelte', () => ({
 }));
 
 vi.mock('$lib/services/chatRuntime', () => ({
-	disconnectCoordinatorClient: vi.fn()
+	disconnectCoordinatorClient: disconnectCoordinatorClientMock
 }));
 
 vi.mock('$lib/services/chatGroupWatch.svelte', () => ({
-	stopWatchingGroup: vi.fn()
+	stopWatchingGroup: stopWatchingGroupMock
+}));
+
+vi.mock('$lib/services/multiDevice.svelte', () => ({
+	isMultiDeviceActive: isMultiDeviceActiveMock,
+	onMetaStateChange: onMetaStateChangeMock,
+	softDeleteGroups: softDeleteGroupsMock
 }));
 
 vi.mock('$lib/query-client', () => ({
@@ -116,6 +130,46 @@ describe('computeKeyPackageDeletion()', () => {
 		expect(result.consumed).toEqual(['kp-cross']);
 		// Still published to COORD_B -> survives.
 		expect(result.willDelete).toEqual([]);
+	});
+});
+
+describe('purgeChatCoordinator() (multi-device purge propagation)', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		isMultiDeviceActiveMock.mockReturnValue(false);
+		listChatGroupsMock.mockReturnValue([]);
+		listChatKeyPackagesMock.mockReturnValue([]);
+	});
+
+	test('multi-device: soft-deletes the groups in one batch and retracts the meta claim', async () => {
+		const { purgeChatCoordinator } = await import('./chatCoordinatorActions.svelte');
+		isMultiDeviceActiveMock.mockReturnValue(true);
+		listChatGroupsMock.mockReturnValue([
+			group('g1', COORD_A),
+			group('g2', COORD_A),
+			group('g3', COORD_B)
+		]);
+
+		await purgeChatCoordinator(COORD_A);
+
+		expect(stopWatchingGroupMock).toHaveBeenCalledTimes(2);
+		expect(softDeleteGroupsMock).toHaveBeenCalledWith(['g1', 'g2']);
+		expect(deleteChatGroupsForCoordinatorMock).not.toHaveBeenCalled();
+		expect(purgeCoordinatorKeyPackagesMock).toHaveBeenCalledWith(COORD_A, []);
+		expect(removeChatCoordinatorMock).toHaveBeenCalledWith(COORD_A);
+		// The meta republish retracts the purged coordinator's claim (covers the
+		// offline-coordinator path, where claims are pruned without RPCs).
+		expect(onMetaStateChangeMock).toHaveBeenCalled();
+	});
+
+	test('single-device: hard-deletes the groups, no tombstones, no meta writes', async () => {
+		const { purgeChatCoordinator } = await import('./chatCoordinatorActions.svelte');
+		listChatGroupsMock.mockReturnValue([group('g1', COORD_A)]);
+
+		await purgeChatCoordinator(COORD_A);
+
+		expect(deleteChatGroupsForCoordinatorMock).toHaveBeenCalledWith(COORD_A);
+		expect(softDeleteGroupsMock).not.toHaveBeenCalled();
 	});
 });
 

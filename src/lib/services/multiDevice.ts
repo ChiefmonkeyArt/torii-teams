@@ -173,7 +173,12 @@ export interface GroupSnapshot {
 }
 
 /** Per-group outcome of reconciliation (spec §8, §10). */
-export type ReconcileOutcome = 'seeded' | 'fast-forwarded' | 'fork-resolved' | 'skipped';
+export type ReconcileOutcome =
+	| 'seeded'
+	| 'fast-forwarded'
+	| 'fork-resolved'
+	| 'converged'
+	| 'skipped';
 
 /** The adopted group-document identity for a live group (spec §10 rank input). */
 export interface AppliedDocument {
@@ -226,7 +231,7 @@ export interface StoredForkDecision {
 }
 
 /** Pre-resolution application decision (spec §8 forward-only + §10 detection). */
-export type ApplyDecision = 'seeded' | 'fast-forwarded' | 'skipped' | 'fork';
+export type ApplyDecision = 'seeded' | 'fast-forwarded' | 'converged' | 'skipped' | 'fork';
 
 /**
  * Decide one group-document application up to the §10 fork resolution (spec
@@ -250,7 +255,7 @@ export function decideGroupDocumentApply(params: {
 	// one base epoch (spec §10). The fingerprint tells them apart; the address
 	// cannot, since a re-seal changes it while carrying the same state.
 	if (incomingFingerprint !== undefined && incomingFingerprint === localFingerprint) {
-		return 'skipped';
+		return 'converged';
 	}
 	return 'fork';
 }
@@ -891,8 +896,9 @@ export function buildInventory(
  *  - `missingFromTip`: local live gids absent from the tip's group list. A gid
  *    tombstoned-stale on the tip (epoch below local) is not in the tip's group
  *    list, so it lands here — republishing it is the §8 resurrection, correct.
- *  - `epochsAhead`: gids the reconcile just fetched and found at a local epoch
- *    ≥ the document's epoch (the `'skipped'` outcome of §8). The caller collects
+ *  - `epochsAhead`: gids the reconcile just fetched and found at a STRICTLY
+ *    lower document epoch (the `'skipped'` outcome of §8). Equal-epoch/equal-
+ *    fingerprint documents are 'converged', not ahead. The caller collects
  *    these during `applyTip`; no decode happens here.
  *
  * Returns the deduped, sorted union — the gids a read path should re-seal.
@@ -910,7 +916,7 @@ export function diffLocalAhead(params: {
 		if (!tipSet.has(gid)) ahead.add(gid); // live locally, absent from the tip
 	}
 	for (const gid of params.epochsAheadGids) {
-		ahead.add(gid); // fetched + local epoch ≥ document epoch (§8 skip)
+		ahead.add(gid); // fetched + local epoch strictly above document epoch (§8 skip)
 	}
 	return [...ahead].sort();
 }
@@ -960,9 +966,15 @@ export function diffStaleGroupEpochs(params: {
  * Pure + local-only: the hash never leaves the device. It carries the
  * `privateKeyPackage` because that field IS part of the published meta doc and
  * so affects its content-addressed address — excluding it would miss a rotation.
- * The `coordinators` hint is NOT hashed (fork-MR scenario H): it is a
- * per-device advisory that differs between devices, and hashing it made every
- * device see the others' meta as diverged — a meta reseal ping-pong.
+ * The `coordinators` set IS hashed (canonically sorted; absent ≠ empty): claims
+ * are current-state and every device converges to the document's set (§4.2
+ * replace-on-adopt), so hashing them cannot ping-pong — while EXCLUDING them
+ * would blind the owed-publish diff to a crashed retraction (the old
+ * scenario-H exclusion predates replace-on-adopt, when claims unioned and
+ * diverged per device). shortcut: a baseline recorded from a legacy doc (no
+ * `coordinators` field) mismatches any local view once, causing one extra
+ * republish that upgrades the doc to an explicit claim set; transient tip
+ * flapping in that window self-heals through observation reconcile.
  */
 export function metaViewHash(params: {
 	lastResortKeyPackage?: LastResortKeyPackageEntry;
@@ -974,7 +986,10 @@ export function metaViewHash(params: {
 	const kp = params.lastResortKeyPackage
 		? {
 				keyPackage: params.lastResortKeyPackage.keyPackage,
-				privateKeyPackage: params.lastResortKeyPackage.privateKeyPackage
+				privateKeyPackage: params.lastResortKeyPackage.privateKeyPackage,
+				coordinators: params.lastResortKeyPackage.coordinators
+					? [...params.lastResortKeyPackage.coordinators].sort()
+					: undefined
 			}
 		: undefined;
 	return bytesToHex(sha256(new TextEncoder().encode(JSON.stringify({ kp, removed }))));

@@ -18,8 +18,12 @@ const requireActiveAccountMock = vi.fn(() => ({ pubkey: 'aa'.repeat(32) }));
 const fetchQueryMock = vi.fn();
 const invalidateQueriesMock = vi.fn().mockResolvedValue(undefined);
 const getQueryDataMock = vi.fn();
+const listStoredKeyPackagesMock = vi.fn().mockResolvedValue([]);
 const markCoordinatorUsedMock = vi.fn();
 const listKnownCoordinatorKeysMock = vi.fn((): string[] => []);
+const retireAutoCoverageMock = vi.fn();
+const isAutoCoverageRetiredMock = vi.fn((): boolean => false);
+const hasUnpublishedLastResortChangeMock = vi.fn((): boolean => false);
 const keyPackageDecoderMock = vi.fn();
 const privateKeyPackageDecoderMock = vi.fn();
 const makeKeyPackageRefMock = vi.fn();
@@ -54,6 +58,8 @@ vi.mock('$lib/services/chatRuntime', () => ({
 vi.mock('$lib/services/chatCoordinators.svelte', () => ({
 	markCoordinatorUsed: markCoordinatorUsedMock,
 	listKnownCoordinatorKeys: listKnownCoordinatorKeysMock,
+	retireAutoCoverage: retireAutoCoverageMock,
+	isAutoCoverageRetired: isAutoCoverageRetiredMock,
 	getCoordinatorLabel: vi.fn((key: string) => `Coordinator ${key.slice(0, 8)}`)
 }));
 
@@ -82,7 +88,10 @@ vi.mock('$lib/services/chatMlsUtils', () => ({
 	getCordnCipherSuite: vi.fn(() => 1)
 }));
 
-vi.mock('$lib/services/multiDevice.svelte', () => ({ onMetaStateChange: vi.fn() }));
+vi.mock('$lib/services/multiDevice.svelte', () => ({
+	onMetaStateChange: vi.fn(),
+	hasUnpublishedLastResortChange: hasUnpublishedLastResortChangeMock
+}));
 
 vi.mock('$lib/services/chatStorage', () => ({
 	getChatStorage: vi.fn().mockResolvedValue({
@@ -303,8 +312,10 @@ describe('reconcilePublishedKeyPackagesForActiveAccount()', () => {
 
 describe('getLastResortKeyPackageEntry() pick (spec §11.5)', () => {
 	beforeEach(async () => {
-		const { chatKeyPackagesStore } = await import('./chatKeyPackages.svelte');
+		const { chatKeyPackagesStore, setLastResortClaimBaseline } =
+			await import('./chatKeyPackages.svelte');
 		chatKeyPackagesStore.keyPackages = [];
+		setLastResortClaimBaseline(undefined);
 	});
 
 	test('prefers a published record over a newer unpublished mint', async () => {
@@ -350,6 +361,54 @@ describe('getLastResortKeyPackageEntry() pick (spec §11.5)', () => {
 		expect(getLastResortKeyPackageEntry()?.keyPackage).toBe('kp-only');
 	});
 
+	test('sticky: the tip-carried identity keeps the slot through a full unpublish', async () => {
+		const { chatKeyPackagesStore, getLastResortKeyPackageEntry, setLastResortClaimBaseline } =
+			await import('./chatKeyPackages.svelte');
+		// Retracting the final claim must re-publish THIS package with
+		// coordinators: [] — not rotate to the other published record, which would
+		// strand the retraction (peers would adopt a rotation, never an empty set).
+		// The other claim-bearer is OLDER (a pre-rotation leftover) — that is the
+		// shape a purge runs in.
+		setLastResortClaimBaseline({ keyPackageRef: 'kp-tip', coordinators: [COORD_A] });
+		chatKeyPackagesStore.keyPackages = [
+			makeRecord('kp-tip', [], {
+				isLastResort: true,
+				createdAt: 300,
+				keyPackageBase64: 'kp-tip'
+			}),
+			makeRecord('kp-leftover', [COORD_B], {
+				isLastResort: true,
+				createdAt: 100,
+				keyPackageBase64: 'kp-leftover'
+			})
+		];
+		expect(getLastResortKeyPackageEntry()?.keyPackage).toBe('kp-tip');
+		expect(getLastResortKeyPackageEntry()?.coordinators).toEqual([]);
+	});
+
+	test('rotation: a NEWER claim-bearing record displaces the sticky identity', async () => {
+		const { chatKeyPackagesStore, getLastResortKeyPackageEntry, setLastResortClaimBaseline } =
+			await import('./chatKeyPackages.svelte');
+		// The config page rotates by minting a fresh last-resort and publishing
+		// it (markKeyPackagePublished moves the claim). If sticky won here, the
+		// meta doc would keep carrying the stale package and peers' repair would
+		// publish it right back over the rotation.
+		setLastResortClaimBaseline({ keyPackageRef: 'kp-stale', coordinators: [COORD_A] });
+		chatKeyPackagesStore.keyPackages = [
+			makeRecord('kp-rotated', [COORD_A], {
+				isLastResort: true,
+				createdAt: 300,
+				keyPackageBase64: 'kp-rotated'
+			}),
+			makeRecord('kp-stale', [], {
+				isLastResort: true,
+				createdAt: 100,
+				keyPackageBase64: 'kp-stale'
+			})
+		];
+		expect(getLastResortKeyPackageEntry()?.keyPackage).toBe('kp-rotated');
+	});
+
 	test('undefined when the account holds no last-resort', async () => {
 		const { chatKeyPackagesStore, getLastResortKeyPackageEntry } =
 			await import('./chatKeyPackages.svelte');
@@ -359,10 +418,12 @@ describe('getLastResortKeyPackageEntry() pick (spec §11.5)', () => {
 });
 
 describe('loadLastResortKeyPackage() adoption (spec §11.5)', () => {
-	beforeEach(() => {
+	beforeEach(async () => {
 		keyPackageDecoderMock.mockReset();
 		privateKeyPackageDecoderMock.mockReset();
 		makeKeyPackageRefMock.mockReset();
+		const { setLastResortClaimBaseline } = await import('./chatKeyPackages.svelte');
+		setLastResortClaimBaseline(undefined);
 	});
 
 	test('derives createdAt from the key package mint time, not adoption time', async () => {
@@ -385,9 +446,9 @@ describe('loadLastResortKeyPackage() adoption (spec §11.5)', () => {
 		expect(loaded).toBe(true);
 		expect(chatKeyPackagesStore.keyPackages).toHaveLength(1);
 		const record = chatKeyPackagesStore.keyPackages[0];
-		// Mint time rides inside the authenticated bytes (notBefore, seconds);
-		// adoption must not reorder the canonical-pick tie-break via Date.now().
-		expect(record.createdAt).toBe(1_700_000_000_000);
+		// Mint time rides inside the authenticated bytes (notBefore + the 24h
+		// generation slack), matching a locally-created copy of the same package.
+		expect(record.createdAt).toBe(1_700_086_400_000);
 		expect(record.publishedCoordinatorKeys).toEqual([COORD_A]);
 		expect(record.isLastResort).toBe(true);
 	});
@@ -407,6 +468,96 @@ describe('loadLastResortKeyPackage() adoption (spec §11.5)', () => {
 		expect(await loadLastResortKeyPackage(entry)).toBe(true);
 		expect(await loadLastResortKeyPackage(entry)).toBe(false);
 		expect(chatKeyPackagesStore.keyPackages).toHaveLength(1);
+	});
+
+	test('replace-on-adopt: the current claim set retracts stale claims; absent field is a no-op', async () => {
+		const { chatKeyPackagesStore, loadLastResortKeyPackage } =
+			await import('./chatKeyPackages.svelte');
+		retireAutoCoverageMock.mockClear();
+		hasUnpublishedLastResortChangeMock.mockReturnValue(false);
+		keyPackageDecoderMock.mockReturnValue([
+			{ leafNode: { lifetime: { notBefore: 1_700_000_000n } } },
+			0
+		]);
+		privateKeyPackageDecoderMock.mockReturnValue([{}, 0]);
+		makeKeyPackageRefMock.mockResolvedValue(new Uint8Array([1, 2, 3]));
+
+		chatKeyPackagesStore.keyPackages = [];
+		await loadLastResortKeyPackage({
+			keyPackage: 'AA==',
+			privateKeyPackage: 'AA==',
+			coordinators: [COORD_A, COORD_B]
+		});
+		expect(chatKeyPackagesStore.keyPackages[0].publishedCoordinatorKeys).toEqual([
+			COORD_A,
+			COORD_B
+		]);
+
+		// Peer retracts COORD_B: the current set replaces — not unions — the claims.
+		await loadLastResortKeyPackage({
+			keyPackage: 'AA==',
+			privateKeyPackage: 'AA==',
+			coordinators: [COORD_A]
+		});
+		expect(chatKeyPackagesStore.keyPackages[0].publishedCoordinatorKeys).toEqual([COORD_A]);
+		// The retracted coordinator is retired from automatic coverage (the
+		// fleet-wide purge signal).
+		expect(retireAutoCoverageMock).toHaveBeenCalledWith(OWNER, [COORD_B]);
+
+		// Legacy doc without the field: no claim information — never a retraction.
+		await loadLastResortKeyPackage({ keyPackage: 'AA==', privateKeyPackage: 'AA==' });
+		expect(chatKeyPackagesStore.keyPackages[0].publishedCoordinatorKeys).toEqual([COORD_A]);
+
+		// An unsaved local last-resort edit (this device's own retraction still in
+		// flight) is protected: the peer's older snapshot must not re-import.
+		hasUnpublishedLastResortChangeMock.mockReturnValue(true);
+		await loadLastResortKeyPackage({
+			keyPackage: 'AA==',
+			privateKeyPackage: 'AA==',
+			coordinators: [COORD_A, COORD_B]
+		});
+		expect(chatKeyPackagesStore.keyPackages[0].publishedCoordinatorKeys).toEqual([COORD_A]);
+	});
+
+	test('retraction is tip-vs-tip: retirement fires even when observation pruned the marker first', async () => {
+		const { chatKeyPackagesStore, loadLastResortKeyPackage } =
+			await import('./chatKeyPackages.svelte');
+		retireAutoCoverageMock.mockClear();
+		hasUnpublishedLastResortChangeMock.mockReturnValue(false);
+		keyPackageDecoderMock.mockReturnValue([{ leafNode: {} }, 0]);
+		privateKeyPackageDecoderMock.mockReturnValue([{}, 0]);
+		makeKeyPackageRefMock.mockResolvedValue(new Uint8Array([1, 2, 3]));
+
+		// Fresh adoption: the previous tip claimed A+B (this also records the
+		// claim baseline for the package).
+		chatKeyPackagesStore.keyPackages = [];
+		await loadLastResortKeyPackage({
+			keyPackage: 'AA==',
+			privateKeyPackage: 'AA==',
+			coordinators: [COORD_A, COORD_B]
+		});
+		// The startup observation reconcile pruned B from the LOCAL markers (the
+		// coordinator no longer serves the ref remotely) BEFORE this adoption ran.
+		chatKeyPackagesStore.keyPackages = chatKeyPackagesStore.keyPackages.map((kp) =>
+			kp.publishedCoordinatorKeys.length > 1 ? { ...kp, publishedCoordinatorKeys: [COORD_A] } : kp
+		);
+		retireAutoCoverageMock.mockClear();
+		// Against the previous tip, the observation-pruned local entry looks like
+		// an unpublished edit. The incoming document matches it exactly, so the
+		// gate must NOT defer: adoption cannot overwrite anything, and this is the
+		// only remaining opportunity to retire B.
+		hasUnpublishedLastResortChangeMock.mockReturnValue(true);
+
+		await loadLastResortKeyPackage({
+			keyPackage: 'AA==',
+			privateKeyPackage: 'AA==',
+			coordinators: [COORD_A]
+		});
+
+		// Markers already match the document (no rewrite), yet the B retirement
+		// still fires — without it the next reachability pass would silently
+		// re-publish over the purge.
+		expect(retireAutoCoverageMock).toHaveBeenCalledWith(OWNER, [COORD_B]);
 	});
 });
 
@@ -607,7 +758,10 @@ describe('ensureLastResortPublished() mint single-flight', () => {
 		makeKeyPackageRefMock.mockReset();
 		makeKeyPackageRefMock.mockResolvedValue(new Uint8Array([7]));
 		generateKeyPackageMock.mockReset();
-		generateKeyPackageMock.mockResolvedValue({ publicPackage: {}, privatePackage: {} });
+		generateKeyPackageMock.mockResolvedValue({
+			publicPackage: { leafNode: { lifetime: { notBefore: 1_700_000_000n } } },
+			privatePackage: {}
+		});
 		encodeMock.mockReset();
 		encodeMock.mockReturnValue(new Uint8Array([1]));
 		isLastResortKeyPackageMock.mockReset();
@@ -629,6 +783,7 @@ describe('ensureLastResortPublished() mint single-flight', () => {
 		expect(results[0].keyPackageRef).toBe(results[1].keyPackageRef);
 		// A second mint would evict the first everywhere (quota = 1).
 		expect(chatKeyPackagesStore.keyPackages.filter((entry) => entry.isLastResort)).toHaveLength(1);
+		expect(chatKeyPackagesStore.keyPackages[0].createdAt).toBe(1_700_086_400_000);
 	});
 });
 
@@ -749,5 +904,40 @@ describe('maintainReachability()', () => {
 		} finally {
 			nowSpy.mockRestore();
 		}
+	});
+});
+
+describe('stored last-resort mint ordering', () => {
+	test('normalizes legacy local/replicated timestamps from the authenticated bytes', async () => {
+		// This must be a fresh module: storage is loaded once at module init.
+		vi.resetModules();
+		listStoredKeyPackagesMock.mockResolvedValueOnce([
+			{
+				id: 'legacy-local',
+				ownerPubkey: OWNER,
+				label: 'Last resort',
+				isLastResort: true,
+				keyPackageRef: 'kp-legacy',
+				keyPackageBytes: new Uint8Array([1]),
+				privateKeyPackageBytes: new Uint8Array([2]),
+				cipherSuite: '1',
+				createdAt: 1_800_000_000_000, // legacy local Date.now() value
+				publishedCoordinatorKeys: []
+			}
+		]);
+		keyPackageDecoderMock.mockReset();
+		keyPackageDecoderMock.mockReturnValue([
+			{ leafNode: { lifetime: { notBefore: 1_700_000_000n } } },
+			0
+		]);
+
+		vi.doMock('$lib/storage/chatStorage', () => ({
+			getChatStorage: async () => ({ listKeyPackages: listStoredKeyPackagesMock })
+		}));
+		const { chatKeyPackagesStore } = await import('./chatKeyPackages.svelte');
+		expect(listStoredKeyPackagesMock).toHaveBeenCalled();
+		await vi.waitFor(() => expect(chatKeyPackagesStore.keyPackages).toHaveLength(1));
+
+		expect(chatKeyPackagesStore.keyPackages[0].createdAt).toBe(1_700_086_400_000);
 	});
 });

@@ -13,6 +13,11 @@ import {
 } from '$lib/services/chatWelcomeNotifications.svelte';
 import { disconnectCoordinatorClient } from '$lib/services/chatRuntime';
 import { stopWatchingGroup } from '$lib/services/chatGroupWatch.svelte';
+import {
+	isMultiDeviceActive,
+	onMetaStateChange,
+	softDeleteGroups
+} from '$lib/services/multiDevice.svelte';
 import { normalizePubKey } from '$lib/utils';
 
 export interface CoordinatorPurgeImpact {
@@ -102,10 +107,26 @@ export async function purgeChatCoordinator(coordinatorKey: string): Promise<void
 		.map((group) => group.id);
 	await Promise.all(groupIds.map((id) => stopWatchingGroup(id, 'coordinator purged')));
 
-	await deleteChatGroupsForCoordinator(normalized);
+	if (isMultiDeviceActive()) {
+		// Soft-delete (spec §8/§10): each drop publishes a {gid, epoch} tombstone
+		// so the tip stops listing the group. A hard local delete leaves the tip
+		// as-is, and the next reconcile re-seeds every group — and via seedGroup's
+		// markCoordinatorUsed, the purged coordinator itself (the "deleted
+		// coordinator reappears on restart" bug). Batched: ONE tombstone publish
+		// for the whole coordinator, not one per group.
+		await softDeleteGroups(groupIds);
+	} else {
+		await deleteChatGroupsForCoordinator(normalized);
+	}
 	await purgeCoordinatorKeyPackages(normalized, willDelete);
 	deleteWelcomeNotificationsForCoordinator(normalized);
 	removeChatCoordinator(normalized);
+	// Retract the purged coordinator's last-resort publish claim from the meta
+	// document (spec §4.2 current-state `coordinators`): purgeCoordinatorKeyPackages
+	// prunes records locally + remotely, but without a meta republish the stale
+	// claim — and with it the coordinator — is restored on the next adoption.
+	// No-op when multi-device is disabled.
+	onMetaStateChange();
 
 	if (account) {
 		await disconnectCoordinatorClient(account, normalized).catch(() => {});

@@ -91,6 +91,13 @@ export const DEFAULT_DONATION: DonationConfig = {
  */
 const newsReleases: NewsRelease[] = [
 	{
+		id: 'cordn-news-2026-10-30-multi-device-convergence',
+		createdAt: Date.UTC(2026, 9, 30),
+		version: 1,
+		title: 'Coordinator deletions stick, and linked devices settle down',
+		body: '- 🐛 Removing a coordinator now stays removed across your linked devices: its groups and publishing claim are retracted together instead of being restored by the next sync.\n- 🐛 Linked devices no longer bounce unchanged encrypted documents back and forth, so multi-device sync settles instead of repeatedly uploading every group.\n- ✨ Multi-device Advanced settings now accepts your own Blossom document hosts, and the settings page no longer freezes when custom hosts are present.\n- ✨ A new Activity log under Advanced → Dev mode records what sync is doing and keeps it across restarts. Copy log puts the full diagnostic history on your clipboard.'
+	},
+	{
 		id: 'cordn-news-2026-10-26-live-reactions',
 		createdAt: Date.UTC(2026, 9, 26),
 		version: 1,

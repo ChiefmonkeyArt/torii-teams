@@ -46,7 +46,9 @@
 				consumed local record{impact.keyPackagesLocal === 1 ? '' : 's'}, and {impact.welcomes} invitation{impact.welcomes ===
 				1
 					? ''
-					: 's'}. Messages and membership on other devices or coordinators are not affected.
+					: 's'}. On linked devices, these groups are removed as well. Your replicated last-resort
+				key package record is kept — its publish claim here is removed — so linked devices can still
+				process invitations. Other members are not affected.
 			</Dialog.Description>
 		</Dialog.Header>
 		<Dialog.Footer>

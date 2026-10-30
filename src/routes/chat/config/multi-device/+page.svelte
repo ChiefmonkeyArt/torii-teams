@@ -43,6 +43,7 @@
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import Download from '@lucide/svelte/icons/download';
 	import Unlink from '@lucide/svelte/icons/unlink';
+	import X from '@lucide/svelte/icons/x';
 
 	let tab = $state<'add' | 'link'>(page.url.searchParams.get('tab') === 'link' ? 'link' : 'add');
 
@@ -50,10 +51,15 @@
 	let config = $state<MultiDeviceOwnerConfig | undefined>(undefined);
 	let connectionString = $state('');
 	let relaysDraft = $state('');
-	// Blossom redundancy: a checked subset of presets, ordered by BLOSSOM_SERVERS.
-	// The first checked entry is the primary (read path tries them in order).
-	// SvelteSet is self-reactive, so no $state wrap — mutate in place.
+	// Blossom redundancy: a checked subset of presets, ordered by BLOSSOM_SERVERS,
+	// plus explicit custom hosts (kept in add order). The first entry is the
+	// primary (read path tries them in order). SvelteSet is self-reactive, so no
+	// $state wrap — mutate in place.
 	let blossomChecked = new SvelteSet<string>();
+	// Custom hosts outside the preset list; draft-state until Advanced is saved
+	// (same as the preset checkboxes — saving persists the union).
+	let blossomCustoms = $state<string[]>([]);
+	let blossomCustomDraft = $state('');
 	let rotating = $state(false);
 	let resyncing = $state(false);
 	let linking = $state(false);
@@ -76,7 +82,18 @@
 		relaysDraft = (cfg?.relays ?? DEFAULT_MULTI_DEVICE_RELAYS).join('\n');
 		const servers = cfg ? cfg.blossomServers : DEFAULT_BLOSSOM_SERVERS;
 		blossomChecked.clear();
-		for (const s of servers) blossomChecked.add(s);
+		// Accumulate customs in a plain array and assign ONCE: pushing into the
+		// $state array below would read+write it inside this effect and loop
+		// forever (effect_update_depth_exceeded, which kills the page's reactivity).
+		const customs: string[] = [];
+		for (const s of servers) {
+			// A stored host outside the preset list is a custom entry — keeping it
+			// here stops a save from silently dropping it (the presets-only filter
+			// used to do exactly that).
+			if ((BLOSSOM_SERVERS as readonly string[]).includes(s)) blossomChecked.add(s);
+			else customs.push(s);
+		}
+		blossomCustoms = customs;
 	});
 
 	const hasConfig = $derived(!!config);
@@ -92,10 +109,28 @@
 		!hasConfig ? 'Not set up yet' : config?.lastSeenTip ? 'Sync active' : 'Linked — not synced yet'
 	);
 
+	// Ticker so the tip age on the status card stays honest without a reload.
+	let now = $state(Date.now());
+	$effect(() => {
+		const timer = setInterval(() => (now = Date.now()), 30_000);
+		return () => clearInterval(timer);
+	});
+	const tipAgeLabel = $derived.by(() => {
+		const at = config?.lastSeenTipCreatedAt;
+		if (!at || !config?.lastSeenTip) return '';
+		const ms = now - at * 1000;
+		if (ms < 60_000) return 'just now';
+		const minutes = Math.floor(ms / 60_000);
+		if (minutes < 60) return `${minutes} min ago`;
+		const hours = Math.floor(minutes / 60);
+		if (hours < 24) return `${hours} h ago`;
+		return new Date(at * 1000).toLocaleString();
+	});
+
 	function toggleBlossom(server: string, checked: boolean) {
 		if (checked) {
 			blossomChecked.add(server);
-		} else if (blossomChecked.size > 1) {
+		} else if (blossomChecked.size + blossomCustoms.length > 1) {
 			// Keep at least one host so the document is always reachable.
 			blossomChecked.delete(server);
 		} else {
@@ -104,9 +139,39 @@
 	}
 
 	function blossomServersInOrder(): string[] {
-		// Primary = first preset (in declared order) that is checked; preserves a
-		// stable priority without asking the user to order the list manually.
-		return BLOSSOM_SERVERS.filter((s) => blossomChecked.has(s));
+		// Primary = first preset (in declared order) that is checked; customs
+		// follow in add order. Preserves a stable priority without asking the
+		// user to order the list manually.
+		return [...BLOSSOM_SERVERS.filter((s) => blossomChecked.has(s)), ...blossomCustoms];
+	}
+
+	function addBlossomCustom() {
+		const raw = blossomCustomDraft.trim();
+		try {
+			const url = new URL(raw);
+			if (url.protocol !== 'https:') throw new Error('not https');
+			// Document fetches address `${server}<sha256>`, so hosts are origins.
+			const server = `${url.origin}/`;
+			if (
+				(BLOSSOM_SERVERS as readonly string[]).includes(server) ||
+				blossomCustoms.includes(server)
+			) {
+				toast.error('That host is already in the list');
+				return;
+			}
+			blossomCustoms = [...blossomCustoms, server];
+			blossomCustomDraft = '';
+		} catch {
+			toast.error('Enter an https:// Blossom server URL');
+		}
+	}
+
+	function removeBlossomCustom(server: string) {
+		if (blossomServersInOrder().length <= 1) {
+			toast.error('Keep at least one Blossom server for redundancy');
+			return;
+		}
+		blossomCustoms = blossomCustoms.filter((s) => s !== server);
 	}
 
 	async function handleSetup() {
@@ -303,6 +368,7 @@
 										{config.blossomServers.length} Blossom host{config.blossomServers.length === 1
 											? ''
 											: 's'}
+										{#if tipAgeLabel}· tip {tipAgeLabel}{/if}
 									{:else}
 										Pick a tab below to share from or link this device.
 									{/if}
@@ -488,6 +554,31 @@
 												{/if}
 											</label>
 										{/each}
+										{#each blossomCustoms as server (server)}
+											<div
+												class="flex items-center gap-2 rounded-md border border-dashed border-border p-2 text-sm"
+											>
+												<span class="font-mono text-xs">{server}</span>
+												<span class="text-xs text-muted-foreground">custom</span>
+												<button
+													type="button"
+													class="ml-auto rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+													aria-label={`Remove ${server}`}
+													onclick={() => removeBlossomCustom(server)}
+												>
+													<X class="size-3.5" />
+												</button>
+											</div>
+										{/each}
+										<div class="flex gap-2">
+											<Input
+												placeholder="https://your-blossom-server.com"
+												bind:value={blossomCustomDraft}
+												class="font-mono text-xs"
+												onkeydown={(e) => e.key === 'Enter' && addBlossomCustom()}
+											/>
+											<Button variant="outline" onclick={addBlossomCustom}>Add</Button>
+										</div>
 									</div>
 									<p class="text-xs text-muted-foreground">
 										The sealed document is uploaded to all selected hosts; linked devices try them

@@ -11,11 +11,8 @@ import { getCoordinatorServerName } from '$lib/services/coordinatorServerInfo.sv
 import { profileDisplayName } from '$lib/utils/profileName';
 import { buildUniqueSlugId, normalizePubKey, pubkeyToHexColor } from '$lib/utils';
 import { DEFAULT_CHAT_COORDINATOR_PUBKEY } from '$lib/constants/chat';
-import { defaultRelays } from '$lib/services/relay-pool';
 
 const STORAGE_KEY = 'cordn-chat-coordinators';
-/** One-shot flag for the default-coordinator relay fill (loadCoordinators). */
-const DEFAULT_COORDINATOR_RELAYS_SEEDED_KEY = 'cordn.defaultCoordinatorRelaysSeeded';
 
 export interface StoredCoordinator {
 	id: string;
@@ -33,11 +30,19 @@ export interface StoredCoordinator {
 
 type PersistedCoordinators = {
 	coordinators: StoredCoordinator[];
+	/** Per-owner automatic-coverage retirement map (device-local; see
+	 *  `retireAutoCoverage`): ownerPubkey → coordinatorPubkey → retired-at. */
+	autoPublishRetiredByOwner?: Record<string, Record<string, number>>;
 };
 
 export const chatCoordinatorsStore = $state<{ coordinators: StoredCoordinator[] }>({
 	coordinators: []
 });
+
+/** Device-local retirement from automatic key-package coverage, PER OWNER
+ *  (see `retireAutoCoverage`): ownerPubkey → coordinatorPubkey → retired-at.
+ *  Declared before `loadCoordinators()` runs — `saveCoordinators` persists it. */
+let autoPublishRetiredByOwner: Record<string, Record<string, number>> = {};
 
 function normalizeRelay(relay: string): string {
 	const value = relay.trim();
@@ -106,7 +111,10 @@ function migrateCoordinator(entry: StoredCoordinator): StoredCoordinator {
 
 function saveCoordinators() {
 	if (!browser) return;
-	const payload: PersistedCoordinators = { coordinators: chatCoordinatorsStore.coordinators };
+	const payload: PersistedCoordinators = {
+		coordinators: chatCoordinatorsStore.coordinators,
+		autoPublishRetiredByOwner
+	};
 	localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
 	// Re-seed the native background poll set so worker routing tracks relay changes. Dynamic
 	// import dodges the nativeBridge→chatCoordinators cycle; seedBackground is a no-op on web and
@@ -124,6 +132,7 @@ function loadCoordinators() {
 		} else {
 			const parsed = JSON.parse(raw) as PersistedCoordinators;
 			chatCoordinatorsStore.coordinators = (parsed.coordinators ?? []).map(migrateCoordinator);
+			autoPublishRetiredByOwner = parsed.autoPublishRetiredByOwner ?? {};
 			ensureSingleDefault();
 		}
 	} catch {
@@ -131,24 +140,19 @@ function loadCoordinators() {
 	}
 
 	// First run: seed the default coordinator so new users never have to think
-	// about coordinators — it's just there. Its relays come from defaultRelays
-	// (they ARE the default coordinator's relays), so first contact needs no
-	// discovery round-trip. Not flagged isDefault: that flag is a pure power-user
-	// preference (which of several is preselected in create-group), never a
-	// functional gate. Seeding only on first run (not on every empty store)
-	// means a user who deliberately removes all coordinators isn't re-seeded.
+	// about coordinators — it's just there. No stored relays: it is resolved
+	// like any other relay-less coordinator (SDK discovery → fallback probe on
+	// first contact, persisted fill-if-empty via markCoordinatorRelaysResolved),
+	// so a coordinator-side relay change reaches fresh installs without an app
+	// update. Not flagged isDefault: that flag is a pure power-user preference
+	// (which of several is preselected in create-group), never a functional
+	// gate. Seeding only on first run (not on every empty store) means a user
+	// who deliberately removes all coordinators isn't re-seeded.
 	if (firstRun) {
 		upsertChatCoordinator({
 			pubkey: DEFAULT_CHAT_COORDINATOR_PUBKEY,
-			label: 'Default coordinator',
-			relays: [...defaultRelays]
+			label: 'Default coordinator'
 		});
-	} else if (!localStorage.getItem(DEFAULT_COORDINATOR_RELAYS_SEEDED_KEY)) {
-		// One-time migration: installs seeded before relays were part of the
-		// default entry get them filled too. Flag-guarded so a later deliberate
-		// relay clear (back to auto-discovery) is never re-filled.
-		localStorage.setItem(DEFAULT_COORDINATOR_RELAYS_SEEDED_KEY, '1');
-		ensureDefaultCoordinatorRelays();
 	}
 }
 
@@ -355,22 +359,6 @@ export function setDefaultChatCoordinator(pubkey: string) {
 }
 
 /**
- * Fill the default coordinator's stored relays from defaultRelays when the
- * entry exists but has none — the relay set installed before relays became
- * part of the seeded entry. Fill-if-empty only: existing (user-set or
- * hint-adopted) relays always win.
- */
-export function ensureDefaultCoordinatorRelays(): void {
-	const stored = getChatCoordinator(DEFAULT_CHAT_COORDINATOR_PUBKEY);
-	if (stored && !stored.relays.length) {
-		upsertChatCoordinator({
-			pubkey: DEFAULT_CHAT_COORDINATOR_PUBKEY,
-			relays: [...defaultRelays]
-		});
-	}
-}
-
-/**
  * Persist SDK-resolved operational relays (SDK 0.14.3 `getOperationalRelayUrls`)
  * for a coordinator the store already knows, fill-if-empty — same §9 adoption
  * semantics as document hints: never overwrites user-set or hint-adopted
@@ -427,7 +415,47 @@ export function markCoordinatorUsed(pubkey: string, relayHints?: string[]) {
 	chatCoordinatorsStore.coordinators = chatCoordinatorsStore.coordinators.map((entry) =>
 		entry.pubkey === normalized ? { ...entry, lastUsedAt: Date.now() } : entry
 	);
+	// Real usage re-arms automatic coverage for the ACTING owner only: profiles
+	// are shared across this browser's accounts, retirement is not (a retraction
+	// adopted for one identity must not be armed/cleared by another).
+	const activeOwner = manager.getActive()?.pubkey;
+	if (activeOwner) {
+		const owner = normalizePubKey(activeOwner);
+		if (autoPublishRetiredByOwner[owner]?.[normalized] !== undefined) {
+			delete autoPublishRetiredByOwner[owner]![normalized];
+		}
+	}
 	saveCoordinators();
+}
+
+/** Retire coordinators from automatic coverage for `ownerPubkey` (see
+ *  `autoPublishRetiredByOwner`). Only existing profiles with no live group of
+ *  that owner are retired: usage is the re-arm. */
+export function retireAutoCoverage(ownerPubkey: string, pubkeys: string[]): void {
+	const owner = normalizePubKey(ownerPubkey);
+	const targets = pubkeys.map(normalizePubKey);
+	if (!targets.length) return;
+	const liveCoordinators = new Set(
+		listChatGroups().map((group) => normalizePubKey(group.coordinatorKey))
+	);
+	let changed = false;
+	for (const coordinatorKey of targets) {
+		if (liveCoordinators.has(coordinatorKey)) continue;
+		if (!getChatCoordinator(coordinatorKey)) continue; // no profile → never an auto target
+		autoPublishRetiredByOwner[owner] ??= {};
+		if (autoPublishRetiredByOwner[owner]![coordinatorKey] !== undefined) continue;
+		autoPublishRetiredByOwner[owner]![coordinatorKey] = Date.now();
+		changed = true;
+	}
+	if (changed) saveCoordinators();
+}
+
+/** Whether automatic coverage skips this coordinator for `ownerPubkey`
+ *  (retired by an adopted retraction). */
+export function isAutoCoverageRetired(ownerPubkey: string, pubkey: string): boolean {
+	return (
+		autoPublishRetiredByOwner[normalizePubKey(ownerPubkey)]?.[normalizePubKey(pubkey)] !== undefined
+	);
 }
 
 /**

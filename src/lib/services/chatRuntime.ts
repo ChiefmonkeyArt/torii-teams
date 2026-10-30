@@ -1,3 +1,5 @@
+import { kinds } from 'nostr-tools';
+import { DEFAULT_BOOTSTRAP_RELAY_URLS, type NostrSigner } from '@contextvm/sdk';
 import { manager } from '$lib/services/accountManager.svelte';
 import {
 	getChatCoordinator,
@@ -14,10 +16,12 @@ import {
 	setCoordinatorServerInfo
 } from '$lib/services/coordinatorServerInfo.svelte';
 import { cordnClient, type coordinatorClient } from '$lib/services/coordinatorClient';
+import { createUserRelayListByPubkeyLoader } from '$lib/services/loaders.svelte';
+import { eventStore } from '$lib/services/eventStore';
+import { defaultRelays, metadataRelays } from '$lib/services/relay-pool';
 import { queryClient } from '$lib/query-client';
 import { chatQueryKeys } from '$lib/queries/chatQueryKeys';
 import { errorMessage, normalizePubKey } from '$lib/utils';
-import type { NostrSigner } from '@contextvm/sdk';
 import type { IAccount } from 'applesauce-accounts';
 
 type CoordinatorTarget = {
@@ -218,43 +222,113 @@ export async function disconnectCoordinatorClients(account?: IAccount): Promise<
 	await registry.disconnect();
 }
 
+/** Cheap kind:10002 read deadline over the announcement search set. */
+const RELAY_LIST_READ_TIMEOUT_MS = 10_000;
+
+/** Where a coordinator's kind:10002 announcement can live: its own stored
+ *  relays (self-hosted announcements), the app defaults, the metadata set,
+ *  and the SDK bootstrap relays operators commonly publish to. */
+function announcementSearchRelays(stored: string[]): string[] {
+	return [
+		...new Set([...stored, ...defaultRelays, ...metadataRelays, ...DEFAULT_BOOTSTRAP_RELAY_URLS])
+	];
+}
+
+/** Announced relay URLs from the latest stored kind:10002. Lenient parsing:
+ *  raw tags can hold garbage a strict normalize would throw on, and every
+ *  marker (read/write/unmarked) is legitimate evidence. */
+function announcedRelayUrls(pubkey: string): string[] {
+	const event = eventStore.getReplaceable(kinds.RelayList, pubkey);
+	if (!event) return [];
+	const urls = new Set<string>();
+	for (const tag of event.tags) {
+		if (tag[0] !== 'r' || typeof tag[1] !== 'string') continue;
+		const url = tag[1].trim();
+		if (/^wss?:\/\//.test(url)) urls.add(url);
+	}
+	return [...urls];
+}
+
+/** One bounded kind:10002 request; resolves when the loader reports done or
+ *  the deadline passes. The raw result is read from the event store after —
+ *  newest replaceable event wins, so no first-EOSE relay race. */
+function loadRelayListAnnouncement(pubkey: string, relays: string[]): Promise<void> {
+	return new Promise((resolve) => {
+		const handles: {
+			loader?: { unsubscribe: () => void };
+			timer?: ReturnType<typeof setTimeout>;
+		} = {};
+		let settled = false;
+		const done = () => {
+			if (settled) return;
+			settled = true;
+			if (handles.timer) clearTimeout(handles.timer);
+			handles.loader?.unsubscribe();
+			resolve();
+		};
+		handles.loader = createUserRelayListByPubkeyLoader(pubkey, relays).subscribe({
+			error: done,
+			complete: done
+		});
+		// Loader may complete synchronously (store already warm); skip the timer.
+		if (!settled) handles.timer = setTimeout(done, RELAY_LIST_READ_TIMEOUT_MS);
+	});
+}
+
 /**
- * Re-resolve a coordinator's relays from the network WITHOUT persisting: a
- * throwaway relay-less client runs the transport's full resolution chain
- * (hints → kind-10002 discovery → fallback probe), and the returned set is
- * verified — a successful return implies the coordinator answered a full MCP
- * connect on it. `discoveryRelayUrls` narrows discovery to relays the caller
- * knows carry the announcement, so a fallback answer cannot masquerade as
- * discovery (callers that persist must check the result themselves).
+ * A coordinator's currently announced relay set (kind:10002 / CEP-17), read
+ * over every relay that could carry the announcement. `[]` = no announcement
+ * found anywhere — for such coordinators the stored (or SDK fallback) set is
+ * all there is.
  */
-export async function resolveCoordinatorRelaysFromNetwork(
+export async function fetchAnnouncedCoordinatorRelays(coordinatorKey: string): Promise<string[]> {
+	const normalized = normalizePubKey(coordinatorKey);
+	const stored = getChatCoordinator(normalized)?.relays ?? [];
+	await loadRelayListAnnouncement(normalized, announcementSearchRelays(stored));
+	return announcedRelayUrls(normalized);
+}
+
+/**
+ * Whether the coordinator answers a full MCP connect on exactly these relays
+ * (throwaway CONFIGURED client — the SDK's discovery/fallback chain never
+ * runs, so the answer is evidence about this coordinator, never about app
+ * defaults). This is the only gate between an announcement and an adopted
+ * set: callers that persist must verify first.
+ */
+export async function verifyCoordinatorRelays(
 	coordinatorKey: string,
-	options: { discoveryRelayUrls?: string[] } = {}
-): Promise<string[]> {
+	relayUrls: string[]
+): Promise<boolean> {
 	const client = new cordnClient({
 		serverPubkey: normalizePubKey(coordinatorKey),
-		relays: [],
-		discoveryRelayUrls: options.discoveryRelayUrls
+		relays: [...relayUrls]
 	});
 	try {
-		return await client.operationalRelayUrls();
+		return (await client.operationalRelayUrls()).length > 0;
+	} catch {
+		return false;
 	} finally {
 		await client.disconnect().catch(() => undefined);
 	}
 }
 
 /**
- * Re-resolve a coordinator's relays from the network (explicit user action)
- * and OVERWRITE the stored set with the result — unlike automatic persistence
- * (fill-if-empty), explicit intent replaces, so a coordinator that moved
- * relays gets fixed here. The next getClient swaps in a fresh configured
- * client automatically (relays mismatch).
+ * Re-resolve a coordinator's relays (explicit user action) and OVERWRITE the
+ * stored set with the ANNOUNCED relays, verified by a full MCP connect on
+ * them — unlike automatic persistence (fill-if-empty), explicit intent
+ * replaces, and unlike SDK resolution the answer is the coordinator's own
+ * announcement, never a fallback set. The next getClient swaps in a fresh
+ * configured client automatically (relays mismatch).
  */
 export async function refetchCoordinatorRelays(coordinatorKey: string): Promise<string[]> {
 	const normalized = normalizePubKey(coordinatorKey);
-	const urls = await resolveCoordinatorRelaysFromNetwork(normalized);
-	if (urls.length) upsertChatCoordinator({ pubkey: normalized, relays: urls });
-	return urls;
+	const announced = await fetchAnnouncedCoordinatorRelays(normalized);
+	if (!announced.length) return [];
+	if (!(await verifyCoordinatorRelays(normalized, announced))) {
+		throw new Error('Coordinator did not answer on its announced relays');
+	}
+	upsertChatCoordinator({ pubkey: normalized, relays: announced });
+	return announced;
 }
 
 export async function disconnectCoordinatorClient(

@@ -1,8 +1,8 @@
 <script lang="ts">
 	/**
 	 * Read-only dev panel for multi-device sync. Pure visualization of locally
-	 * persisted state (`config.lastSeenTip`, `config.tipHistory`) plus two
-	 * on-demand network probes (relay + Blossom coherence). Changes no service
+	 * persisted state (tip, transition/activity history) plus two on-demand
+	 * network probes (relay + Blossom coherence). Changes no service
 	 * state; the probes fire only on explicit button click.
 	 */
 	import { Button } from '$lib/components/ui/button';
@@ -13,6 +13,7 @@
 		ReconcileCounts,
 		TipTransition
 	} from '$lib/services/multiDevice.svelte';
+	import { formatActivityLog, multiDeviceActivity } from '$lib/services/multiDeviceActivity.svelte';
 	import {
 		probeRelayTips,
 		probeBlossomBlobs,
@@ -40,6 +41,7 @@
 
 	const tip = $derived(config.lastSeenTip);
 	const history = $derived(config.tipHistory ?? []);
+	const activity = $derived(multiDeviceActivity[config.ownerPubkey] ?? config.activityLog ?? []);
 
 	// Coherence: all relays returned the SAME event id (version drift = bug).
 	// null = not yet probed; true = single id across all relays; false = drift or gap.
@@ -105,6 +107,15 @@
 			toast.success('Address copied');
 		} catch {
 			toast.error('Could not copy — select manually');
+		}
+	}
+
+	async function copyActivity(): Promise<void> {
+		try {
+			await copyText(formatActivityLog(activity));
+			toast.success('Activity log copied');
+		} catch {
+			toast.error('Could not copy the activity log');
 		}
 	}
 
@@ -187,6 +198,37 @@
 			{/if}
 		{:else}
 			<p class="text-xs text-muted-foreground">No tip seen yet.</p>
+		{/if}
+	</div>
+
+	<!-- Persisted user-readable diagnostics, newest first. -->
+	<div class="space-y-2 border-t border-border pt-3">
+		<div class="flex items-center justify-between gap-2">
+			<h4 class="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+				Activity ({activity.length})
+			</h4>
+			<Button variant="ghost" size="sm" onclick={copyActivity} disabled={activity.length === 0}>
+				<Copy class="mr-1.5 size-3.5" />
+				Copy log
+			</Button>
+		</div>
+		{#if activity.length === 0}
+			<p class="text-xs text-muted-foreground">No sync activity recorded yet.</p>
+		{:else}
+			<ul class="max-h-64 space-y-2 overflow-y-auto pr-1">
+				{#each activity as entry (`${entry.at}:${entry.text}`)}
+					<li class="text-xs">
+						<div class="font-mono text-[10px] text-muted-foreground">
+							{fmtTime(entry.at)}{entry.level === 'warn' ? ' · WARN' : ''}
+						</div>
+						<div
+							class={`break-words ${entry.level === 'warn' ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground'}`}
+						>
+							{entry.text}
+						</div>
+					</li>
+				{/each}
+			</ul>
 		{/if}
 	</div>
 
