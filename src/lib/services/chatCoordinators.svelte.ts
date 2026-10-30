@@ -11,11 +11,8 @@ import { getCoordinatorServerName } from '$lib/services/coordinatorServerInfo.sv
 import { profileDisplayName } from '$lib/utils/profileName';
 import { buildUniqueSlugId, normalizePubKey, pubkeyToHexColor } from '$lib/utils';
 import { DEFAULT_CHAT_COORDINATOR_PUBKEY } from '$lib/constants/chat';
-import { defaultRelays } from '$lib/services/relay-pool';
 
 const STORAGE_KEY = 'cordn-chat-coordinators';
-/** One-shot flag for the default-coordinator relay fill (loadCoordinators). */
-const DEFAULT_COORDINATOR_RELAYS_SEEDED_KEY = 'cordn.defaultCoordinatorRelaysSeeded';
 
 export interface StoredCoordinator {
 	id: string;
@@ -143,24 +140,19 @@ function loadCoordinators() {
 	}
 
 	// First run: seed the default coordinator so new users never have to think
-	// about coordinators — it's just there. Its relays come from defaultRelays
-	// (they ARE the default coordinator's relays), so first contact needs no
-	// discovery round-trip. Not flagged isDefault: that flag is a pure power-user
-	// preference (which of several is preselected in create-group), never a
-	// functional gate. Seeding only on first run (not on every empty store)
-	// means a user who deliberately removes all coordinators isn't re-seeded.
+	// about coordinators — it's just there. No stored relays: it is resolved
+	// like any other relay-less coordinator (SDK discovery → fallback probe on
+	// first contact, persisted fill-if-empty via markCoordinatorRelaysResolved),
+	// so a coordinator-side relay change reaches fresh installs without an app
+	// update. Not flagged isDefault: that flag is a pure power-user preference
+	// (which of several is preselected in create-group), never a functional
+	// gate. Seeding only on first run (not on every empty store) means a user
+	// who deliberately removes all coordinators isn't re-seeded.
 	if (firstRun) {
 		upsertChatCoordinator({
 			pubkey: DEFAULT_CHAT_COORDINATOR_PUBKEY,
-			label: 'Default coordinator',
-			relays: [...defaultRelays]
+			label: 'Default coordinator'
 		});
-	} else if (!localStorage.getItem(DEFAULT_COORDINATOR_RELAYS_SEEDED_KEY)) {
-		// One-time migration: installs seeded before relays were part of the
-		// default entry get them filled too. Flag-guarded so a later deliberate
-		// relay clear (back to auto-discovery) is never re-filled.
-		localStorage.setItem(DEFAULT_COORDINATOR_RELAYS_SEEDED_KEY, '1');
-		ensureDefaultCoordinatorRelays();
 	}
 }
 
@@ -364,22 +356,6 @@ export function setDefaultChatCoordinator(pubkey: string) {
 	const normalized = normalizePubKey(pubkey);
 	ensureSingleDefault(normalized);
 	saveCoordinators();
-}
-
-/**
- * Fill the default coordinator's stored relays from defaultRelays when the
- * entry exists but has none — the relay set installed before relays became
- * part of the seeded entry. Fill-if-empty only: existing (user-set or
- * hint-adopted) relays always win.
- */
-export function ensureDefaultCoordinatorRelays(): void {
-	const stored = getChatCoordinator(DEFAULT_CHAT_COORDINATOR_PUBKEY);
-	if (stored && !stored.relays.length) {
-		upsertChatCoordinator({
-			pubkey: DEFAULT_CHAT_COORDINATOR_PUBKEY,
-			relays: [...defaultRelays]
-		});
-	}
 }
 
 /**
