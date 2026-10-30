@@ -1,5 +1,74 @@
 # Changelog
 
+## 0.6.1 — 2026-10-30
+
+### Features
+
+- add persistent multi-device activity log
+- custom Blossom document hosts in multi-device advanced settings
+- **chat:** per-attachment captions for staged media
+- **chat:** render NIP-84 highlights in embedded nostr event cards
+
+### Fixes
+
+- adopt announced coordinator relays, never SDK fallback answers
+- seed default coordinator without frozen relay snapshot
+- preserve activity across overlapping config writes
+- stop same-state multi-device republish storms
+- stop multi-device settings page from freezing on mount
+- close adoption, rotation-order, and batch-delete edge cases
+- explicit rotation displaces the sticky last-resort identity
+- retraction bookkeeping across observation races, rotations, and accounts
+- harden coordinator purge retraction against auto-republish and crashes
+- coordinator purge resurrecting under multi-device sync
+- **chat:** keep the title writer alive on a corrupt group state
+- **chat:** resolve dropped persist waiters when a group is deleted
+- **chat:** make chatAttention the single page-title writer
+- **chat:** revert the avatar pipeline to master
+- **chat:** cap heartbeat catch-up backoff at 2min (flat window)
+- **chat:** keep avatar warmth unbounded and drop forced decode work
+- make the avatar warm cache a single honest LRU (evicted srcs go cold)
+- serialize group deletes after coalesced persists (resurrect guard)
+- **chat:** stop the list snapshot gate from freezing content-only updates
+- **chat:** track measured row keys locally instead of the private itemSizeCache
+- **chat:** hide reaction actions on messages that have no event yet
+- **chat:** stop the bottom re-pin fight while reaction chips grow a row
+- **chat:** anchor the avatar when a system row ends a message run
+- **chat:** seed profile hints synchronously so remounted group cards don't blink
+- **chat:** settle the anchor flight when its row cannot be restored
+- **chat:** stop the resize correction from dragging the landed view into tall rows
+- **chat:** render rows from a list snapshot swapped atomically with the virtualizer
+- **chat:** settle scroll ownership on every flight exit
+- **chat:** end a scroll flight's suppression when it completes
+- **chat:** anchor the viewport when the window grows above it
+- **chat:** stop the broken-media re-fetch blink loop
+- **chat:** show reactions on poll messages in the rich view
+
+### Performance
+
+- **chat:** derive group state facts once per state, not once per read
+- paint warm avatar remounts without re-preload or async pop
+- cut idle background heat (persist coalescing, heartbeat backoff, decode memo, render churn)
+
+### Docs
+
+- announce multi-device reliability improvements
+- **news:** announce faster chat switching and steadier titles
+- **chat:** mark the post-delete resurrect edge as a known shortcut
+- **news:** announce live reactions, nostr highlights and per-photo captions
+- **news:** note the chat-list avatar blink fix in the quiet-fixes card
+- **news:** announce the poll, media and notification fixes
+
+### Refactor
+
+- **chat:** drop the toChatMessage identity memo
+
+### Other
+
+- add tbone nip05
+- **chat:** raise the presence flush hook budget for slow full-suite runs
+- pin the check job to ubuntu-24.04
+
 ## 0.6.0 — 2026-10-15
 
 ### Features
