@@ -2,17 +2,44 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 type HealthSignal = { status: 'healthy' } | { status: 'degraded'; error: string };
 
-const { accountManagerMock, queryClientMock, coordinatorMock } = vi.hoisted(() => ({
+const {
+	accountManagerMock,
+	queryClientMock,
+	coordinatorMock,
+	upsertCoordinatorMock,
+	operationalRelayUrlsMock
+} = vi.hoisted(() => ({
 	accountManagerMock: { getActive: vi.fn() },
 	queryClientMock: { cancelQueries: vi.fn(), invalidateQueries: vi.fn() },
-	coordinatorMock: vi.fn()
+	coordinatorMock: vi.fn(),
+	upsertCoordinatorMock: vi.fn(),
+	operationalRelayUrlsMock: vi.fn()
 }));
 
 vi.mock('$app/environment', () => ({ browser: false, dev: false }));
 vi.mock('$lib/services/accountManager.svelte', () => ({ manager: accountManagerMock }));
-vi.mock('$lib/services/chatCoordinators.svelte', () => ({ getChatCoordinator: coordinatorMock }));
+vi.mock('$lib/services/chatCoordinators.svelte', () => ({
+	getChatCoordinator: coordinatorMock,
+	upsertChatCoordinator: upsertCoordinatorMock,
+	markCoordinatorRelaysResolved: vi.fn()
+}));
 vi.mock('$lib/query-client', () => ({ queryClient: queryClientMock }));
-vi.mock('$lib/services/relay-pool', () => ({ defaultRelays: [] }));
+vi.mock('$lib/services/relay-pool', () => ({ defaultRelays: [], metadataRelays: [] }));
+vi.mock('$lib/services/loaders.svelte', () => ({
+	addressLoader: vi.fn(),
+	createUserRelayListByPubkeyLoader: vi.fn(
+		() =>
+			({
+				subscribe: (handlers?: { complete?: () => void }) => {
+					handlers?.complete?.();
+					return { unsubscribe: () => undefined };
+				}
+			}) as unknown as ReturnType<typeof createUserRelayListByPubkeyLoader>
+	)
+}));
+vi.mock('$lib/services/eventStore', () => ({
+	eventStore: { getReplaceable: vi.fn() }
+}));
 vi.mock('$lib/services/coordinatorClient', () => {
 	class StubCordnClient {
 		private lifecycle = new AbortController();
@@ -20,10 +47,15 @@ vi.mock('$lib/services/coordinatorClient', () => {
 		relays: string[];
 		isSigning = false;
 		onHealth?: (signal: HealthSignal) => void;
-		constructor(options: { relays: string[]; onHealth?: (signal: HealthSignal) => void }) {
+		constructor(options: {
+			serverPubkey?: string;
+			relays: string[];
+			onHealth?: (signal: HealthSignal) => void;
+		}) {
 			this.relays = options.relays;
 			this.onHealth = options.onHealth;
 		}
+		operationalRelayUrls = operationalRelayUrlsMock;
 		get isClosed() {
 			return this.signal.aborted;
 		}
@@ -36,14 +68,19 @@ vi.mock('$lib/services/coordinatorClient', () => {
 
 import {
 	disconnectCoordinatorClients,
+	fetchAnnouncedCoordinatorRelays,
 	getCoordinatorClient,
 	probeCoordinatorClientPools,
 	rebuildAllCoordinatorClients,
+	refetchCoordinatorRelays,
 	replaceCoordinatorClient,
 	resolveCoordinatorRelays,
+	verifyCoordinatorRelays,
 	withCoordinatorClient,
 	withCoordinatorClientRetry
 } from './chatRuntime';
+import { eventStore } from '$lib/services/eventStore';
+import { createUserRelayListByPubkeyLoader } from '$lib/services/loaders.svelte';
 import { coordinatorHealthStore, getCoordinatorHealthTone } from './coordinatorHealth.svelte';
 
 const ACCOUNT = { id: 'acc-1', pubkey: 'aa'.repeat(32), signer: {} } as never;
@@ -63,6 +100,10 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	accountManagerMock.getActive.mockReturnValue(ACCOUNT);
 	coordinatorMock.mockReturnValue({ relays: ['wss://one.invalid'] });
+	vi.mocked(eventStore.getReplaceable).mockReset();
+	vi.mocked(eventStore.getReplaceable).mockReturnValue(undefined);
+	operationalRelayUrlsMock.mockReset();
+	operationalRelayUrlsMock.mockResolvedValue(['wss://answered.example.com']);
 });
 
 afterEach(async () => {
@@ -81,6 +122,78 @@ describe('resolveCoordinatorRelays', () => {
 		const saved = ['wss://relay.example.com'];
 		coordinatorMock.mockReturnValueOnce({ relays: saved });
 		expect(resolveCoordinatorRelays(COORDINATOR)).toBe(saved);
+	});
+});
+
+describe('fetchAnnouncedCoordinatorRelays', () => {
+	test('reads the latest announcement over stored ∪ app-default ∪ metadata ∪ SDK-bootstrap relays', async () => {
+		coordinatorMock.mockReturnValue({ relays: ['wss://stored.example.com'] });
+		vi.mocked(eventStore.getReplaceable).mockReturnValue({
+			tags: [
+				['r', 'wss://new.example.com'],
+				['r', 'wss://new.example.com', 'write'],
+				['r', 'garbage'],
+				['e', 'not-a-relay']
+			]
+		} as never);
+
+		await expect(fetchAnnouncedCoordinatorRelays(COORDINATOR)).resolves.toEqual([
+			'wss://new.example.com'
+		]);
+		expect(createUserRelayListByPubkeyLoader).toHaveBeenCalledWith(
+			COORDINATOR,
+			expect.arrayContaining(['wss://stored.example.com', 'wss://relay.damus.io'])
+		);
+	});
+
+	test('no announcement anywhere: []', async () => {
+		await expect(fetchAnnouncedCoordinatorRelays(COORDINATOR)).resolves.toEqual([]);
+	});
+});
+
+describe('verifyCoordinatorRelays', () => {
+	test('true when the coordinator completes an MCP connect on the announced relays', async () => {
+		operationalRelayUrlsMock.mockResolvedValue(['wss://new.example.com']);
+		await expect(verifyCoordinatorRelays(COORDINATOR, ['wss://new.example.com'])).resolves.toBe(
+			true
+		);
+	});
+
+	test('false when the connect fails — a fallback set is never returned', async () => {
+		operationalRelayUrlsMock.mockRejectedValue(new Error('unreachable'));
+		await expect(verifyCoordinatorRelays(COORDINATOR, ['wss://new.example.com'])).resolves.toBe(
+			false
+		);
+	});
+});
+
+describe('refetchCoordinatorRelays', () => {
+	test('announcement verified: replaces with the announced set', async () => {
+		vi.mocked(eventStore.getReplaceable).mockReturnValue({
+			tags: [['r', 'wss://new.example.com']]
+		} as never);
+		operationalRelayUrlsMock.mockResolvedValue(['wss://new.example.com']);
+
+		await expect(refetchCoordinatorRelays(COORDINATOR)).resolves.toEqual(['wss://new.example.com']);
+		expect(upsertCoordinatorMock).toHaveBeenCalledWith({
+			pubkey: COORDINATOR,
+			relays: ['wss://new.example.com']
+		});
+	});
+
+	test('no published relay list: keeps the stored set', async () => {
+		await expect(refetchCoordinatorRelays(COORDINATOR)).resolves.toEqual([]);
+		expect(upsertCoordinatorMock).not.toHaveBeenCalled();
+	});
+
+	test('announcement unverified: throws and keeps the stored set', async () => {
+		vi.mocked(eventStore.getReplaceable).mockReturnValue({
+			tags: [['r', 'wss://new.example.com']]
+		} as never);
+		operationalRelayUrlsMock.mockRejectedValue(new Error('no answer'));
+
+		await expect(refetchCoordinatorRelays(COORDINATOR)).rejects.toThrow('announced relays');
+		expect(upsertCoordinatorMock).not.toHaveBeenCalled();
 	});
 });
 

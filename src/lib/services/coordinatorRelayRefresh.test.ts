@@ -6,31 +6,15 @@ vi.mock('$lib/services/accountManager.svelte', () => ({
 }));
 vi.mock('$lib/services/chatGroups.svelte', () => ({ listChatGroups: () => [] }));
 vi.mock('$lib/services/chatKeyPackages.svelte', () => ({ listChatKeyPackages: () => [] }));
-vi.mock('$lib/services/eventStore', () => ({
-	eventStore: {
-		getReplaceable: vi.fn(),
-		model: vi.fn(() => ({ subscribe: () => ({ unsubscribe: () => undefined }) }))
-	}
-}));
-vi.mock('$lib/services/loaders.svelte', () => ({
-	addressLoader: vi.fn(),
-	createUserRelayListByPubkeyLoader: vi.fn(
-		() =>
-			({
-				subscribe: (handlers?: { complete?: () => void }) => {
-					handlers?.complete?.();
-					return { unsubscribe: () => undefined };
-				}
-			}) as unknown as ReturnType<typeof createUserRelayListByPubkeyLoader>
-	)
-}));
 vi.mock('$lib/services/chatRuntime', () => ({
-	resolveCoordinatorRelaysFromNetwork: vi.fn()
+	fetchAnnouncedCoordinatorRelays: vi.fn(),
+	verifyCoordinatorRelays: vi.fn()
 }));
 
-import { eventStore } from '$lib/services/eventStore';
-import { createUserRelayListByPubkeyLoader } from '$lib/services/loaders.svelte';
-import { resolveCoordinatorRelaysFromNetwork } from '$lib/services/chatRuntime';
+import {
+	fetchAnnouncedCoordinatorRelays,
+	verifyCoordinatorRelays
+} from '$lib/services/chatRuntime';
 import { getChatCoordinator, upsertChatCoordinator } from './chatCoordinators.svelte';
 import {
 	maybeRefreshCoordinatorRelaysOnOutage,
@@ -40,13 +24,12 @@ import {
 const COORDINATOR = 'a'.repeat(64);
 const OTHER_COORDINATOR = 'b'.repeat(64);
 const OLD = ['wss://old.example.com'];
+const NEW = ['wss://new.example.com'];
 const T0 = 1_000_000;
 const HOUR = 60 * 60 * 1000;
 
-function announce(tags: string[][]) {
-	vi.mocked(eventStore.getReplaceable).mockReturnValue({
-		tags
-	} as unknown as ReturnType<typeof eventStore.getReplaceable>);
+function announce(relays: string[]) {
+	vi.mocked(fetchAnnouncedCoordinatorRelays).mockResolvedValue(relays);
 }
 
 function seedCoordinator(pubkey: string, relays: string[]) {
@@ -56,8 +39,8 @@ function seedCoordinator(pubkey: string, relays: string[]) {
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.spyOn(Date, 'now').mockReturnValue(T0);
-	vi.mocked(eventStore.getReplaceable).mockReturnValue(undefined);
-	vi.mocked(resolveCoordinatorRelaysFromNetwork).mockResolvedValue([]);
+	vi.mocked(fetchAnnouncedCoordinatorRelays).mockResolvedValue([]);
+	vi.mocked(verifyCoordinatorRelays).mockResolvedValue(true);
 });
 
 describe('sweepStaleCoordinatorRelays', () => {
@@ -69,15 +52,12 @@ describe('sweepStaleCoordinatorRelays', () => {
 
 		expect(getChatCoordinator(COORDINATOR)?.relays).toEqual(OLD);
 		expect(getChatCoordinator(COORDINATOR)?.relaysResolvedAt).toBe(T0 + 25 * HOUR);
-		expect(resolveCoordinatorRelaysFromNetwork).not.toHaveBeenCalled();
+		expect(verifyCoordinatorRelays).not.toHaveBeenCalled();
 	});
 
-	test('unchanged announcement (order-insensitive): keeps relays, no resolve', async () => {
+	test('unchanged announcement (order-insensitive): keeps relays, no verify', async () => {
 		seedCoordinator(COORDINATOR, ['wss://a.example.com', 'wss://b.example.com']);
-		announce([
-			['r', 'wss://b.example.com'],
-			['r', 'wss://a.example.com']
-		]);
+		announce(['wss://b.example.com', 'wss://a.example.com']);
 		vi.spyOn(Date, 'now').mockReturnValue(T0 + 25 * HOUR);
 
 		await sweepStaleCoordinatorRelays();
@@ -87,31 +67,24 @@ describe('sweepStaleCoordinatorRelays', () => {
 			'wss://b.example.com'
 		]);
 		expect(getChatCoordinator(COORDINATOR)?.relaysResolvedAt).toBe(T0 + 25 * HOUR);
-		expect(resolveCoordinatorRelaysFromNetwork).not.toHaveBeenCalled();
+		expect(verifyCoordinatorRelays).not.toHaveBeenCalled();
 	});
 
-	test('changed announcement + verified subset: adopts the resolved set', async () => {
+	test('changed announcement + verified: adopts the announced set verbatim', async () => {
 		seedCoordinator(COORDINATOR, OLD);
-		announce([
-			['r', 'wss://new.example.com'],
-			['r', 'wss://new.example.com', 'write']
-		]);
-		vi.mocked(resolveCoordinatorRelaysFromNetwork).mockResolvedValue(['wss://new.example.com']);
+		announce(NEW);
 		vi.spyOn(Date, 'now').mockReturnValue(T0 + 25 * HOUR);
 
 		await sweepStaleCoordinatorRelays();
 
-		expect(getChatCoordinator(COORDINATOR)?.relays).toEqual(['wss://new.example.com']);
-		expect(resolveCoordinatorRelaysFromNetwork).toHaveBeenCalledWith(COORDINATOR, {
-			discoveryRelayUrls: expect.arrayContaining(OLD)
-		});
+		expect(getChatCoordinator(COORDINATOR)?.relays).toEqual(NEW);
+		expect(verifyCoordinatorRelays).toHaveBeenCalledWith(COORDINATOR, NEW);
 	});
 
-	test('changed announcement + fallback answer outside the announcement: keeps relays', async () => {
+	test('changed announcement but no MCP answer on it: keeps relays', async () => {
 		seedCoordinator(COORDINATOR, OLD);
-		announce([['r', 'wss://new.example.com']]);
-		// SDK fallback set — reachable, but no evidence about this coordinator.
-		vi.mocked(resolveCoordinatorRelaysFromNetwork).mockResolvedValue(['wss://relay.contextvm.org']);
+		announce(NEW);
+		vi.mocked(verifyCoordinatorRelays).mockResolvedValue(false);
 		vi.spyOn(Date, 'now').mockReturnValue(T0 + 25 * HOUR);
 
 		await sweepStaleCoordinatorRelays();
@@ -120,10 +93,9 @@ describe('sweepStaleCoordinatorRelays', () => {
 		expect(getChatCoordinator(COORDINATOR)?.relaysResolvedAt).toBe(T0 + 25 * HOUR);
 	});
 
-	test('resolve failure: keeps relays, bumps stamp, no throw', async () => {
+	test('announcement read failure: keeps relays, bumps stamp, no throw', async () => {
 		seedCoordinator(COORDINATOR, OLD);
-		announce([['r', 'wss://new.example.com']]);
-		vi.mocked(resolveCoordinatorRelaysFromNetwork).mockRejectedValue(new Error('boom'));
+		vi.mocked(fetchAnnouncedCoordinatorRelays).mockRejectedValue(new Error('boom'));
 		vi.spyOn(Date, 'now').mockReturnValue(T0 + 25 * HOUR);
 
 		await expect(sweepStaleCoordinatorRelays()).resolves.toBeUndefined();
@@ -139,54 +111,51 @@ describe('sweepStaleCoordinatorRelays', () => {
 
 		await sweepStaleCoordinatorRelays();
 
-		expect(createUserRelayListByPubkeyLoader).not.toHaveBeenCalled();
+		expect(fetchAnnouncedCoordinatorRelays).not.toHaveBeenCalled();
 	});
 
 	test('one broken coordinator never blocks the others', async () => {
 		seedCoordinator(COORDINATOR, OLD);
 		seedCoordinator(OTHER_COORDINATOR, OLD);
-		announce([['r', 'wss://new.example.com']]);
-		vi.mocked(resolveCoordinatorRelaysFromNetwork).mockImplementation(async (key) => {
+		vi.mocked(fetchAnnouncedCoordinatorRelays).mockImplementation(async (key) => {
 			if (key === COORDINATOR) throw new Error('boom');
-			return ['wss://new.example.com'];
+			return NEW;
 		});
 		vi.spyOn(Date, 'now').mockReturnValue(T0 + 25 * HOUR);
 
 		await sweepStaleCoordinatorRelays();
 
 		expect(getChatCoordinator(COORDINATOR)?.relays).toEqual(OLD);
-		expect(getChatCoordinator(OTHER_COORDINATOR)?.relays).toEqual(['wss://new.example.com']);
+		expect(getChatCoordinator(OTHER_COORDINATOR)?.relays).toEqual(NEW);
 	});
 
 	test('concurrent sweeps share one in-flight refresh per coordinator', async () => {
 		seedCoordinator(COORDINATOR, OLD);
-		announce([['r', 'wss://new.example.com']]);
-		vi.mocked(resolveCoordinatorRelaysFromNetwork).mockResolvedValue(['wss://new.example.com']);
+		announce(NEW);
 		vi.spyOn(Date, 'now').mockReturnValue(T0 + 25 * HOUR);
 
 		await Promise.all([sweepStaleCoordinatorRelays(), sweepStaleCoordinatorRelays()]);
 
-		expect(createUserRelayListByPubkeyLoader).toHaveBeenCalledTimes(1);
+		expect(fetchAnnouncedCoordinatorRelays).toHaveBeenCalledTimes(1);
 	});
 });
 
 describe('maybeRefreshCoordinatorRelaysOnOutage', () => {
 	test('min-interval gate, then adopt; next attempt gated by the new stamp', async () => {
 		seedCoordinator(COORDINATOR, OLD); // stamped T0
-		announce([['r', 'wss://new.example.com']]);
-		vi.mocked(resolveCoordinatorRelaysFromNetwork).mockResolvedValue(['wss://new.example.com']);
+		announce(NEW);
 
 		vi.spyOn(Date, 'now').mockReturnValue(T0 + 5 * 60 * 1000);
 		await expect(maybeRefreshCoordinatorRelaysOnOutage(COORDINATOR)).resolves.toBe(false);
-		expect(resolveCoordinatorRelaysFromNetwork).not.toHaveBeenCalled();
+		expect(fetchAnnouncedCoordinatorRelays).not.toHaveBeenCalled();
 
 		vi.spyOn(Date, 'now').mockReturnValue(T0 + 16 * 60 * 1000);
 		await expect(maybeRefreshCoordinatorRelaysOnOutage(COORDINATOR)).resolves.toBe(true);
-		expect(getChatCoordinator(COORDINATOR)?.relays).toEqual(['wss://new.example.com']);
+		expect(getChatCoordinator(COORDINATOR)?.relays).toEqual(NEW);
 
 		vi.spyOn(Date, 'now').mockReturnValue(T0 + 20 * 60 * 1000);
 		await expect(maybeRefreshCoordinatorRelaysOnOutage(COORDINATOR)).resolves.toBe(false);
-		expect(resolveCoordinatorRelaysFromNetwork).toHaveBeenCalledTimes(1);
+		expect(fetchAnnouncedCoordinatorRelays).toHaveBeenCalledTimes(1);
 	});
 
 	test('unknown coordinator and empty-relay coordinators: false, no work', async () => {
@@ -194,6 +163,6 @@ describe('maybeRefreshCoordinatorRelaysOnOutage', () => {
 		upsertChatCoordinator({ pubkey: OTHER_COORDINATOR });
 		vi.spyOn(Date, 'now').mockReturnValue(T0 + 25 * HOUR);
 		await expect(maybeRefreshCoordinatorRelaysOnOutage(OTHER_COORDINATOR)).resolves.toBe(false);
-		expect(createUserRelayListByPubkeyLoader).not.toHaveBeenCalled();
+		expect(fetchAnnouncedCoordinatorRelays).not.toHaveBeenCalled();
 	});
 });

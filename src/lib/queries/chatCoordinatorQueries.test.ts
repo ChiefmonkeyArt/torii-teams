@@ -26,7 +26,12 @@ vi.mock('$lib/services/chatKeyPackages.svelte', () => ({
 	decodeStoredKeyPackage: vi.fn()
 }));
 vi.mock('$lib/services/chatMlsUtils', () => ({ previewGroupMetadataFromWelcome: vi.fn() }));
-vi.mock('$lib/services/relay-pool', () => ({ defaultRelays: ['wss://offline.invalid'] }));
+vi.mock('$lib/services/relay-pool', () => ({
+	defaultRelays: ['wss://offline.invalid'],
+	metadataRelays: [],
+	commonRelays: [],
+	relayPool: {}
+}));
 vi.mock('$lib/query-client', async () => {
 	const { QueryClient } = await import('@tanstack/svelte-query');
 	return {

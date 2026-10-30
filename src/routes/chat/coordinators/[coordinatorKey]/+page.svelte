@@ -241,14 +241,18 @@
 	let refetchingRelays = $state(false);
 	let refetchRelaysError = $state('');
 
-	/** Explicit relay re-resolution: overwrites the stored set (a coordinator
-	 *  that moved relays gets fixed here; automatic persistence only fills). */
+	/** Explicit relay re-resolution: adopts the coordinator's ANNOUNCED relays
+	 *  (kind:10002) once they answer a full MCP connect — never an SDK
+	 *  fallback set — and overwrites the stored set (automatic persistence
+	 *  only fills). */
 	async function refetchRelays() {
 		refetchingRelays = true;
 		refetchRelaysError = '';
 		try {
 			const urls = await refetchCoordinatorRelays(coordinatorKey);
-			if (!urls.length) refetchRelaysError = 'No relays found — keeping the current set.';
+			if (!urls.length) {
+				refetchRelaysError = 'No published relay list found — keeping the current set.';
+			}
 		} catch (error) {
 			refetchRelaysError = errorMessage(error);
 		} finally {
