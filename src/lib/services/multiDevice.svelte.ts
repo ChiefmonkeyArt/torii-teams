@@ -238,7 +238,8 @@ export interface MultiDeviceOwnerConfig {
 	 * record): written when we seal a document — only after the tip rewrite
 	 * lands on relays — or adopt a peer document. A §8 'skipped' outcome is
 	 * deliberately NOT written — a skip is local ahead of the tip, i.e. an owed
-	 * push. The strictly-ahead diff vs this record (`diffStaleGroupEpochs`)
+	 * push; same-state 'converged' outcomes ARE written. The strictly-ahead diff
+	 * vs this record (`diffStaleGroupEpochs`)
 	 * heals changes stranded by a deferred / failed / process-killed publish;
 	 * absent entry = unknown = quiet (no migration: a pre-existing strand stays
 	 * as stranded as today until the next op in that group, no worse).
@@ -517,12 +518,18 @@ export function setMultiDeviceBlossomServers(servers: string[]): void {
 		.map((s) => s.trim())
 		.filter((s) => s.length > 0)
 		.filter((s) => (seen.includes(s) ? false : (seen.push(s), true)));
-	config.blossomServers = normalized.length ? normalized : DEFAULT_BLOSSOM_SERVERS;
+	const next = normalized.length ? normalized : DEFAULT_BLOSSOM_SERVERS;
+	// Save Advanced also saves relays, so it calls this setter even when hosting
+	// did not change. Do not turn that no-op into a fleet-wide group re-seal.
+	if (
+		config.blossomServers.length === next.length &&
+		config.blossomServers.every((server, index) => server === next[index])
+	)
+		return;
+	config.blossomServers = next;
 	saveConfig(config);
-	// The document addresses are stable (content-addressed), so a server change
-	// only needs the tip re-published with the new server list — but republishing
-	// also re-uploads to the new primary, guaranteeing it's reachable. Cheap; just
-	// do it. Full re-publish (every group doc + meta) re-uploads them all.
+	// A real host change re-uploads every document so each advertised host holds
+	// the full inventory, then re-publishes the tip with the new server list.
 	void scheduleRepublish({ resealGroups: 'all', resealMeta: true });
 }
 
@@ -1335,15 +1342,14 @@ async function applyTip(
 		dropped: 0,
 		ignored: 0
 	};
-	// gids whose fetched document was at a local epoch ≥ incoming (the §8 'skipped'
-	// outcome). Collected for the read-path divergence diff (§8/§10.5 "local
-	// ahead of tip") — the write path (publish's reconcile-before-push) ignores it.
+	// Gids whose fetched document was STRICTLY older than local (the §8 'skipped'
+	// outcome). A same-state re-seal is 'converged' and must not echo another
+	// publish. Collected for §8/§10.5 "local ahead of tip"; the write path ignores it.
 	const localAheadGids: string[] = [];
-	// Epochs adopted from the tip this pass (seed / fast-forward): recording them
-	// marks local state as reflected-by-the-tip WITHOUT a push, keeping the
-	// stale-epoch diff quiet for adopted (converged) groups. Skips are
-	// deliberately absent — a skip is the owed-push signal itself. Caller's
-	// setLastSeenTip persists this alongside the new tip addresses.
+	// Epochs reflected by the tip this pass (seed / fast-forward / same-state
+	// converged): recording them keeps the stale-epoch diff quiet WITHOUT a push.
+	// Skips are deliberately absent — a skip is the owed-push signal itself.
+	// Caller's setLastSeenTip persists this alongside the new tip addresses.
 	const adoptionEpochs: Record<string, string> = {};
 
 	// Reconcile changed groups in parallel — each gid writes its own storage key +
@@ -1384,10 +1390,12 @@ async function applyTip(
 				else if (outcome === 'fast-forwarded') counts.fastForwarded++;
 				else if (outcome === 'fork-resolved') {
 					counts.forkResolved = (counts.forkResolved ?? 0) + 1;
+				} else if (outcome === 'converged') {
+					// Same epoch + fingerprint: the tip already reflects local state.
+					counts.ignored++;
 				} else {
 					counts.skipped++;
-					// §8 skip ⟺ local epoch ≥ document epoch ⟺ local is ahead of the tip
-					// for this gid. Record for the read-path divergence diff.
+					// A skip leaves local strictly ahead of the fetched document.
 					localAheadGids.push(group.gid);
 				}
 				if (outcome !== 'skipped') {
@@ -2330,9 +2338,9 @@ async function handleTipEvent(
 		//    backup-restore. A tombstoned-stale gid (epoch below local) is absent
 		//    from the group list too, so it lands here — republishing it is the §8
 		//    resurrection, which is correct.
-		//  - `epochsAhead`: gids whose fetched document was at a local epoch ≥
-		//    incoming (the §8 'skipped' outcome). Catches a peer tip re-delivering a
-		//    doc we already surpassed.
+		//  - `epochsAhead`: gids whose fetched document was STRICTLY older than
+		//    local (the §8 'skipped' outcome). Catches a peer tip re-delivering a
+		//    doc we already surpassed; same-state re-seals are 'converged' instead.
 		//  - `staleEpochs`: local strictly ahead of the owed-push record
 		//    (§10.5). Closes the former residual — a republish interrupted by tab
 		//    close / a deferred or failed push — which neither signal above can see
@@ -2430,6 +2438,7 @@ function makeReconcileTarget(catchUp?: {
 				localFingerprint: stateFingerprint(localState)
 			});
 			if (decision === 'skipped') return 'skipped';
+			if (decision === 'converged') return 'converged';
 			// A newer-epoch document is an advance only when its branch descends
 			// from the local state (spec §8): the `prev` chain either passes through
 			// our state at our epoch, or meets a state we held at an earlier epoch —

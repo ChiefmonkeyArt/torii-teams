@@ -477,7 +477,7 @@ describe('decideGroupDocumentApply (spec §8 forward-only + spec §10 detection)
 		);
 	});
 
-	test('equal epoch + same fingerprint is advisory — a re-publish is not a fork', () => {
+	test('equal epoch + same fingerprint is converged, never an owed push', () => {
 		expect(
 			decideGroupDocumentApply({
 				incomingEpoch: 5n,
@@ -485,7 +485,7 @@ describe('decideGroupDocumentApply (spec §8 forward-only + spec §10 detection)
 				incomingFingerprint: FP,
 				localFingerprint: FP
 			})
-		).toBe('skipped');
+		).toBe('converged');
 	});
 
 	test('equal epoch + different fingerprints is the §10 fork signal', () => {
@@ -1200,9 +1200,10 @@ describe('diffLocalAhead (spec §8/§10.5: groups the tip lacks + higher local e
 		expect(ahead).toEqual(['g1', 'g2', 'g3']);
 	});
 
-	test('a gid whose document was fetched but local epoch ≥ incoming is ahead', () => {
+	test('a gid whose fetched document is strictly older than local is ahead', () => {
 		// The missed-self-echo case: a peer tip re-delivered a doc we already
-		// surpassed; the §8 'skipped' outcome is the local-ahead signal.
+		// surpassed; the §8 'skipped' outcome is the local-ahead signal. Equal-state
+		// re-seals are 'converged' and never enter this input.
 		const ahead = diffLocalAhead({
 			localGids: ['g1'],
 			tipGids: ['g1'],
