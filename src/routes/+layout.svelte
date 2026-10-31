@@ -10,6 +10,7 @@
 	import { onMount } from 'svelte';
 	import { initNativeShell } from '$lib/services/nativeBridge';
 	import { initAppearance } from '$lib/themes/appearance.svelte';
+	import { initToriiNode } from '$lib/torii/nodeConfig';
 	import { defineCustomElements } from '@ionic/pwa-elements/loader';
 
 	let { children } = $props();
@@ -38,6 +39,8 @@
 		// Re-apply the stored theme post-hydration (the app.html inline script has
 		// already painted it) and run the one-time default migration.
 		void initAppearance();
+		// Torii Teams: on a Torii node, add the node's coordinator (404 elsewhere).
+		void initToriiNode();
 	});
 </script>
 

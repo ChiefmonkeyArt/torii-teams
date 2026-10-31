@@ -1,0 +1,70 @@
+name: torii-release
+
+# Torii Teams web build for Torii nodes. Runs only on Torii tags such as
+# 0.6.1-torii.1 (no "v" prefix, so the upstream APK release on v* tags never fires).
+# Output: torii-teams-<tag>.tar.gz + .sha256 (sha256sum -c) + MANIFEST.json, with
+# a build-provenance attestation. The Suite installer downloads and verifies these.
+
+on:
+  push:
+    tags: ['[0-9]*-torii.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: torii-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # create the GitHub release
+      id-token: write # build provenance
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm exec vitest run --project server
+      - run: pnpm lint
+      - run: pnpm build
+      - name: Package
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          test ! -e build/torii-node.json # node settings are written by the installer, never shipped
+          name="torii-teams-${TAG}"
+          mkdir -p dist
+          jq -n --arg tag "$TAG" --arg commit "$GITHUB_SHA" \
+            --arg version "$(jq -r .version package.json)" \
+            --arg built "$(git log -1 --format=%cI)" \
+            '{app:"torii-teams",tag:$tag,version:$version,commit:$commit,built_at:$built}' \
+            > build/MANIFEST.json
+          cp build/MANIFEST.json dist/MANIFEST.json
+          # Reproducible tarball: fixed order, owner, and mtime.
+          tar --sort=name --owner=0 --group=0 --numeric-owner \
+            --mtime="$(git log -1 --format=%cI)" \
+            -C build -czf "dist/${name}.tar.gz" .
+          (cd dist && sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256")
+          cat "dist/${name}.tar.gz.sha256"
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/torii-teams-*.tar.gz
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/* --prerelease --verify-tag \
+            --title "Torii Teams $TAG" \
+            --notes "Torii Teams web build for Torii nodes. Verify with: sha256sum -c torii-teams-${TAG}.tar.gz.sha256"

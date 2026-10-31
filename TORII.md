@@ -38,13 +38,13 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 
 ## Status
 
-| Step                                                                      | State                                                      |
-| ------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| J1 slice 1: action kind, role-checked fold, panel views, `/action` parser | Merged (PR #1)                                             |
-| J1 slice 2: chat wiring (see below)                                       | Merged (PR #2)                                             |
-| J1 slice 3: whole-history fold, edit form, Assign to me                   | In review                                                  |
-| Continuum mount (TEAMS-2c a)                                              | After J1                                                   |
-| Live use on a node                                                        | Needs a coordinator on the node (TEAMS-2b, Continuum side) |
+| Step                                                                      | State                                                    |
+| ------------------------------------------------------------------------- | -------------------------------------------------------- |
+| J1 slice 1: action kind, role-checked fold, panel views, `/action` parser | Merged (PR #1)                                           |
+| J1 slice 2: chat wiring (see below)                                       | Merged (PR #2)                                           |
+| J1 slice 3: whole-history fold, edit form, Assign to me                   | Merged (PR #3)                                           |
+| Continuum mount (TEAMS-2c a): node settings, release workflow, ADR 0001   | In review; first tag and deploy need owner approval      |
+| Live use on a node                                                        | Needs the Suite installer step (Continuum Teams session) |
 
 ### Using actions (J1 slice 2)
 
@@ -75,11 +75,22 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 The action kind number (provisionally 1012) must be agreed with Cordn before any
 release.
 
+## On a Torii node
+
+Served at `https://teams.<domain>/` on its own origin, so chat keys stay apart
+from Quest and Continuum. At start the app reads `/torii-node.json`, written by
+the Suite installer, and adds the node's coordinator and relay. It becomes the
+default only on a fresh device or if this node set the old default; a default
+the member chose is never changed. Without the file the app is plain
+cordn-web. Details: [`docs/torii/adr-0001-node-mount.md`](docs/torii/adr-0001-node-mount.md).
+
 ## Versions
 
 `<upstream version>-torii.<n>`, for example `0.6.1-torii.1`. The first tag is cut
 when the app is first deployed (the Continuum mount); until then nothing is
-tagged and `package.json` keeps the upstream version.
+tagged and `package.json` keeps the upstream version. A Torii tag runs
+`.github/workflows/torii-release.yml`, which publishes a checksummed web build
+for the Suite installer.
 
 ## Development
 
