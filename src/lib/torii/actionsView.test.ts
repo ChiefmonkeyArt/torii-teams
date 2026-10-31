@@ -15,12 +15,14 @@ import {
 	canCreateAction,
 	canPromoteAction,
 	createOutgoing,
+	draftFromAction,
 	draftFromSlash,
 	dueInputToUnix,
 	formError,
 	isTypingTarget,
 	nextStatuses,
 	openActionCount,
+	patchFromDraft,
 	promoteOutgoing,
 	removeSourceFromDraft,
 	resolveGroupRoles,
@@ -222,5 +224,57 @@ describe('small helpers', () => {
 	it('ignores non-elements for the typing check', () => {
 		expect(isTypingTarget(null)).toBe(false);
 		expect(isTypingTarget({} as EventTarget)).toBe(false);
+	});
+});
+
+describe('editing an action', () => {
+	const roleOf = resolveGroupRoles([ADMIN], [ADMIN, MEMBER]);
+	const created = stored(
+		MEMBER,
+		createOutgoing({
+			...addSourceToDraft(null, { eventId: MSG1, text: 'Write docs' }),
+			due: '2026-11-06'
+		})
+	);
+	const action = foldActions([created], roleOf).byId.get(created.id)!;
+
+	it('opens the form with the current values and fixed sources', () => {
+		const d = draftFromAction(action, (id) => (id === MSG1 ? 'the source' : undefined));
+		expect(d).toMatchObject({
+			title: 'Write docs',
+			type: 'todo',
+			owner: '',
+			due: '2026-11-06',
+			editing: action.id
+		});
+		expect(d.sources).toEqual([{ id: MSG1, preview: 'the source' }]);
+		expect(draftFromAction(action, () => undefined).sources[0].preview).toBe('Earlier message');
+	});
+
+	it('sends only what changed', () => {
+		const d = draftFromAction(action, () => undefined);
+		expect(patchFromDraft(action, d)).toBeNull();
+		expect(patchFromDraft(action, { ...d, title: ' Write the docs ' })).toEqual({
+			title: 'Write the docs'
+		});
+		expect(patchFromDraft(action, { ...d, owner: MEMBER, due: '' })).toEqual({
+			owner: MEMBER,
+			due: null
+		});
+		expect(patchFromDraft(action, { ...d, due: '2026-11-07', type: 'question' })).toEqual({
+			type: 'question',
+			due: dueInputToUnix('2026-11-07')
+		});
+	});
+
+	it('an update built from the patch lands in the fold', () => {
+		const d = {
+			...draftFromAction(action, () => undefined),
+			title: 'Write the docs',
+			owner: MEMBER
+		};
+		const out = updateOutgoing(action.id, patchFromDraft(action, d)!);
+		const after = foldActions([created, stored(MEMBER, out)], roleOf).byId.get(action.id)!;
+		expect(after).toMatchObject({ title: 'Write the docs', owner: MEMBER });
 	});
 });

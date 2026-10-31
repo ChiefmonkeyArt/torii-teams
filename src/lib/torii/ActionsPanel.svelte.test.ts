@@ -8,6 +8,7 @@ import { foldActions, type ActionState } from '$lib/chat/actions';
 import type { StoredChatMessage } from '$lib/services/chatGroupMessages.svelte';
 import {
 	addSourceToDraft,
+	draftFromAction,
 	createOutgoing,
 	promoteOutgoing,
 	resolveGroupRoles,
@@ -72,6 +73,8 @@ function render(props: Record<string, unknown>) {
 		onSave: vi.fn(),
 		onStatus: vi.fn(),
 		onPromote: vi.fn(),
+		onEdit: vi.fn(),
+		onAssign: vi.fn(),
 		onJump: vi.fn(),
 		onClose: vi.fn()
 	};
@@ -162,4 +165,32 @@ test('decisions tab lists decisions only', () => {
 	const cards = target.querySelectorAll('[data-action-id]');
 	expect(cards).toHaveLength(1);
 	expect(cards[0].textContent).toContain('Use SQLite');
+});
+
+test('Edit and Assign to me appear for people who may change the action', () => {
+	const { state, codeId } = makeState();
+	const { target, handlers } = render({ actionState: state, me: ADMIN });
+	const card = target.querySelector(`[data-action-id="${codeId}"]`)!;
+	const button = (label: string) =>
+		[...card.querySelectorAll('button')].find((b) => b.textContent?.trim() === label);
+	button('Assign to me')!.click();
+	expect(handlers.onAssign.mock.calls[0][0].id).toBe(codeId);
+	button('Edit')!.click();
+	expect(handlers.onEdit.mock.calls[0][0].id).toBe(codeId);
+	// Done actions can be edited but not assigned.
+	const done = state.actions.find((a) => a.status === 'done')!;
+	const doneCard = target.querySelector(`[data-action-id="${done.id}"]`)!;
+	const doneLabels = [...doneCard.querySelectorAll('button')].map((b) => b.textContent?.trim());
+	expect(doneLabels).toContain('Edit');
+	expect(doneLabels).not.toContain('Assign to me');
+});
+
+test('edit mode keeps sources fixed and says so', () => {
+	const { state, codeId } = makeState();
+	const draft = draftFromAction(state.byId.get(codeId)!, () => 'Write importer');
+	const { target } = render({ actionState: state, me: ADMIN, draft });
+	const form = target.querySelector<HTMLFormElement>('form[aria-label="Edit action"]')!;
+	expect(form.querySelector('h3')?.textContent).toBe('Edit action');
+	expect(form.querySelector('[aria-label="Remove this message"]')).toBeNull();
+	expect(form.textContent).not.toContain('Tip:');
 });

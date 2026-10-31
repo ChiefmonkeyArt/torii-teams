@@ -39,6 +39,8 @@
 		onSave,
 		onStatus,
 		onPromote,
+		onEdit,
+		onAssign,
 		onJump,
 		onClose
 	}: {
@@ -50,6 +52,8 @@
 		onSave: (draft: ActionFormDraft) => void;
 		onStatus: (action: Action, status: ActionStatus) => void;
 		onPromote: (action: Action) => void;
+		onEdit: (action: Action) => void;
+		onAssign: (action: Action) => void;
 		onJump: (eventId: string) => void;
 		onClose: () => void;
 	} = $props();
@@ -129,8 +133,9 @@
 			<form
 				class="space-y-3 border-b border-border bg-muted/30 px-4 py-3"
 				onsubmit={save}
-				aria-label="New action"
+				aria-label={draft.editing ? 'Edit action' : 'New action'}
 			>
+				<h3 class="text-xs font-semibold">{draft.editing ? 'Edit action' : 'New action'}</h3>
 				<label class="block space-y-1 text-xs font-medium text-muted-foreground">
 					<span>Title</span>
 					<input
@@ -197,18 +202,22 @@
 						{#each draft.sources as source (source.id)}
 							<li class="flex items-center gap-2 rounded-lg bg-background px-2 py-1">
 								<span class="min-w-0 flex-1 truncate text-foreground/90">{source.preview}</span>
-								<Button
-									type="button"
-									size="icon-xs"
-									variant="ghost"
-									aria-label="Remove this message"
-									onclick={() => draft && (draft = removeSourceFromDraft(draft, source.id))}
-									><X /></Button
-								>
+								{#if !draft.editing}
+									<Button
+										type="button"
+										size="icon-xs"
+										variant="ghost"
+										aria-label="Remove this message"
+										onclick={() => draft && (draft = removeSourceFromDraft(draft, source.id))}
+										><X /></Button
+									>
+								{/if}
 							</li>
 						{/each}
 					</ul>
-					<p>Tip: use “Make action” on more messages to add them.</p>
+					{#if !draft.editing}
+						<p>Tip: use “Make action” on more messages to add them.</p>
+					{/if}
 				</div>
 
 				{#if error}
@@ -285,6 +294,10 @@
 		{#if editable || canPromoteAction(action, me, roleOf)}
 			<div class="mt-2 flex flex-wrap gap-1">
 				{#if editable}
+					<Button size="xs" variant="ghost" onclick={() => onEdit(action)}>Edit</Button>
+					{#if action.owner !== me && (action.status === 'open' || action.status === 'in_progress')}
+						<Button size="xs" variant="ghost" onclick={() => onAssign(action)}>Assign to me</Button>
+					{/if}
 					{#each nextStatuses(action.status) as next (next.status)}
 						<Button size="xs" variant="outline" onclick={() => onStatus(action, next.status)}
 							>{next.label}</Button

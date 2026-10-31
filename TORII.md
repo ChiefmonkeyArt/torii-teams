@@ -41,8 +41,8 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | Step                                                                      | State                                                      |
 | ------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | J1 slice 1: action kind, role-checked fold, panel views, `/action` parser | Merged (PR #1)                                             |
-| J1 slice 2: chat wiring (see below)                                       | In review                                                  |
-| J1 slice 3: fold the whole history, edit form, owner/due quick edits      | Next                                                       |
+| J1 slice 2: chat wiring (see below)                                       | Merged (PR #2)                                             |
+| J1 slice 3: whole-history fold, edit form, Assign to me                   | In review                                                  |
 | Continuum mount (TEAMS-2c a)                                              | After J1                                                   |
 | Live use on a node                                                        | Needs a coordinator on the node (TEAMS-2b, Continuum side) |
 
@@ -63,9 +63,14 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 - **In the chat.** Messages that became actions show a small list badge.
   Creating, finishing, dropping or promoting an action draws a one-line note in
   the chat. These notes are drawn on each device from the log, never sent.
-- **Known limit.** The panel folds the messages loaded in this chat window, like
-  pins. Very old actions appear once older history is loaded; slice 3 adds a
-  whole-history fold.
+- **Edit and assign.** "Edit" on a card reopens the form to change the title, type,
+  owner or due date (only changed fields are sent; sources stay fixed). "Assign to
+  me" takes an open action in one click. Both appear only for people allowed to
+  change the action.
+- **Whole history.** When a chat opens, its stored history is read once (newest
+  first, 500 rows a page) and only action ops are kept, so old actions show without
+  scrolling back. The eye button can jump to a source message that is no longer
+  loaded.
 
 The action kind number (provisionally 1012) must be agreed with Cordn before any
 release.
