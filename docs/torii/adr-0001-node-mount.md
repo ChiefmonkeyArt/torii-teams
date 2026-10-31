@@ -79,6 +79,10 @@ the installer sets both. The app does not use it yet.
   a reproducible `torii-teams-<tag>.tar.gz`, a `.sha256` file and
   `MANIFEST.json`, with a build-provenance attestation, on a GitHub
   pre-release. Tags without the `v` prefix do not trigger the upstream APK job.
+- The release drops upstream Cordn's `.well-known/` files (NIP-05 names and
+  Android app links for cordn.net) and Cloudflare `_headers`/`_redirects`: a
+  Torii node must not claim Cordn's identities. The Suite installer drops them
+  too and returns 404 for `/.well-known/` on the app host.
 - torii-suite installs it (proposed `installers/install-teams-app.sh`, opt-in,
   requires the Teams services): download, verify the checksum, unpack to
   `releases/<stamp>` with a `current` symlink, write `torii-node.json`, add the
@@ -92,9 +96,11 @@ Security headers (Suite server block): `Content-Security-Policy` with
 data: blob: https:`, `frame-ancestors 'none'`, `object-src 'none'`,
 `base-uri 'self'`; plus `Referrer-Policy: no-referrer`,
 `X-Content-Type-Options: nosniff` and HSTS. The exact CSP is tested against
-the built app before the first deploy; SvelteKit's inline start-up script
-needs a `script-src` hash (or `kit.csp` in `svelte.config.js`), and the MLS
-WebAssembly needs `'wasm-unsafe-eval'`.
+the built app: the Suite derives `script-src` hashes from the inline start-up
+scripts of each build (no `unsafe-eval`, no WebAssembly needed), and a real
+build ran under the policy in headless Chromium with no violations
+(torii-suite v0.9.27-alpha, `docs/TEAMS.md`). `connect-src` is `'self' https:
+wss:`, since members upload images to Blossom servers.
 
 ## 5. Deferred
 

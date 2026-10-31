@@ -43,6 +43,9 @@ jobs:
         run: |
           set -euo pipefail
           test ! -e build/torii-node.json # node settings are written by the installer, never shipped
+          # Upstream Cordn identity files (NIP-05 names, Android app links) and
+          # Cloudflare Pages rules do not belong on a Torii node.
+          rm -rf build/.well-known build/_headers build/_redirects
           name="torii-teams-${TAG}"
           mkdir -p dist
           jq -n --arg tag "$TAG" --arg commit "$GITHUB_SHA" \
