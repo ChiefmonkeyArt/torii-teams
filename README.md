@@ -1,5 +1,8 @@
 # Cordn
 
+> **Torii Teams:** this repository is the Torii Teams app, based on cordn-web. See
+> [`TORII.md`](TORII.md) for what Torii adds; the rest of this README is upstream's.
+
 > Private group messaging you can own.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)

@@ -24,7 +24,12 @@ export const ChatKinds = {
 	Poll: 1068,
 	/** NIP-88 poll response: `response` tags select option ids of the poll in
 	 *  its `e` tag. Never renders as a row — it is the poll's sparse aggregate. */
-	PollResponse: 1018
+	PollResponse: 1018,
+	/** Torii Teams action operation (create/update/status/promote) — see
+	 *  `src/lib/chat/actions.ts`. Never renders as a row: the actions panel and
+	 *  locally drawn status lines fold it. PROVISIONAL number, to be agreed
+	 *  with Cordn upstream before any release. */
+	Action: 1012
 } as const;
 
 /** Annotation kinds never render as a row — they mutate a primary message
@@ -48,5 +53,5 @@ export function isSystemKind(kind: number): boolean {
  *  kind-specific sparse aggregates (poll responses) that only feed their
  *  owning kind's renderer via a self-query. */
 export function isStreamHiddenKind(kind: number): boolean {
-	return isAnnotationKind(kind) || kind === ChatKinds.PollResponse;
+	return isAnnotationKind(kind) || kind === ChatKinds.PollResponse || kind === ChatKinds.Action;
 }
