@@ -28,6 +28,8 @@
 		onVisibleRead = () => {},
 		onOpenRich = () => {},
 		onPin = () => {},
+		onMakeAction,
+		onOpenAction,
 		onVote = () => Promise.resolve(false),
 		unreadReferenceCount = 0,
 		onNavigateToReference = () => {}
@@ -63,6 +65,9 @@
 		onVisibleRead?: (report: { cursor: number; atBottom: boolean }) => void;
 		onOpenRich?: (eventId: string) => void;
 		onPin?: (message: ChatMessage) => void;
+		/** Torii Teams: make an action from a message / open one. */
+		onMakeAction?: (message: ChatMessage) => void;
+		onOpenAction?: (actionId: string) => void;
 		/** Cast a poll vote (kind 1018): complete selection of option ids. */
 		onVote?: (message: ChatMessage, optionIds: string[]) => void | Promise<boolean>;
 	} = $props();
@@ -728,6 +733,8 @@
 								onNavigateToMessage={navigateToMessage}
 								{onOpenRich}
 								{onPin}
+								{onMakeAction}
+								{onOpenAction}
 								{onVote}
 								highlighted={highlightedMessageId === message.id}
 							/>

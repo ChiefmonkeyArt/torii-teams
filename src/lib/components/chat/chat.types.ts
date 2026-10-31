@@ -31,9 +31,18 @@ export interface ChatMessage {
 	/** True when this message is currently in the group's derived pin set. */
 	pinned?: boolean;
 	pinnedBy?: string;
+	/** Torii Teams: newest action made from this message (badge). */
+	actionBadge?: { actionId: string; status: string; count: number };
 	unreadReference?: boolean;
 	unreadReferenceCursor?: number;
-	systemKind?: 'member-added' | 'member-removed' | 'metadata-changed' | 'commit-lost' | 'reaction';
+	systemKind?:
+		| 'member-added'
+		| 'member-removed'
+		| 'metadata-changed'
+		| 'commit-lost'
+		| 'reaction'
+		/** Torii Teams: a local status line derived from the action log. */
+		| 'action';
 	systemTarget?: string;
 	systemCommitter?: string;
 	systemDetail?: string;
