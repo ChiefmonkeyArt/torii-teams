@@ -38,13 +38,13 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 
 ## Status
 
-| Step                                                                      | State                                                    |
-| ------------------------------------------------------------------------- | -------------------------------------------------------- |
-| J1 slice 1: action kind, role-checked fold, panel views, `/action` parser | Merged (PR #1)                                           |
-| J1 slice 2: chat wiring (see below)                                       | Merged (PR #2)                                           |
-| J1 slice 3: whole-history fold, edit form, Assign to me                   | Merged (PR #3)                                           |
-| Continuum mount (TEAMS-2c a): node settings, release workflow, ADR 0001   | In review; first tag and deploy need owner approval      |
-| Live use on a node                                                        | Needs the Suite installer step (Continuum Teams session) |
+| Step                                                                      | State                                                       |
+| ------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| J1 slice 1: action kind, role-checked fold, panel views, `/action` parser | Merged (PR #1)                                              |
+| J1 slice 2: chat wiring (see below)                                       | Merged (PR #2)                                              |
+| J1 slice 3: whole-history fold, edit form, Assign to me                   | Merged (PR #3)                                              |
+| Continuum mount (TEAMS-2c a): node settings, release workflow, ADR 0001   | Merged (PRs #4, #5); released `0.6.1-torii.1`; not deployed |
+| Live use on a node                                                        | Needs the Suite installer step (Continuum Teams session)    |
 
 ### Using actions (J1 slice 2)
 
@@ -86,9 +86,9 @@ cordn-web. Details: [`docs/torii/adr-0001-node-mount.md`](docs/torii/adr-0001-no
 
 ## Versions
 
-`<upstream version>-torii.<n>`, for example `0.6.1-torii.1`. The first tag is cut
-when the app is first deployed (the Continuum mount); until then nothing is
-tagged and `package.json` keeps the upstream version. A Torii tag runs
+`<upstream version>-torii.<n>`; `package.json` keeps the upstream version.
+Released: `0.6.1-torii.1` (d2a2f22, 2026-10-31, owner approved), pinned in
+torii-suite v0.9.29-alpha. Not deployed yet. A Torii tag runs
 `.github/workflows/torii-release.yml`, which publishes a checksummed web build
 for the Suite installer.
 
