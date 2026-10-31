@@ -18,7 +18,10 @@
 		addSourceToDraft,
 		canCreateAction,
 		createOutgoing,
+		draftFromAction,
 		draftFromSlash,
+		patchFromDraft,
+		updateOutgoing,
 		isTypingTarget,
 		openActionCount,
 		promoteOutgoing,
@@ -28,6 +31,12 @@
 		type ActionOutgoing
 	} from '$lib/torii/actionsView';
 	import { getGroupAdminPubkeys } from '$lib/services/chatAdminPolicy';
+	import {
+		ensureActionHistory,
+		getActionHistory,
+		mergeActionOps,
+		rememberActionOps
+	} from '$lib/torii/actionHistory.svelte';
 	import * as Sheet from '$lib/components/ui/sheet';
 	import * as Resizable from '$lib/components/ui/resizable';
 	import { IsMobile } from '$lib/hooks/is-mobile.svelte';
@@ -333,7 +342,17 @@
 			mentionCandidates.map((candidate) => candidate.pubkey)
 		)
 	);
-	const actionState = $derived(foldActions(storedMessages, actionRoleOf));
+	// Whole history (scanned once per group per session) + the live window.
+	$effect(() => {
+		void ensureActionHistory(groupId);
+	});
+	$effect(() => {
+		rememberActionOps(groupId, storedMessages);
+	});
+	const actionHistory = $derived(getActionHistory(groupId));
+	const actionState = $derived(
+		foldActions(mergeActionOps(actionHistory?.ops ?? [], storedMessages), actionRoleOf)
+	);
 	const actionLineByCursor = $derived(
 		new Map(statusLines(actionState).map((line) => [line.cursor, line]))
 	);
@@ -1132,13 +1151,22 @@
 
 	function handleMakeAction(message: ChatMessage) {
 		if (message.deleted || !canCreateAction(activePubkey, actionRoleOf)) return;
-		actionDraft = addSourceToDraft(actionDraft, { eventId: message.eventId, text: message.text });
+		// An edit's sources are fixed: "Make action" while editing starts a new draft.
+		const base = actionDraft?.editing ? null : actionDraft;
+		actionDraft = addSourceToDraft(base, { eventId: message.eventId, text: message.text });
 		actionsOpen = true;
 		selectedDetailEventId = null;
 	}
 
 	function handleSaveAction(next: ActionFormDraft) {
 		try {
+			if (next.editing) {
+				const action = actionState.byId.get(next.editing);
+				const patch = action ? patchFromDraft(action, next) : null;
+				if (action && patch) sendActionOp(updateOutgoing(action.id, patch));
+				actionDraft = null;
+				return;
+			}
 			sendActionOp(createOutgoing(next));
 		} catch (error) {
 			sendError = error instanceof Error ? error.message : 'Failed to save the action';
@@ -1149,6 +1177,17 @@
 
 	function handleActionStatus(action: Action, status: ActionStatus) {
 		sendActionOp(statusOutgoing(action.id, status));
+	}
+
+	function handleEditAction(action: Action) {
+		actionDraft = draftFromAction(action, (eventId) => {
+			const row = messages.find((m) => m.eventId === eventId && !m.systemKind);
+			return row?.text;
+		});
+	}
+
+	function handleAssignAction(action: Action) {
+		sendActionOp(updateOutgoing(action.id, { owner: activePubkey }));
 	}
 
 	function handlePromoteAction(action: Action) {
@@ -1166,8 +1205,10 @@
 	}
 
 	function handleJumpToSource(eventId: string) {
-		const stored = messageMaps.byEventId.get(eventId);
-		if (stored) void messageListRef?.scrollToMessage(`${stored.id}:${stored.cursor}`);
+		// In the window, or found by the history scan (loads its page on jump).
+		const cursor =
+			messageMaps.byEventId.get(eventId)?.cursor ?? actionHistory?.sourceCursors.get(eventId);
+		if (cursor !== undefined) void messageListRef?.scrollToMessage(`${eventId}:${cursor}`);
 		if (isMobile.current) actionsOpen = false;
 	}
 
@@ -1430,6 +1471,8 @@
 		onSave={handleSaveAction}
 		onStatus={handleActionStatus}
 		onPromote={handlePromoteAction}
+		onEdit={handleEditAction}
+		onAssign={handleAssignAction}
 		onJump={handleJumpToSource}
 		onClose={() => (actionsOpen = false)}
 	/>

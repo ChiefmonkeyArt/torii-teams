@@ -46,6 +46,8 @@ export interface ActionFormDraft {
 	owner: string;
 	/** `YYYY-MM-DD` from a date input, or ''. */
 	due: string;
+	/** Set when editing an existing action (its id); sources are then fixed. */
+	editing?: string;
 }
 
 /**
@@ -162,6 +164,40 @@ export function unixToDueInput(seconds: number): string {
 	const d = new Date(seconds * 1000);
 	const pad = (n: number) => String(n).padStart(2, '0');
 	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Open the form on an existing action. */
+export function draftFromAction(
+	action: Action,
+	previewOf: (eventId: string) => string | undefined
+): ActionFormDraft {
+	return {
+		title: action.title,
+		type: action.type,
+		sources: action.sources.map((id) => ({ id, preview: previewOf(id) ?? 'Earlier message' })),
+		owner: action.owner ?? '',
+		due: action.due ? unixToDueInput(action.due) : '',
+		editing: action.id
+	};
+}
+
+/**
+ * Only the fields that changed, or null when nothing did. A due date left on
+ * the same calendar day keeps its exact time (no churn from the 17:00 rule).
+ */
+export function patchFromDraft(action: Action, draft: ActionFormDraft): ActionPatch | null {
+	const patch: ActionPatch = {};
+	const title = draft.title.trim();
+	if (title !== action.title) patch.title = title;
+	if (draft.type !== action.type) patch.type = draft.type;
+	const owner = draft.owner ? safeNormalizePubKey(draft.owner) || draft.owner : null;
+	if (owner !== action.owner) patch.owner = owner;
+	const sameDay = action.due !== null && draft.due === unixToDueInput(action.due);
+	if (!sameDay) {
+		const due = dueInputToUnix(draft.due);
+		if (due !== action.due) patch.due = due;
+	}
+	return Object.keys(patch).length > 0 ? patch : null;
 }
 
 /** Validate the form; null when it can be saved. */
