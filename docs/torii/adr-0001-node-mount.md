@@ -60,7 +60,7 @@ is where member sign-in lives (TEAMS-2a slice 2 in torii-continuum
 `docs/adr-team-collaboration.md`: challenge, `POST /api/team/auth/verify`
 gives a bearer token, `GET /api/team/me`, role-scoped roster). There is no
 cookie. Calling it cross-origin needs `https://teams.<domain>` in the
-Continuum agent's `cors_origins` and `https://<domain>` in `connect-src`;
+Continuum agent's `cors_origins` and `https:` in `connect-src`;
 the installer sets both. The app does not use it yet.
 
 ## 3. Coordinator default rule
@@ -92,7 +92,7 @@ the installer sets both. The app does not use it yet.
   is agreed with the Continuum Teams session.
 
 Security headers (Suite server block): `Content-Security-Policy` with
-`default-src 'self'`, `connect-src 'self' wss: https://<domain>` (members may add other relays and coordinators), `img-src 'self'
+`default-src 'self'`, `connect-src 'self' https: wss:` (members may add other relays and coordinators), `img-src 'self'
 data: blob: https:`, `frame-ancestors 'none'`, `object-src 'none'`,
 `base-uri 'self'`; plus `Referrer-Policy: no-referrer`,
 `X-Content-Type-Options: nosniff` and HSTS. The exact CSP is tested against
