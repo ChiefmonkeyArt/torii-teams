@@ -49,6 +49,20 @@ file is ignored and the app behaves exactly like upstream cordn-web. Off a
 node (dev, the Android app) the file is a 404 and nothing happens. `git` is
 informational for now.
 
+Mixed content: an https page cannot open `ws://` or fetch `http://`, and the
+CSP blocks it too. So on https the app uses only the `wss://` relays from the
+file (`wss://relay.<domain>` is the in-browser chat path). `.fips` relays and
+the `.fips` git URL are for native clients and the CLI on the mesh; the app
+may show them but never connects to them from an https page.
+
+`continuum` (optional, https origin; omitted when Continuum is not installed)
+is where member sign-in lives (TEAMS-2a slice 2 in torii-continuum
+`docs/adr-team-collaboration.md`: challenge, `POST /api/team/auth/verify`
+gives a bearer token, `GET /api/team/me`, role-scoped roster). There is no
+cookie. Calling it cross-origin needs `https://teams.<domain>` in the
+Continuum agent's `cors_origins` and `https://<domain>` in `connect-src`;
+the installer sets both. The app does not use it yet.
+
 ## 3. Coordinator default rule
 
 - The node coordinator is added to the device's coordinator list, and the
@@ -69,11 +83,12 @@ informational for now.
   requires the Teams services): download, verify the checksum, unpack to
   `releases/<stamp>` with a `current` symlink, write `torii-node.json`, add the
   `teams.<domain>` server block with SPA fallback, certbot and security
-  headers, and register with the sidecar. That work belongs to the Suite and
+  headers, read `coord.pub` (fail closed if missing), write `torii-node.json`
+  0644 root, and register with the sidecar. That work belongs to the Suite and
   is agreed with the Continuum Teams session.
 
 Security headers (Suite server block): `Content-Security-Policy` with
-`default-src 'self'`, `connect-src 'self' wss: ws://*.fips`, `img-src 'self'
+`default-src 'self'`, `connect-src 'self' wss: https://<domain>` (members may add other relays and coordinators), `img-src 'self'
 data: blob: https:`, `frame-ancestors 'none'`, `object-src 'none'`,
 `base-uri 'self'`; plus `Referrer-Policy: no-referrer`,
 `X-Content-Type-Options: nosniff` and HSTS. The exact CSP is tested against

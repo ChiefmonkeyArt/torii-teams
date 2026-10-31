@@ -27,6 +27,8 @@ export interface ToriiNodeConfig {
 	relays: string[];
 	/** Private git base URL, mesh-only (shown to members, never fetched here). */
 	git?: string;
+	/** Continuum origin on this node, for member sign-in (absent if not installed). */
+	continuum?: string;
 }
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -78,7 +80,39 @@ export function parseNodeConfig(raw: unknown): ToriiNodeConfig | null {
 			// Optional field: ignore a bad git URL rather than reject the coordinator.
 		}
 	}
+	if (input.continuum !== undefined) {
+		if (typeof input.continuum !== 'string') return null;
+		const continuum = parseOrigin(input.continuum);
+		if (continuum) config.continuum = continuum;
+	}
 	return config;
+}
+
+/** An https origin (http only for loopback); null otherwise. Paths are dropped. */
+function parseOrigin(value: string): string | null {
+	try {
+		const url = new URL(value);
+		if (url.username || url.password) return null;
+		if (url.protocol === 'https:') return url.origin;
+		if (
+			url.protocol === 'http:' &&
+			(url.hostname === 'localhost' || url.hostname === '127.0.0.1')
+		) {
+			return url.origin;
+		}
+	} catch {
+		// fall through
+	}
+	return null;
+}
+
+/**
+ * Relays a browser page can actually open. An https page cannot open ws://
+ * (mixed content), so mesh/loopback relays are for native clients and the CLI
+ * there; wss:// relay.<domain> is the in-browser chat path.
+ */
+export function browserRelays(relays: string[], pageProtocol: string): string[] {
+	return pageProtocol === 'https:' ? relays.filter((relay) => relay.startsWith('wss://')) : relays;
 }
 
 /** Fetch the node file from this origin; null when absent or invalid. */
@@ -172,9 +206,11 @@ export async function initToriiNode(): Promise<ToriiNodeConfig | null> {
 	started = true;
 	const config = await fetchNodeConfig();
 	if (!config) return null;
+	const relays = browserRelays(config.relays, location.protocol);
+	if (relays.length === 0) return null;
 	const coordinators = await import('$lib/services/chatCoordinators.svelte');
 	applyNodeConfig(
-		config,
+		{ ...config, relays },
 		{
 			get: coordinators.getChatCoordinator,
 			getDefault: coordinators.getDefaultChatCoordinator,

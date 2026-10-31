@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	NODE_CONFIG_MAX_BYTES,
 	applyNodeConfig,
+	browserRelays,
 	fetchNodeConfig,
 	parseNodeConfig,
 	type CoordinatorStoreLike
@@ -59,6 +60,23 @@ function response(body: string, headers: Record<string, string> = {}, status = 2
 		headers: { 'content-type': 'application/json', ...headers }
 	});
 }
+
+describe('continuum and browser relays', () => {
+	it('keeps only an https Continuum origin', () => {
+		expect(parseNodeConfig({ ...good, continuum: 'https://example.com/app' })?.continuum).toBe(
+			'https://example.com'
+		);
+		expect(
+			parseNodeConfig({ ...good, continuum: 'http://example.com' })?.continuum
+		).toBeUndefined();
+		expect(parseNodeConfig({ ...good, continuum: 7 })).toBeNull();
+	});
+	it('drops ws:// relays on https pages (mixed content)', () => {
+		const relays = ['wss://relay.example.com', 'ws://torii-teams.fips:10547'];
+		expect(browserRelays(relays, 'https:')).toEqual(['wss://relay.example.com']);
+		expect(browserRelays(relays, 'http:')).toEqual(relays);
+	});
+});
 
 describe('fetchNodeConfig', () => {
 	it('reads same-origin with no cookies and no redirects', async () => {
