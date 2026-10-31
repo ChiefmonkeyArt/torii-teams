@@ -40,6 +40,7 @@
 	import Pencil from '@lucide/svelte/icons/pencil';
 	import SmilePlus from '@lucide/svelte/icons/smile-plus';
 	import Pin from '@lucide/svelte/icons/pin';
+	import ListTodo from '@lucide/svelte/icons/list-todo';
 	import X from '@lucide/svelte/icons/x';
 	import Plus from '@lucide/svelte/icons/plus';
 	import { cn, copyToClipboard, downloadObjectUrl } from '$lib/utils';
@@ -79,6 +80,8 @@
 		onNavigateToMessage = () => {},
 		onOpenRich = () => {},
 		onPin = () => {},
+		onMakeAction,
+		onOpenAction = () => {},
 		onVote = () => Promise.resolve(false),
 		highlighted = false
 	}: {
@@ -100,6 +103,10 @@
 		onNavigateToMessage?: (messageId: string) => void;
 		onOpenRich?: (eventId: string) => void;
 		onPin?: (message: ChatMessage) => void;
+		/** Torii Teams: start (or add to) an action draft from this message. */
+		onMakeAction?: (message: ChatMessage) => void;
+		/** Torii Teams: open the actions panel at an action. */
+		onOpenAction?: (actionId: string) => void;
 		/** Cast a poll vote (kind 1018): complete selection of option ids. */
 		onVote?: (message: ChatMessage, optionIds: string[]) => void | Promise<boolean>;
 		highlighted?: boolean;
@@ -155,6 +162,8 @@
 				return Pencil;
 			case 'reaction':
 				return SmilePlus;
+			case 'action':
+				return ListTodo;
 			default:
 				return Info;
 		}
@@ -343,6 +352,12 @@
 		if (!isOwn || message.deleted) return;
 		dismissActionSurfaces();
 		await onDelete(message);
+	}
+
+	function handleMakeAction() {
+		if (message.deleted || !isStoredEvent || !onMakeAction) return;
+		dismissActionSurfaces();
+		onMakeAction(message);
 	}
 
 	function handlePinAction() {
@@ -558,6 +573,20 @@
 				{:else if message.systemKind === 'metadata-changed'}
 					{@render systemName(systemCommitterName)}
 					changed {message.systemDetail ?? 'group settings'}
+				{:else if message.systemKind === 'action'}
+					{@render systemName(systemCommitterName)}
+					· {message.systemDetail ?? 'updated an action'}
+					{#if message.systemTarget}
+						<button
+							type="button"
+							class="ml-1 inline-flex items-center rounded-sm text-primary hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+							onclick={() => onOpenAction(message.systemTarget!)}
+							aria-label="Open in actions"
+							title="Open in actions"
+						>
+							<Eye class="size-3" />
+						</button>
+					{/if}
 				{:else if message.systemKind === 'commit-lost'}
 					{message.systemDetail ?? 'A change did not go through'}
 				{:else if message.systemKind === 'reaction'}
@@ -817,6 +846,13 @@
 											</DropdownMenuItem>
 										{/if}
 
+										{#if !message.deleted && isStoredEvent && onMakeAction}
+											<DropdownMenuItem onSelect={handleMakeAction} class="gap-2">
+												<ListTodo class="size-4" />
+												<span>Make action</span>
+											</DropdownMenuItem>
+										{/if}
+
 										{#if !message.deleted}
 											<DropdownMenuItem onSelect={handlePinAction} class="gap-2">
 												<Pin class="size-4" />
@@ -1040,6 +1076,19 @@
 					class="flex shrink-0 items-center gap-1 self-end px-1 text-[10px] text-muted-foreground/80 sm:text-[11px]"
 				>
 					<p>{message.timeLabel}</p>
+					{#if message.actionBadge && !message.deleted}
+						<button
+							type="button"
+							class="inline-flex items-center gap-0.5 rounded-sm hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+							aria-label={`Action: ${message.actionBadge.status.replace('_', ' ')}`}
+							title={`Action: ${message.actionBadge.status.replace('_', ' ')}`}
+							data-action-badge={message.actionBadge.status}
+							onclick={() => onOpenAction(message.actionBadge!.actionId)}
+						>
+							<ListTodo class="size-3" />
+							{#if message.actionBadge.count > 1}<span>{message.actionBadge.count}</span>{/if}
+						</button>
+					{/if}
 					{#if message.pinned}
 						<span class="inline-flex items-center" aria-label="Pinned" title="Pinned">
 							<Pin class="size-3" />
@@ -1127,6 +1176,16 @@
 									>
 										<Download class="size-4 shrink-0 text-muted-foreground" />
 										<span>Download</span>
+									</button>
+								{/if}
+								{#if !message.deleted && isStoredEvent && onMakeAction}
+									<button
+										type="button"
+										class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors hover:bg-muted/40"
+										onclick={handleMakeAction}
+									>
+										<ListTodo class="size-4 shrink-0 text-muted-foreground" />
+										<span>Make action</span>
 									</button>
 								{/if}
 								{#if !message.deleted}

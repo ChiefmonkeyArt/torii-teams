@@ -5,6 +5,29 @@
 	import ChatMessageList from './ChatMessageList.svelte';
 	import ChatPinnedRibbon from './ChatPinnedRibbon.svelte';
 	import ChatDetailSidebar from './ChatDetailSidebar.svelte';
+	import ActionsPanel from '$lib/torii/ActionsPanel.svelte';
+	import {
+		badgeForMessage,
+		foldActions,
+		parseSlashAction,
+		statusLines,
+		type Action,
+		type ActionStatus
+	} from '$lib/chat/actions';
+	import {
+		addSourceToDraft,
+		canCreateAction,
+		createOutgoing,
+		draftFromSlash,
+		isTypingTarget,
+		openActionCount,
+		promoteOutgoing,
+		resolveGroupRoles,
+		statusOutgoing,
+		type ActionFormDraft,
+		type ActionOutgoing
+	} from '$lib/torii/actionsView';
+	import { getGroupAdminPubkeys } from '$lib/services/chatAdminPolicy';
 	import * as Sheet from '$lib/components/ui/sheet';
 	import * as Resizable from '$lib/components/ui/resizable';
 	import { IsMobile } from '$lib/hooks/is-mobile.svelte';
@@ -301,6 +324,23 @@
 	// only affects the `messages` derived below.
 	const messageMaps = $derived.by(() => buildAnnotationIndex(storedMessages));
 
+	// Torii Teams (J1): the action log folded from this group's messages.
+	// Roles: group admins act as maintainers (every member in an admin-less,
+	// egalitarian group); a Torii roster resolver replaces this in TEAMS-2c.
+	const actionRoleOf = $derived(
+		resolveGroupRoles(
+			getGroupAdminPubkeys(group?.metadata),
+			mentionCandidates.map((candidate) => candidate.pubkey)
+		)
+	);
+	const actionState = $derived(foldActions(storedMessages, actionRoleOf));
+	const actionLineByCursor = $derived(
+		new Map(statusLines(actionState).map((line) => [line.cursor, line]))
+	);
+	const actionsOpenCount = $derived(openActionCount(actionState));
+	let actionsOpen = $state(false);
+	let actionDraft = $state<ActionFormDraft | null>(null);
+
 	const messages = $derived.by<ChatMessage[]>(() => {
 		const { byEventId, reactionMap, editMap, deletedIds, pinSet } = messageMaps;
 
@@ -325,9 +365,25 @@
 		}
 		const confirmedMessages = storedMessages
 			.filter((message) =>
-				message.kind === ChatKinds.Reaction ? reactionMarkers : !isStreamHiddenKind(message.kind)
+				message.kind === ChatKinds.Reaction
+					? reactionMarkers
+					: message.kind === ChatKinds.Action || !isStreamHiddenKind(message.kind)
 			)
 			.map((message) => {
+				// Torii Teams: action ops are hidden; a few (create, done, dropped,
+				// promoted) draw a local status line in their place. Never sent.
+				if (message.kind === ChatKinds.Action) {
+					const line = actionLineByCursor.get(message.cursor);
+					if (!line) return null;
+					return {
+						...toChatMessage(message),
+						text: '',
+						systemKind: 'action' as const,
+						systemTarget: line.actionId,
+						systemCommitter: line.by,
+						systemDetail: line.text
+					};
+				}
 				// Kind-7 reactions render as marker rows in the linear timeline
 				// (systemKind 'reaction') in addition to the chips on the target.
 				// Malformed references (no e/p/k tags) drop out here, mirroring the
@@ -433,6 +489,9 @@
 					deleted,
 					pinned,
 					pinnedBy: pinned ? pinEntry?.pinnedBy : undefined,
+					actionBadge: deleted
+						? undefined
+						: (badgeForMessage(actionState, message.id) ?? undefined),
 					edited: !deleted && Boolean(pendingEdit || edit),
 					reactions: reactionEntries,
 					replyTo: replySource
@@ -459,7 +518,7 @@
 		// swap happens in a single render instead of a both-visible flash.
 		// Unsealed bubbles carry `outbox:` event ids, which never match.
 		const pending = getPendingMessages(groupId).filter(
-			(message) => !byEventId.has(message.eventId)
+			(message) => !byEventId.has(message.eventId) && message.kind !== ChatKinds.Action
 		);
 		return foldReactionMarkers(
 			[...confirmedMessages, ...pending]
@@ -522,6 +581,34 @@
 				content: serialized.content,
 				tags: serialized.tags
 			});
+			return;
+		}
+
+		// Torii Teams: `/action …` only pre-fills the action form — nothing is
+		// sent until Save. Its source is the reply target, else the newest message.
+		const slash = parseSlashAction(draft);
+		if (slash) {
+			// Rendered rows carry the edited text; only confirmed, visible messages.
+			const candidates = messages.filter(
+				(m) => !m.systemKind && !m.deleted && (!m.deliveryState || m.deliveryState === 'sent')
+			);
+			const sourceMessage = replyTarget
+				? candidates.find((m) => m.eventId === replyTarget?.id)
+				: candidates.at(-1);
+			const next = draftFromSlash(slash, {
+				people: selectedMentions,
+				source: sourceMessage ? { eventId: sourceMessage.eventId, text: sourceMessage.text } : null
+			});
+			if (!next) {
+				sendError = 'Say something first: an action links back to a message.';
+				return;
+			}
+			actionDraft = next;
+			actionsOpen = true;
+			selectedDetailEventId = null;
+			draft = '';
+			selectedMentions = [];
+			clearReplyTarget();
 			return;
 		}
 
@@ -1033,6 +1120,77 @@
 		sendError = chatComposerActionsStore.error;
 	}
 
+	// --- Torii Teams actions (J1) -------------------------------------------
+
+	function sendActionOp(op: ActionOutgoing) {
+		try {
+			enqueueTextMessage({ groupId, content: op.content, tags: op.tags, kind: op.kind });
+		} catch (error) {
+			sendError = error instanceof Error ? error.message : 'Failed to save the action';
+		}
+	}
+
+	function handleMakeAction(message: ChatMessage) {
+		if (message.deleted || !canCreateAction(activePubkey, actionRoleOf)) return;
+		actionDraft = addSourceToDraft(actionDraft, { eventId: message.eventId, text: message.text });
+		actionsOpen = true;
+		selectedDetailEventId = null;
+	}
+
+	function handleSaveAction(next: ActionFormDraft) {
+		try {
+			sendActionOp(createOutgoing(next));
+		} catch (error) {
+			sendError = error instanceof Error ? error.message : 'Failed to save the action';
+			return;
+		}
+		actionDraft = null;
+	}
+
+	function handleActionStatus(action: Action, status: ActionStatus) {
+		sendActionOp(statusOutgoing(action.id, status));
+	}
+
+	function handlePromoteAction(action: Action) {
+		sendActionOp(promoteOutgoing(action.id));
+	}
+
+	function handleOpenAction(actionId: string) {
+		selectedDetailEventId = null;
+		actionsOpen = true;
+		requestAnimationFrame(() =>
+			document
+				.querySelector(`[data-torii-actions] [data-action-id="${CSS.escape(actionId)}"]`)
+				?.scrollIntoView({ block: 'nearest' })
+		);
+	}
+
+	function handleJumpToSource(eventId: string) {
+		const stored = messageMaps.byEventId.get(eventId);
+		if (stored) void messageListRef?.scrollToMessage(`${stored.id}:${stored.cursor}`);
+		if (isMobile.current) actionsOpen = false;
+	}
+
+	function toggleActions() {
+		actionsOpen = !actionsOpen;
+		if (actionsOpen) selectedDetailEventId = null;
+	}
+
+	/** `A` on a hovered or focused message makes an action from it. */
+	function handleActionShortcut(event: KeyboardEvent) {
+		if (event.key !== 'a' && event.key !== 'A') return;
+		if (event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;
+		if (isTypingTarget(event.target)) return;
+		const host =
+			(document.activeElement as HTMLElement | null)?.closest('[data-message-id]') ??
+			document.querySelector('[data-message-bubble]:hover');
+		const rowId = host?.getAttribute('data-message-id');
+		const message = rowId ? messages.find((m) => m.id === rowId && !m.systemKind) : undefined;
+		if (!message || (message.deliveryState && message.deliveryState !== 'sent')) return;
+		event.preventDefault();
+		handleMakeAction(message);
+	}
+
 	async function navigateToNextReference() {
 		const [nextReference] = unreadReferenceTargets;
 		if (!nextReference) return;
@@ -1063,6 +1221,7 @@
 
 	function handleOpenRich(eventId: string) {
 		selectedDetailEventId = eventId;
+		actionsOpen = false;
 	}
 
 	function handleJumpToMessage(targetEventId: string) {
@@ -1169,7 +1328,13 @@
 			composerRef?.addFiles(Array.from(event.dataTransfer?.files ?? []));
 		}}
 	>
-		<ChatHeader {groupId} title={displayTitle} />
+		<ChatHeader
+			{groupId}
+			title={displayTitle}
+			onToggleActions={toggleActions}
+			actionsCount={actionsOpenCount}
+			{actionsOpen}
+		/>
 
 		{#if pinnedMessages.length > 0}
 			<ChatPinnedRibbon
@@ -1207,6 +1372,8 @@
 					onVisibleRead={handleVisibleRead}
 					onOpenRich={handleOpenRich}
 					onPin={handlePin}
+					onMakeAction={canCreateAction(activePubkey, actionRoleOf) ? handleMakeAction : undefined}
+					onOpenAction={handleOpenAction}
 					onVote={handleVote}
 				/>
 			{/if}
@@ -1253,6 +1420,23 @@
 	</div>
 {/snippet}
 
+{#snippet actionsPanel()}
+	<ActionsPanel
+		{actionState}
+		roleOf={actionRoleOf}
+		me={activePubkey}
+		members={mentionCandidates.map((candidate) => candidate.pubkey)}
+		bind:draft={actionDraft}
+		onSave={handleSaveAction}
+		onStatus={handleActionStatus}
+		onPromote={handlePromoteAction}
+		onJump={handleJumpToSource}
+		onClose={() => (actionsOpen = false)}
+	/>
+{/snippet}
+
+<svelte:window onkeydown={handleActionShortcut} />
+
 {#if isMobile.current}
 	<div class="h-full bg-background text-foreground">
 		{@render chatColumn()}
@@ -1281,6 +1465,23 @@
 				/>
 			</Sheet.Content>
 		</Sheet.Root>
+	{:else if actionsOpen}
+		<Sheet.Root
+			bind:open={
+				() => actionsOpen,
+				(open) => {
+					actionsOpen = open;
+				}
+			}
+		>
+			<Sheet.Content
+				side="right"
+				showCloseButton={false}
+				class="bg-background data-[side=right]:w-full"
+			>
+				{@render actionsPanel()}
+			</Sheet.Content>
+		</Sheet.Root>
 	{/if}
 {:else}
 	<Resizable.PaneGroup direction="horizontal" class="h-full w-full bg-background text-foreground">
@@ -1303,6 +1504,17 @@
 					onNavigate={handleOpenRich}
 					onJumpToMessage={handleJumpToMessage}
 				/>
+			</Resizable.Pane>
+		{:else if actionsOpen}
+			<Resizable.Handle withHandle />
+			<Resizable.Pane
+				order={2}
+				defaultSize={detailSizeRef.current}
+				minSize={20}
+				maxSize={70}
+				onResize={(size) => (detailSizeRef.current = size)}
+			>
+				{@render actionsPanel()}
 			</Resizable.Pane>
 		{/if}
 	</Resizable.PaneGroup>

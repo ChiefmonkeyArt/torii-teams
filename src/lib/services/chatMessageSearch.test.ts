@@ -137,3 +137,36 @@ describe('searchChatMessagesDeep', () => {
 		await expect(handle.done).resolves.toBeUndefined();
 	});
 });
+
+describe('Torii Teams action ops', () => {
+	test('are log entries, never search hits', () => {
+		groups.set('g-actions', {
+			id: 'g-actions',
+			coordinatorKey: 'aa'.repeat(32),
+			createdAt: 1,
+			stateBase64: '',
+			lastCursor: 2,
+			fetchCursor: 2,
+			messages: [
+				makeMessage(1, { id: 'a1', content: 'the roadmap chat' }),
+				makeMessage(2, {
+					id: 'a2',
+					kind: ChatKinds.Action,
+					tags: [
+						['op', 'create'],
+						['type', 'todo'],
+						['q', 'a1']
+					],
+					content: 'roadmap action title'
+				})
+			],
+			syncIssues: [],
+			snapshots: [],
+			joinEpoch: 0n,
+			status: 'active'
+		} as unknown as StoredChatGroup);
+		const hits = searchChatMessages('roadmap', { groupId: 'g-actions' });
+		expect(hits.map((hit) => hit.messageKey)).toEqual(['a1:1']);
+		groups.delete('g-actions');
+	});
+});

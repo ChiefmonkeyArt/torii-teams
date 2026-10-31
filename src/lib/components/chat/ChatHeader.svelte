@@ -34,13 +34,21 @@
 	import MoreHorizontal from '@lucide/svelte/icons/more-horizontal';
 	import Share2 from '@lucide/svelte/icons/share-2';
 	import UserPlus from '@lucide/svelte/icons/user-plus';
+	import ListTodo from '@lucide/svelte/icons/list-todo';
 
 	let {
 		groupId,
-		title = 'Cordn'
+		title = 'Cordn',
+		onToggleActions,
+		actionsCount = 0,
+		actionsOpen = false
 	}: {
 		groupId?: string;
 		title?: string;
+		/** Torii Teams: show the actions panel toggle. */
+		onToggleActions?: () => void;
+		actionsCount?: number;
+		actionsOpen?: boolean;
 	} = $props();
 
 	async function refreshAvailableKeyPackages() {
@@ -139,6 +147,21 @@
 		</div>
 
 		<ChatSearchBar {groupId} />
+
+		{#if groupId && onToggleActions}
+			<Button
+				type="button"
+				variant={actionsOpen ? 'secondary' : 'outline'}
+				class="h-10 shrink-0 gap-1.5 rounded-xl px-3"
+				aria-label={`Actions (${actionsCount} open)`}
+				aria-pressed={actionsOpen}
+				title="Actions"
+				onclick={onToggleActions}
+			>
+				<ListTodo class="size-4" />
+				{#if actionsCount > 0}<span class="text-xs tabular-nums">{actionsCount}</span>{/if}
+			</Button>
+		{/if}
 
 		{#if groupId}
 			<div class="hidden items-center gap-2 sm:flex">

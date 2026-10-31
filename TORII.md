@@ -38,12 +38,34 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 
 ## Status
 
-| Step                                                                                                  | State                                                      |
-| ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| J1 slice 1: action kind, role-checked fold, panel views, `/action` parser                             | In review                                                  |
-| J1 slice 2: "Make action" menu, Actions panel, composer `/action`, `A` shortcut, badges, status lines | Next                                                       |
-| Continuum mount (TEAMS-2c a)                                                                          | After slice 2                                              |
-| Live use on a node                                                                                    | Needs a coordinator on the node (TEAMS-2b, Continuum side) |
+| Step                                                                      | State                                                      |
+| ------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| J1 slice 1: action kind, role-checked fold, panel views, `/action` parser | Merged (PR #1)                                             |
+| J1 slice 2: chat wiring (see below)                                       | In review                                                  |
+| J1 slice 3: fold the whole history, edit form, owner/due quick edits      | Next                                                       |
+| Continuum mount (TEAMS-2c a)                                              | After J1                                                   |
+| Live use on a node                                                        | Needs a coordinator on the node (TEAMS-2b, Continuum side) |
+
+### Using actions (J1 slice 2)
+
+- **Make an action.** Open a message's menu (or long-press on a phone) and choose
+  "Make action", or hover a message and press `A`. Choose "Make action" on more
+  messages to add them to the same draft (up to 20).
+- **Quick capture.** Type `/action Fix login timeout @alice fri` in the composer.
+  It fills in the form; nothing is sent until you press Save. The source is the
+  message you are replying to, or else the newest message.
+- **The panel.** The list button in the chat header opens the Actions panel
+  (right-hand side; a full-screen sheet on phones): Open, In progress, Jobs and
+  Done, plus a Decisions tab. The eye button jumps to the source message.
+- **Who can do what.** Buttons appear only when the fold will accept them: the
+  creator, the owner and maintainers change status; maintainers turn code
+  actions into jobs ("Make job").
+- **In the chat.** Messages that became actions show a small list badge.
+  Creating, finishing, dropping or promoting an action draws a one-line note in
+  the chat. These notes are drawn on each device from the log, never sent.
+- **Known limit.** The panel folds the messages loaded in this chat window, like
+  pins. Very old actions appear once older history is loaded; slice 3 adds a
+  whole-history fold.
 
 The action kind number (provisionally 1012) must be agreed with Cordn before any
 release.

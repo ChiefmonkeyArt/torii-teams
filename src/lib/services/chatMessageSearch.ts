@@ -329,7 +329,13 @@ function matchSearchableMessage(
 function getSearchableMessages(messages: StoredChatMessage[]): StoredChatMessage[] {
 	const { editMap, deletedIds } = buildAnnotationIndex(messages);
 	return messages
-		.filter((message) => message.kind !== ChatKinds.Deletion && message.kind !== ChatKinds.Edit)
+		.filter(
+			(message) =>
+				message.kind !== ChatKinds.Deletion &&
+				message.kind !== ChatKinds.Edit &&
+				// Torii Teams: action ops are hidden log entries, not messages.
+				message.kind !== ChatKinds.Action
+		)
 		.filter((message) => !deletedIds.has(message.id))
 		.map((message) => editMap.get(message.id) ?? message);
 }
