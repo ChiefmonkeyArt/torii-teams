@@ -827,6 +827,8 @@ describe('maintainReachability()', () => {
 		expect(reachabilityStore.checked).toBe(true);
 		expect(reachabilityStore.ownerPubkey).toBe(OWNER);
 		expect(reachabilityStore.uncoveredCoordinatorKeys).toEqual([]);
+		// Torii (ADR 0004): both verified covered once the pass publishes.
+		expect([...reachabilityStore.coveredCoordinatorKeys].sort()).toEqual([COORD_A, COORD_B].sort());
 	});
 
 	test('observe-only runs report verified-uncovered coordinators and publish nothing', async () => {
@@ -840,6 +842,8 @@ describe('maintainReachability()', () => {
 
 		expect(publishKeyPackageMock).not.toHaveBeenCalled();
 		expect(reachabilityStore.uncoveredCoordinatorKeys).toEqual([COORD_A]);
+		// Unreachable COORD_B is unverified: neither covered nor uncovered.
+		expect(reachabilityStore.coveredCoordinatorKeys).toEqual([]);
 	});
 
 	test('observe-only runs never write, even where a one-time package covers reachability', async () => {
