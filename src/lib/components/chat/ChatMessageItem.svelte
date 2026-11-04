@@ -79,7 +79,7 @@
 		onRetrySend = () => {},
 		onNavigateToMessage = () => {},
 		onOpenRich = () => {},
-		onPin = () => {},
+		onPin,
 		onMakeAction,
 		onOpenAction = () => {},
 		onVote = () => Promise.resolve(false),
@@ -363,7 +363,7 @@
 	function handlePinAction() {
 		if (message.deleted) return;
 		dismissActionSurfaces();
-		onPin(message);
+		onPin?.(message);
 	}
 
 	function getReactionLabel(reaction: NonNullable<ChatMessage['reactions']>[number]) {
@@ -853,7 +853,7 @@
 											</DropdownMenuItem>
 										{/if}
 
-										{#if !message.deleted}
+										{#if !message.deleted && onPin}
 											<DropdownMenuItem onSelect={handlePinAction} class="gap-2">
 												<Pin class="size-4" />
 												<span>{message.pinned ? 'Unpin' : 'Pin'}</span>
@@ -1188,7 +1188,7 @@
 										<span>Make action</span>
 									</button>
 								{/if}
-								{#if !message.deleted}
+								{#if !message.deleted && onPin}
 									<button
 										type="button"
 										class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors hover:bg-muted/40"

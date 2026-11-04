@@ -11,9 +11,33 @@
 	import { initNativeShell } from '$lib/services/nativeBridge';
 	import { initAppearance } from '$lib/themes/appearance.svelte';
 	import { browserRelays, initToriiNode } from '$lib/torii/nodeConfig';
+	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
+	import { TORII_NODE_BUILD } from '$lib/torii/build';
+	import { projectChannels, projectForGroup } from '$lib/torii/projectChannels.svelte';
+	import { toriiRedirect } from '$lib/torii/ui/routes';
+	import { activeGroupId } from '$lib/utils/groupShareLink';
 	import { defineCustomElements } from '@ionic/pwa-elements/loader';
 
 	let { children } = $props();
+
+	// Torii builds show only the team routes (ADR 0005).
+	const toriiTarget = $derived.by(() => {
+		if (!TORII_NODE_BUILD) return null;
+		const { pathname, search, searchParams } = page.url;
+		return toriiRedirect({
+			pathname,
+			search,
+			pending: ['off', 'loading', 'signing-in'].includes(projectChannels.status),
+			groupId: pathname.startsWith('/chat/') ? activeGroupId(pathname, searchParams) : '',
+			projectForGroup
+		});
+	});
+	const toriiHidden = $derived(TORII_NODE_BUILD && !page.url.pathname.startsWith('/chat'));
+	$effect(() => {
+		// eslint-disable-next-line svelte/no-navigation-without-resolve -- built from fixed routes
+		if (toriiTarget) void goto(toriiTarget, { replaceState: true });
+	});
 
 	// Safe-area-aware toast offsets: keep svelte-sonner's stock bases (24px desktop / 16px mobile)
 	// and add the bar insets on top, so toasts clear the gesture/nav bar in the native edge-to-edge
@@ -53,11 +77,11 @@
 <Toaster offset={toastInsets('24px')} mobileOffset={toastInsets('16px')} />
 <ModeWatcher />
 <AppUpdateBanner />
-<NativeAppUpdateBanner />
+{#if !TORII_NODE_BUILD}<NativeAppUpdateBanner />{/if}
 
 <svelte:head><link rel="icon" href="/favicon.svg" /></svelte:head>
 <QueryClientProvider client={queryClient}>
 	<Tooltip.Provider>
-		{@render children()}
+		{#if !toriiHidden}{@render children()}{/if}
 	</Tooltip.Provider>
 </QueryClientProvider>

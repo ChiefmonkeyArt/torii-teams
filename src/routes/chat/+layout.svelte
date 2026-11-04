@@ -1,5 +1,7 @@
 <script lang="ts">
 	import ChatSidebar from '$lib/components/chat/ChatSidebar.svelte';
+	import TeamShell from '$lib/torii/ui/TeamShell.svelte';
+	import { TORII_NODE_BUILD } from '$lib/torii/build';
 	import ChatTabBar from '$lib/components/chat/ChatTabBar.svelte';
 	import MediaLightbox from '$lib/components/chat/MediaLightbox.svelte';
 	import LastResortConflictDialog from '$lib/components/chat/LastResortConflictDialog.svelte';
@@ -156,42 +158,49 @@
 	});
 </script>
 
-<div class="flex h-dvh min-h-dvh bg-background pr-inset pl-inset text-foreground">
-	<ChatSidebar mobileSidebarOpen={chatLayout.mobileSidebarOpen} />
-
-	<!-- pt-safe here is the single status-bar clearance for EVERY /chat/* page (chat header,
-	     config, coordinators, news, create-group, …). ChatHeader does NOT add its own — that
-	     would double-pad /chat/[id]. Flex column: page content (min-h-0 flex-1) scrolls inside,
-	     the mobile tab bar takes flow space at the bottom instead of overlapping content. -->
-	<div class="relative flex min-w-0 flex-1 flex-col overflow-hidden pt-safe">
-		{#if signerReadinessStore.waiting}
-			<!-- Identity gate (NIP-07 injection race) takes precedence over the sync
-		     banner: waiting on the signer, not on coordinators. -->
-			<div
-				class="absolute inset-x-0 top-0 z-50 border-b border-border/60 bg-muted/60 px-2 py-1 text-sm text-muted-foreground backdrop-blur-sm"
-			>
-				Waiting for Nostr signer…
-			</div>
-		{:else if chatReconnectStatusStore.active}
-			<div
-				class="absolute inset-x-0 top-0 z-50 border-b border-border/60 bg-muted/60 px-2 py-1 text-sm text-muted-foreground backdrop-blur-sm"
-			>
-				{chatReconnectStatusStore.message}
-			</div>
-		{/if}
-
-		<MigrationBanner />
-		<SignerCapabilityBanner />
-		<BatteryOptimizationBanner />
-		<div class="min-h-0 flex-1">
-			{@render children()}
-		</div>
-		<ChatTabBar />
-	</div>
-
+{#if TORII_NODE_BUILD}
+	<!-- Torii's own team UI (ADR 0005); the engine effects above still run. -->
+	<TeamShell>{@render children()}</TeamShell>
 	<MediaLightbox />
 	<LastResortConflictDialog />
-	{#if isNativePlatform()}
-		<NativeGroupMetaSync />
-	{/if}
-</div>
+{:else}
+	<div class="flex h-dvh min-h-dvh bg-background pr-inset pl-inset text-foreground">
+		<ChatSidebar mobileSidebarOpen={chatLayout.mobileSidebarOpen} />
+
+		<!-- pt-safe here is the single status-bar clearance for EVERY /chat/* page (chat header,
+		     config, coordinators, news, create-group, …). ChatHeader does NOT add its own — that
+		     would double-pad /chat/[id]. Flex column: page content (min-h-0 flex-1) scrolls inside,
+		     the mobile tab bar takes flow space at the bottom instead of overlapping content. -->
+		<div class="relative flex min-w-0 flex-1 flex-col overflow-hidden pt-safe">
+			{#if signerReadinessStore.waiting}
+				<!-- Identity gate (NIP-07 injection race) takes precedence over the sync
+			     banner: waiting on the signer, not on coordinators. -->
+				<div
+					class="absolute inset-x-0 top-0 z-50 border-b border-border/60 bg-muted/60 px-2 py-1 text-sm text-muted-foreground backdrop-blur-sm"
+				>
+					Waiting for Nostr signer…
+				</div>
+			{:else if chatReconnectStatusStore.active}
+				<div
+					class="absolute inset-x-0 top-0 z-50 border-b border-border/60 bg-muted/60 px-2 py-1 text-sm text-muted-foreground backdrop-blur-sm"
+				>
+					{chatReconnectStatusStore.message}
+				</div>
+			{/if}
+
+			<MigrationBanner />
+			<SignerCapabilityBanner />
+			<BatteryOptimizationBanner />
+			<div class="min-h-0 flex-1">
+				{@render children()}
+			</div>
+			<ChatTabBar />
+		</div>
+
+		<MediaLightbox />
+		<LastResortConflictDialog />
+		{#if isNativePlatform()}
+			<NativeGroupMetaSync />
+		{/if}
+	</div>
+{/if}

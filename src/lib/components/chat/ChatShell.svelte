@@ -98,6 +98,7 @@
 		loadOlderChatGroupMessages
 	} from '$lib/services/chatGroups.svelte';
 	import type { StoredChatMessage } from '$lib/services/chatGroupMessages.svelte';
+	import type { Snippet } from 'svelte';
 	import { serializeChatProfileMentions } from '$lib/services/chatMentions';
 	import { metadataRelays } from '$lib/services/relay-pool';
 	import { SvelteMap } from 'svelte/reactivity';
@@ -130,10 +131,16 @@
 
 	let {
 		groupId = 'general',
-		title = 'Cordn'
+		title = 'Cordn',
+		minimal = false,
+		header
 	}: {
 		groupId?: string;
 		title?: string;
+		/** Torii team chat (ADR 0005): no voice notes, polls, GIFs or Actions. */
+		minimal?: boolean;
+		/** Replaces Cordn's ChatHeader when set. */
+		header?: Snippet;
 	} = $props();
 
 	let draft = $state('');
@@ -1369,15 +1376,19 @@
 			composerRef?.addFiles(Array.from(event.dataTransfer?.files ?? []));
 		}}
 	>
-		<ChatHeader
-			{groupId}
-			title={displayTitle}
-			onToggleActions={toggleActions}
-			actionsCount={actionsOpenCount}
-			{actionsOpen}
-		/>
+		{#if header}
+			{@render header()}
+		{:else}
+			<ChatHeader
+				{groupId}
+				title={displayTitle}
+				onToggleActions={toggleActions}
+				actionsCount={actionsOpenCount}
+				{actionsOpen}
+			/>
+		{/if}
 
-		{#if pinnedMessages.length > 0}
+		{#if !minimal && pinnedMessages.length > 0}
 			<ChatPinnedRibbon
 				messages={pinnedMessages}
 				onJumpToMessage={(id) => messageListRef?.scrollToMessage(id)}
@@ -1391,7 +1402,9 @@
 					class="flex h-full items-center justify-center px-6 pb-10 text-center"
 					aria-live="polite"
 				>
-					<p class="max-w-sm text-sm text-muted-foreground">No messages yet — say hi 👋</p>
+					<p class="max-w-sm text-sm text-muted-foreground">
+						{minimal ? 'No messages yet.' : 'No messages yet — say hi 👋'}
+					</p>
 				</div>
 			{:else}
 				<ChatMessageList
@@ -1412,9 +1425,11 @@
 					onVisibleUnreadReference={handleVisibleUnreadReference}
 					onVisibleRead={handleVisibleRead}
 					onOpenRich={handleOpenRich}
-					onPin={handlePin}
-					onMakeAction={canCreateAction(activePubkey, actionRoleOf) ? handleMakeAction : undefined}
-					onOpenAction={handleOpenAction}
+					onPin={minimal ? undefined : handlePin}
+					onMakeAction={!minimal && canCreateAction(activePubkey, actionRoleOf)
+						? handleMakeAction
+						: undefined}
+					onOpenAction={minimal ? undefined : handleOpenAction}
 					onVote={handleVote}
 				/>
 			{/if}
@@ -1447,6 +1462,7 @@
 			onSendMedia={handleSendMedia}
 			onSendVoice={handleSendVoice}
 			onSendPoll={handleSendPoll}
+			{minimal}
 			disabled={isRemoved || isPoisoned}
 			replyTo={composerReplyPreview}
 			editTo={editTarget
@@ -1478,7 +1494,7 @@
 	/>
 {/snippet}
 
-<svelte:window onkeydown={handleActionShortcut} />
+<svelte:window onkeydown={minimal ? undefined : handleActionShortcut} />
 
 {#if isMobile.current}
 	<div class="h-full bg-background text-foreground">

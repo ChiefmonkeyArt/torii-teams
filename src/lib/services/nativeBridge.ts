@@ -1,3 +1,4 @@
+import { APP_NAME } from '$lib/torii/build';
 import { browser } from '$app/environment';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
@@ -346,7 +347,7 @@ export async function showLocalNotification(n: ChatLocalNotification): Promise<v
 		return;
 	}
 	if (!('Notification' in window) || Notification.permission !== 'granted') return;
-	const notification = new Notification(n.title || 'Cordn', {
+	const notification = new Notification(n.title || APP_NAME, {
 		body: n.body,
 		icon: n.icon,
 		tag: `cordn-group-${n.groupId}`

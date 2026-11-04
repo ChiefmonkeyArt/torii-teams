@@ -49,6 +49,9 @@ jobs:
           # Upstream Cordn identity files (NIP-05 names, Android app links) and
           # Cloudflare Pages rules do not belong on a Torii node.
           rm -rf build/.well-known build/_headers build/_redirects
+          # White-label (ADR 0005): Teams name and icons, no Cordn logos; fails if the
+          # service worker would precache a file the release removed.
+          node scripts/torii-brand.mjs build
           name="torii-teams-${TAG}"
           mkdir -p dist
           jq -n --arg tag "$TAG" --arg commit "$GITHUB_SHA" \

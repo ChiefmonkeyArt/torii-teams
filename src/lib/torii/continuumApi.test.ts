@@ -5,6 +5,7 @@ import {
 	ContinuumError,
 	matchProjectGroup,
 	parseRosterOwner,
+	parseRoster,
 	parseTeamMe,
 	projectMarker,
 	type GroupLike
@@ -174,6 +175,20 @@ describe('parsers', () => {
 		).toEqual([{ slug: 'ok', role: 'member', caps: [] }]);
 		expect(parseTeamMe({ pubkey: 'zz', projects: [] })).toBeNull();
 		expect(parseRosterOwner({ roster: { owner: 'npub1…' } })).toBeNull();
+	});
+
+	it('parses roster members, owner first, junk dropped, no list = null members', () => {
+		const A = 'a'.repeat(64);
+		expect(
+			parseRoster({
+				roster: {
+					owner: OWNER,
+					members: [{ pubkey: A }, { pubkey: A }, { pubkey: 'npub1x' }, null, { pubkey: OWNER }]
+				}
+			})
+		).toEqual({ owner: OWNER, members: [OWNER, A] });
+		expect(parseRoster({ roster: { owner: OWNER } })).toEqual({ owner: OWNER, members: null });
+		expect(parseRoster({ roster: null })).toBeNull();
 	});
 });
 

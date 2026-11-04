@@ -33,6 +33,7 @@ import {
 	type StoredChatGroup
 } from '$lib/services/chatGroups.svelte';
 import { samePubKey } from '$lib/utils';
+import { APP_NAME, TORII_NODE_BUILD } from '$lib/torii/build';
 import { resolveGroupLocator } from '$lib/utils/groupShareLink';
 import { getCoordinatorLabel } from '$lib/services/chatCoordinators.svelte';
 import { eventStore } from '$lib/services/eventStore';
@@ -66,6 +67,13 @@ function rememberNotifiedMessage(messageId: string): void {
  *  heads must not set <title>, or the unread badge flips between writers);
  *  labels mirror the route titles these replaced. */
 function getBaseTitle(pathname: string) {
+	if (!TORII_NODE_BUILD) return getCordnTitle(pathname);
+	// Torii team UI (ADR 0005): only the home and project routes exist.
+	const project = /^\/chat\/p\/([a-z0-9-]+)$/.exec(pathname)?.[1];
+	return project ? `${project} | ${APP_NAME}` : APP_NAME;
+}
+
+function getCordnTitle(pathname: string) {
 	if (pathname === '/chat') return manager.active ? 'Chats | Cordn' : DEFAULT_TITLE;
 	if (pathname.startsWith('/chat/news')) return 'News & updates | Cordn';
 	if (pathname.startsWith('/chat/create-group')) return 'Create group | Cordn';
@@ -132,6 +140,8 @@ function getUnreadAttentionCount(excludeGroupId?: string) {
 		: 0;
 	const unreadWelcomes = getUnreadWelcomeNotificationCount();
 	const unreadJoinRequests = getUnreadJoinRequestCount();
+	// The Torii UI has no welcome, join-request or News screens to clear these.
+	if (TORII_NODE_BUILD) return unreadMessages + unreadMentions;
 	const unreadNews = getUnreadNewsCount();
 	return unreadMessages + unreadMentions + unreadWelcomes + unreadJoinRequests + unreadNews;
 }

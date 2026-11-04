@@ -65,7 +65,8 @@
 		selectedMentions = $bindable([]),
 		onSendMedia = () => {},
 		onSendVoice = () => {},
-		onSendPoll = () => {}
+		onSendPoll = () => {},
+		minimal = false
 	}: {
 		value?: string;
 		onSubmit: () => void;
@@ -86,6 +87,8 @@
 		onSendVoice?: (result: RecordingResult) => void;
 		/** Send a poll created in the poll composer dialog. */
 		onSendPoll?: (draft: PollDraft) => void;
+		/** Torii team chat (ADR 0005): no voice notes, polls or GIF search. */
+		minimal?: boolean;
 	} = $props();
 
 	let textareaRef: HTMLTextAreaElement | null = $state(null);
@@ -129,7 +132,12 @@
 		recorder.state === 'recording' || recorder.state === 'locked' || recorder.state === 'requesting'
 	);
 	const showMic = $derived(
-		!disabled && voiceSupported && !value.trim() && pendingAttachments.length === 0 && !isRecording
+		!minimal &&
+			!disabled &&
+			voiceSupported &&
+			!value.trim() &&
+			pendingAttachments.length === 0 &&
+			!isRecording
 	);
 
 	// Hold-to-record gesture tracking. Listeners attach to window on pointerdown
@@ -980,11 +988,13 @@
 					onTakeVideo={takeVideo}
 					onPickImage={pickImage}
 					onPickDocument={pickDocument}
-					onPickGif={() => (gifPickerOpen = true)}
-					onCreatePoll={() => (pollDialogOpen = true)}
+					onPickGif={minimal ? undefined : () => (gifPickerOpen = true)}
+					onCreatePoll={minimal ? undefined : () => (pollDialogOpen = true)}
 				/>
-				<GifPicker bind:open={gifPickerOpen} onPick={insertGifUrl} />
-				<PollComposerDialog bind:open={pollDialogOpen} onCreate={onSendPoll} />
+				{#if !minimal}
+					<GifPicker bind:open={gifPickerOpen} onPick={insertGifUrl} />
+					<PollComposerDialog bind:open={pollDialogOpen} onCreate={onSendPoll} />
+				{/if}
 				<ChatAttachmentCaptionSheet
 					bind:open={captionSheetOpen}
 					attachment={captionSheetAttachment}

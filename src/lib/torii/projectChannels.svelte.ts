@@ -4,7 +4,7 @@
 
 import { listChatGroupMembers, listChatGroups } from '$lib/services/chatGroups.svelte';
 import { manager } from '$lib/services/accountManager.svelte';
-import { normalizePubKey } from '$lib/utils';
+import { safeNormalizePubKey as normalizePubKey } from '$lib/utils';
 import type { ToriiNodeConfig } from './nodeConfig';
 import {
 	ContinuumClient,
@@ -22,6 +22,8 @@ export const projectChannels = $state<{
 	owner: boolean;
 	projects: TeamProject[];
 	owners: Record<string, string | null>;
+	/** Roster pubkeys per project; absent when the roster was unreadable. */
+	rosters: Record<string, string[]>;
 	coordinator: string;
 	relays: string[];
 }>({
@@ -30,6 +32,7 @@ export const projectChannels = $state<{
 	owner: false,
 	projects: [],
 	owners: {},
+	rosters: {},
 	coordinator: '',
 	relays: []
 });
@@ -98,14 +101,18 @@ async function loadProjectChannels(): Promise<void> {
 	try {
 		const me = await client.me();
 		const owners: Record<string, string | null> = {};
+		const rosters: Record<string, string[]> = {};
 		await Promise.all(
 			me.projects.map(async (p) => {
-				owners[p.slug] = await client!.rosterOwner(p.slug);
+				const roster = await client!.roster(p.slug);
+				owners[p.slug] = roster?.owner ?? null;
+				if (roster?.members) rosters[p.slug] = roster.members;
 			})
 		);
 		projectChannels.owner = me.owner || me.projects.some((p) => p.role === 'owner');
 		projectChannels.projects = me.projects;
 		projectChannels.owners = owners;
+		projectChannels.rosters = rosters;
 		projectChannels.error = '';
 		projectChannels.status = 'ready';
 		loadedFor = account.pubkey;
@@ -138,6 +145,7 @@ export function signOutOfContinuum(): void {
 	loadedFor = '';
 	projectChannels.status = client ? 'signed-out' : 'off';
 	projectChannels.projects = [];
+	projectChannels.rosters = {};
 }
 
 function groupLikes(): GroupLike[] {
@@ -163,12 +171,23 @@ function groupLikes(): GroupLike[] {
 }
 
 /** The Cordn group for a project on this node, or null (fails closed). */
-export function projectGroupId(slug: string): string | null {
-	const hit = matchProjectGroup(
+export function projectGroup(slug: string): GroupLike | null {
+	return matchProjectGroup(
 		slug,
 		projectChannels.owners[slug] ?? null,
 		normalizePubKey(projectChannels.coordinator),
 		groupLikes()
 	);
-	return hit?.id ?? null;
+}
+
+export function projectGroupId(slug: string): string | null {
+	return projectGroup(slug)?.id ?? null;
+}
+
+/** The project whose chat is this group, or null. */
+export function projectForGroup(groupId: string): string | null {
+	for (const p of projectChannels.projects) {
+		if (projectGroupId(p.slug) === groupId) return p.slug;
+	}
+	return null;
 }

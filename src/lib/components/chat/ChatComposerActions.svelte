@@ -21,8 +21,8 @@
 		onTakeVideo = () => {},
 		onPickImage = () => {},
 		onPickDocument = () => {},
-		onPickGif = () => {},
-		onCreatePoll = () => {}
+		onPickGif,
+		onCreatePoll
 	}: {
 		onTakePhoto?: () => void;
 		onTakeVideo?: () => void;
@@ -64,17 +64,21 @@
 			<ImageIcon class="size-4" />
 			<span>Image</span>
 		</DropdownMenu.Item>
-		<DropdownMenu.Item onclick={onPickGif} class="gap-2">
-			<ImagePlay class="size-4" />
-			<span>GIF</span>
-		</DropdownMenu.Item>
+		{#if onPickGif}
+			<DropdownMenu.Item onclick={onPickGif} class="gap-2">
+				<ImagePlay class="size-4" />
+				<span>GIF</span>
+			</DropdownMenu.Item>
+		{/if}
 		<DropdownMenu.Item onclick={onPickDocument} class="gap-2">
 			<FileText class="size-4" />
 			<span>Document</span>
 		</DropdownMenu.Item>
-		<DropdownMenu.Item onclick={onCreatePoll} class="gap-2">
-			<BarChart3 class="size-4" />
-			<span>Poll</span>
-		</DropdownMenu.Item>
+		{#if onCreatePoll}
+			<DropdownMenu.Item onclick={onCreatePoll} class="gap-2">
+				<BarChart3 class="size-4" />
+				<span>Poll</span>
+			</DropdownMenu.Item>
+		{/if}
 	</DropdownMenu.Content>
 </DropdownMenu.Root>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { APP_NAME, TORII_NODE_BUILD } from '$lib/torii/build';
 	import { Button, buttonVariants } from '$lib/components/ui/button/index.js';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import { Spinner } from '$lib/components/ui/spinner/index.js';
@@ -203,7 +204,7 @@
 
 			// Generate nostr connect URI with app metadata and permissions
 			const uri = signer.getNostrConnectURI({
-				name: 'Cordn-web',
+				name: TORII_NODE_BUILD ? APP_NAME : 'Cordn-web',
 				url: publicWebOrigin(),
 				image: `${publicWebOrigin()}/favicon.svg`
 			});
