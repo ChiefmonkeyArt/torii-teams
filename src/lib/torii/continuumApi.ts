@@ -121,6 +121,29 @@ export function parseRosterOwner(raw: unknown): string | null {
 	return typeof owner === 'string' && HEX64.test(owner) ? owner : null;
 }
 
+export interface ProjectRoster {
+	owner: string;
+	/** Everyone on the roster, owner and agents included, deduplicated;
+	 *  null when the reply carries no member list (never guess membership). */
+	members: string[] | null;
+}
+
+const MAX_ROSTER = 64;
+
+/** The roster (owner + member pubkeys), or null when it has no valid owner. */
+export function parseRoster(raw: unknown): ProjectRoster | null {
+	const owner = parseRosterOwner(raw);
+	if (!owner) return null;
+	const list = (raw as { roster: { members?: unknown } }).roster.members;
+	if (!Array.isArray(list)) return { owner, members: null };
+	const members = new Set<string>([owner]);
+	for (const m of list.slice(0, MAX_ROSTER)) {
+		const pk = (m as { pubkey?: unknown } | null)?.pubkey;
+		if (typeof pk === 'string' && HEX64.test(pk)) members.add(pk);
+	}
+	return { owner, members: [...members] };
+}
+
 export class ContinuumClient {
 	private session: ContinuumSession | null = null;
 
@@ -212,9 +235,14 @@ export class ContinuumClient {
 
 	/** Project owner pubkey; null when the roster is unreadable (fail closed). */
 	async rosterOwner(slug: string): Promise<string | null> {
+		return (await this.roster(slug))?.owner ?? null;
+	}
+
+	/** Project roster; null when it is unreadable (fail closed). */
+	async roster(slug: string): Promise<ProjectRoster | null> {
 		if (!SLUG_RE.test(slug)) return null;
 		try {
-			return parseRosterOwner(await this.authed(`/api/projects/${slug}/roster`));
+			return parseRoster(await this.authed(`/api/projects/${slug}/roster`));
 		} catch (error) {
 			if (error instanceof ContinuumError && error.status === 401) throw error;
 			return null;

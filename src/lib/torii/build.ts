@@ -10,3 +10,6 @@ export const TORII_NODE_BUILD = import.meta.env.VITE_TORII_NODE_BUILD === '1';
 export function upstreamFallbackCoordinator(): string {
 	return TORII_NODE_BUILD ? '' : DEFAULT_CHAT_COORDINATOR_PUBKEY;
 }
+
+/** The name people see in titles and prompts (ADR 0005: white-labelled on a node). */
+export const APP_NAME = TORII_NODE_BUILD ? 'Teams' : 'Cordn';

@@ -27,7 +27,7 @@
 		onVisibleUnreadReference = () => {},
 		onVisibleRead = () => {},
 		onOpenRich = () => {},
-		onPin = () => {},
+		onPin,
 		onMakeAction,
 		onOpenAction,
 		onVote = () => Promise.resolve(false),

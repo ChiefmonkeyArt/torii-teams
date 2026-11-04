@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { APP_NAME } from '$lib/torii/build';
 	import { onMount } from 'svelte';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
 	import X from '@lucide/svelte/icons/x';
@@ -28,7 +29,7 @@
 	>
 		<RefreshCw class="size-4 shrink-0" />
 		<span class="min-w-0 truncate">
-			A new version of Cordn is available
+			A new version of {APP_NAME} is available
 			{#if displayVersion}
 				<span class="opacity-70">({displayVersion})</span>
 			{/if}

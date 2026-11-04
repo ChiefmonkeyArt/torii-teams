@@ -46,7 +46,8 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | Continuum mount (TEAMS-2c a): node settings, release workflow, ADR 0001   | Merged (PRs #4, #5); released `0.6.1-torii.1`; not deployed |
 | Teams in Continuum: per-project sidebar, Continuum sign-in, ADR 0002      | `0.6.1-torii.2`                                             |
 | No upstream services by default, project-only main pane, ADR 0003         | `0.6.1-torii.3`; live on chiefmonkey.art                    |
-| Sign in to be addable, "Your team can now add you", ADR 0004              | `0.6.1-torii.4`                                             |
+| Sign in to be addable, "Your team can now add you", ADR 0004              | Merged (PR #9); ships in `0.6.1-torii.4`                    |
+| Own white-labelled team UI, roster = membership, ADR 0005                 | `0.6.1-torii.4`                                             |
 
 ### Using actions (J1 slice 2)
 
@@ -91,9 +92,16 @@ Continuum project (`src/lib/torii/continuumApi.ts`, `projectChannels.svelte.ts`,
 Release builds set `VITE_TORII_NODE_BUILD=1`, so the app never seeds, probes or
 publishes to Cordn's public coordinator by itself:
 [`docs/torii/adr-0003-no-upstream-services.md`](docs/torii/adr-0003-no-upstream-services.md).
-Teammates must sign in (not just visit) before the owner can add them; the
-chat home says when they can be added:
+Teammates must sign in (not just visit) before the owner can add them:
 [`docs/torii/adr-0004-team-reachability.md`](docs/torii/adr-0004-team-reachability.md).
+Release builds show Torii's own team UI instead of Cordn's: sign in, a project
+list, one chat per project (text, images and files, reactions, replies), named
+"Teams" with no Cordn branding. The project roster is the membership: the owner's
+client creates each project chat and adds or removes people as the roster
+changes; members' clients join automatically
+(`src/lib/torii/ui/`, `rosterPlan.ts`, `rosterSync.svelte.ts`,
+`scripts/torii-brand.mjs`):
+[`docs/torii/adr-0005-torii-ui-on-cordn-engine.md`](docs/torii/adr-0005-torii-ui-on-cordn-engine.md).
 High priority after the MVP: FIPS on by default across Plebeian, Quest,
 Continuum and the marketplace (an ADR per app).
 
@@ -102,7 +110,7 @@ Continuum and the marketplace (an ADR per app).
 `<upstream version>-torii.<n>`; `package.json` keeps the upstream version.
 Released: `0.6.1-torii.1` (d2a2f22, Suite v0.9.29-alpha), `0.6.1-torii.2`
 (411c435, v0.9.30-alpha), `0.6.1-torii.3` (ec2bc86, v0.9.33-alpha, live) and
-`0.6.1-torii.4` (this PR). A Torii tag runs
+`0.6.1-torii.4` (PR #9 plus ADR 0005, this PR). A Torii tag runs
 `.github/workflows/torii-release.yml`, which publishes a checksummed web build
 for the Suite installer.
 
