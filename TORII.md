@@ -44,6 +44,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | J1 slice 2: chat wiring (see below)                                       | Merged (PR #2)                                              |
 | J1 slice 3: whole-history fold, edit form, Assign to me                   | Merged (PR #3)                                              |
 | Continuum mount (TEAMS-2c a): node settings, release workflow, ADR 0001   | Merged (PRs #4, #5); released `0.6.1-torii.1`; not deployed |
+| Teams in Continuum: per-project sidebar, Continuum sign-in, ADR 0002      | `0.6.1-torii.2`; not deployed                               |
 | Live use on a node                                                        | Needs the Suite installer step (Continuum Teams session)    |
 
 ### Using actions (J1 slice 2)
@@ -83,6 +84,9 @@ the Suite installer, and adds the node's coordinator and relay. It becomes the
 default only on a fresh device or if this node set the old default; a default
 the member chose is never changed. Without the file the app is plain
 cordn-web. Details: [`docs/torii/adr-0001-node-mount.md`](docs/torii/adr-0001-node-mount.md).
+With a `continuum` origin in the node file, the sidebar is one channel per
+Continuum project (`src/lib/torii/continuumApi.ts`, `projectChannels.svelte.ts`,
+`ProjectChannelList.svelte`). Details: [`docs/torii/adr-0002-teams-in-continuum.md`](docs/torii/adr-0002-teams-in-continuum.md).
 
 ## Versions
 

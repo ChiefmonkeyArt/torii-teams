@@ -10,7 +10,7 @@
 	import { onMount } from 'svelte';
 	import { initNativeShell } from '$lib/services/nativeBridge';
 	import { initAppearance } from '$lib/themes/appearance.svelte';
-	import { initToriiNode } from '$lib/torii/nodeConfig';
+	import { browserRelays, initToriiNode } from '$lib/torii/nodeConfig';
 	import { defineCustomElements } from '@ionic/pwa-elements/loader';
 
 	let { children } = $props();
@@ -40,7 +40,13 @@
 		// already painted it) and run the one-time default migration.
 		void initAppearance();
 		// Torii Teams: on a Torii node, add the node's coordinator (404 elsewhere).
-		void initToriiNode();
+		// With a Continuum origin, the sidebar becomes one channel per project.
+		void initToriiNode().then(async (config) => {
+			if (window.self !== window.top) document.documentElement.dataset.toriiEmbed = '1';
+			if (!config?.continuum) return;
+			const { startProjectChannels } = await import('$lib/torii/projectChannels.svelte');
+			startProjectChannels(config, browserRelays(config.relays, location.protocol));
+		});
 	});
 </script>
 

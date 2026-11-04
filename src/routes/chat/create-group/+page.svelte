@@ -32,8 +32,10 @@
 	import Info from '@lucide/svelte/icons/info';
 	import { isHexKey } from 'applesauce-core/helpers';
 
-	let name = $state('');
-	let description = $state('');
+	// Torii Teams: the project sidebar's "Create project chat" prefills these
+	// (one-shot at mount; the marker in the description links group to project).
+	let name = $state((page.url.searchParams.get('name') ?? '').slice(0, 80));
+	let description = $state((page.url.searchParams.get('description') ?? '').slice(0, 280));
 	let icon = $state('');
 	let imageUrl = $state('');
 	// Seed from ?coordinator= (the "Create group" buttons on coordinator cards
