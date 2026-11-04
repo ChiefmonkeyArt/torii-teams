@@ -28,6 +28,8 @@
 	import { isChatGroupPinned } from '$lib/services/chatGroupPins.svelte';
 	import { searchChatContent } from '$lib/services/chatContentSearch';
 	import NewsListItem from '$lib/components/news/NewsListItem.svelte';
+	import ProjectChannelList from '$lib/torii/ProjectChannelList.svelte';
+	import { projectChannels } from '$lib/torii/projectChannels.svelte';
 	import { getUnreadNewsCount } from '$lib/news/newsReadState.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { activeAccount } from '$lib/services/accountManager.svelte';
@@ -424,7 +426,16 @@
 	<nav
 		class="no-scrollbar flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto pb-4"
 	>
-		{#if isSearching && !collapsed}
+		{#if projectChannels.status !== 'off'}
+			<!-- Torii node: one channel per project, nothing else (ADR 0002). -->
+			<ProjectChannelList
+				{collapsed}
+				{isGroupActive}
+				onnavigate={closeMobileSidebar}
+				{getChatSummary}
+				profileHints={groupProfileHints}
+			/>
+		{:else if isSearching && !collapsed}
 			<ChatSearchResults
 				results={searchResults}
 				query={debouncedSearchQuery.trim()}
@@ -457,7 +468,7 @@
 				{/each}
 			</div>
 		{/if}
-		{#if !(isSearching && !collapsed)}
+		{#if projectChannels.status === 'off' && !(isSearching && !collapsed)}
 			<NewsListItem
 				href={resolve('/chat/news')}
 				variant="sidebar"
