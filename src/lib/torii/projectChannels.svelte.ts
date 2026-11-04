@@ -35,6 +35,10 @@ export const projectChannels = $state<{
 });
 
 let client: ContinuumClient | null = null;
+// One load per account: every sidebar instance (desktop + phone sheet) asks,
+// but only the first call for a pubkey reaches Continuum.
+let inflight: Promise<void> | null = null;
+let loadedFor = '';
 
 /** Called once with the node file; turns project mode on only when Continuum is set. */
 export function startProjectChannels(config: ToriiNodeConfig, relays: string[]): void {
@@ -66,7 +70,20 @@ function explain(error: unknown): string {
 }
 
 /** Load projects with a stored session; never prompts the signer. */
-export async function refreshProjectChannels(): Promise<void> {
+export function refreshProjectChannels(options: { force?: boolean } = {}): Promise<void> {
+	const pubkey = manager.getActive()?.pubkey ?? '';
+	if (!options.force && pubkey && pubkey === loadedFor && projectChannels.status === 'ready') {
+		return Promise.resolve();
+	}
+	if (inflight) return inflight;
+	inflight = loadProjectChannels().finally(() => {
+		inflight = null;
+	});
+	return inflight;
+}
+
+async function loadProjectChannels(): Promise<void> {
+	loadedFor = '';
 	const account = manager.getActive();
 	if (!client || !account) {
 		if (client) projectChannels.status = 'signed-out';
@@ -91,6 +108,7 @@ export async function refreshProjectChannels(): Promise<void> {
 		projectChannels.owners = owners;
 		projectChannels.error = '';
 		projectChannels.status = 'ready';
+		loadedFor = account.pubkey;
 	} catch (error) {
 		if (error instanceof ContinuumError && error.status === 401) {
 			projectChannels.status = 'signed-out';
@@ -108,7 +126,7 @@ export async function signInToContinuum(): Promise<void> {
 	projectChannels.status = 'signing-in';
 	try {
 		await client.signIn(account.signer, normalizePubKey(account.pubkey));
-		await refreshProjectChannels();
+		await refreshProjectChannels({ force: true });
 	} catch (error) {
 		projectChannels.status = 'error';
 		projectChannels.error = explain(error);
@@ -117,6 +135,7 @@ export async function signInToContinuum(): Promise<void> {
 
 export function signOutOfContinuum(): void {
 	client?.signOut();
+	loadedFor = '';
 	projectChannels.status = client ? 'signed-out' : 'off';
 	projectChannels.projects = [];
 }

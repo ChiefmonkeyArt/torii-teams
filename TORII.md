@@ -87,6 +87,11 @@ cordn-web. Details: [`docs/torii/adr-0001-node-mount.md`](docs/torii/adr-0001-no
 With a `continuum` origin in the node file, the sidebar is one channel per
 Continuum project (`src/lib/torii/continuumApi.ts`, `projectChannels.svelte.ts`,
 `ProjectChannelList.svelte`). Details: [`docs/torii/adr-0002-teams-in-continuum.md`](docs/torii/adr-0002-teams-in-continuum.md).
+Release builds set `VITE_TORII_NODE_BUILD=1`, so the app never seeds, probes or
+publishes to Cordn's public coordinator by itself:
+[`docs/torii/adr-0003-no-upstream-services.md`](docs/torii/adr-0003-no-upstream-services.md).
+High priority after the MVP: FIPS on by default across Plebeian, Quest,
+Continuum and the marketplace (an ADR per app).
 
 ## Versions
 

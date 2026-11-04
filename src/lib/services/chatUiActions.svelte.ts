@@ -46,7 +46,7 @@ import { requireActiveAccount } from '$lib/services/chatRuntime';
 import { ensureLastResortPublished } from '$lib/services/chatKeyPackages.svelte';
 import { promptForeignLastResort } from '$lib/services/lastResortConflict.svelte';
 import { getDefaultChatCoordinator } from '$lib/services/chatCoordinators.svelte';
-import { DEFAULT_CHAT_COORDINATOR_PUBKEY } from '$lib/constants/chat';
+import { upstreamFallbackCoordinator } from '$lib/torii/build';
 import { toast } from 'svelte-sonner';
 import type { ChatMessageReplyTarget, MessageTarget, PinOp } from '$lib/chat/references';
 import type { StoredChatMessage } from '$lib/services/chatGroupMessages.svelte';
@@ -314,9 +314,11 @@ export async function makeReachableAction(coordinatorKey?: string): Promise<void
 	// With no coordinator given (the generic callout, the bare npub link):
 	// honor a power user's flagged default if set; otherwise publish to the
 	// default coordinator (seeded on first run), so new users never pick one.
-	const result = await ensureLastResortPublished(
-		coordinatorKey || getDefaultChatCoordinator()?.pubkey || DEFAULT_CHAT_COORDINATOR_PUBKEY
-	);
+	// Torii node build: no Cordn fallback; the node's coordinator is the default.
+	const target =
+		coordinatorKey || getDefaultChatCoordinator()?.pubkey || upstreamFallbackCoordinator();
+	if (!target) throw new Error('No coordinator yet: open this app from your Torii node.');
+	const result = await ensureLastResortPublished(target);
 	if (result.kind === 'foreign') {
 		void promptForeignLastResort(result.coordinatorKey);
 		return;

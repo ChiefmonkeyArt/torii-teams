@@ -15,7 +15,7 @@ import { manager } from '$lib/services/accountManager.svelte';
 import { normalizePubKey } from '$lib/utils';
 import { listKnownCoordinatorKeys } from '$lib/services/chatCoordinators.svelte';
 import { detectForeignKeyPackage } from '$lib/services/chatKeyPackages.svelte';
-import { DEFAULT_CHAT_COORDINATOR_PUBKEY } from '$lib/constants/chat';
+import { upstreamFallbackCoordinator } from '$lib/torii/build';
 
 const DISMISS_KEY = 'cordn.migrationDismissed';
 
@@ -70,9 +70,9 @@ export async function checkMigrationBanner(): Promise<void> {
 		return;
 	}
 	const coordinators = [
-		DEFAULT_CHAT_COORDINATOR_PUBKEY,
+		upstreamFallbackCoordinator(),
 		...listKnownCoordinatorKeys().map(normalizePubKey)
-	];
+	].filter(Boolean);
 	const uniqueCoordinators = [...new Set(coordinators)];
 	const fingerprint = `${normalizePubKey(pk)}|${uniqueCoordinators.sort().join(',')}`;
 	if (fingerprint === lastFingerprint) return;

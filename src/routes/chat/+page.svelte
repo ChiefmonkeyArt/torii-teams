@@ -13,6 +13,8 @@
 	import { resolve } from '$app/paths';
 	import { activeAccount } from '$lib/services/accountManager.svelte';
 	import { DEFAULT_CHAT_COORDINATOR_PUBKEY } from '$lib/constants/chat';
+	import { TORII_NODE_BUILD } from '$lib/torii/build';
+	import { projectChannels } from '$lib/torii/projectChannels.svelte';
 	import { migrationBannerStore } from '$lib/services/migrationBanner.svelte';
 	import { listChatGroups } from '$lib/services/chatGroups.svelte';
 	import { getUnreadNewsCount, isNewsItemUnread } from '$lib/news/newsReadState.svelte';
@@ -285,7 +287,15 @@
 				<!-- Flat feed: group/news rows are self-sufficient bordered cards — no
      outer card chrome or duplicate "Chats" heading (the page header owns
      it), so the content surface stays as wide as possible. -->
-				{#if feedRows.length > 0}
+				{#if projectChannels.status !== 'off'}
+					<!-- Torii node: the sidebar is the project list (ADR 0002); no
+					     other groups, News or upstream group links here. -->
+					<div
+						class="rounded-2xl border border-dashed border-border p-4 text-sm text-muted-foreground"
+					>
+						Pick a project on the left to open its chat.
+					</div>
+				{:else if feedRows.length > 0}
 					<div class="space-y-3">
 						{#each feedRows as row (row.kind === 'news' ? 'news' : row.group.id)}
 							{#if row.kind === 'news'}
@@ -307,7 +317,7 @@
 						{/each}
 					</div>
 				{/if}
-				{#if !hasGroups}
+				{#if !hasGroups && projectChannels.status === 'off'}
 					<div
 						class="rounded-2xl border border-dashed border-border p-4 text-sm text-muted-foreground"
 					>
@@ -316,10 +326,15 @@
 				{/if}
 
 				<div class="flex flex-wrap items-center gap-2">
-					<Button href={resolve('/chat/create-group')} variant={hasGroups ? 'outline' : 'default'}>
-						Create group
-					</Button>
-					{#if !inCordnGroup}
+					{#if projectChannels.status === 'off'}
+						<Button
+							href={resolve('/chat/create-group')}
+							variant={hasGroups ? 'outline' : 'default'}
+						>
+							Create group
+						</Button>
+					{/if}
+					{#if !inCordnGroup && !TORII_NODE_BUILD}
 						<Button href={cordnGroupHref} variant="outline">Join Cordn group</Button>
 					{/if}
 					<a
@@ -337,7 +352,9 @@
 				class="mx-auto flex min-h-full w-full max-w-md flex-col items-center justify-center gap-6 py-8 text-center"
 			>
 				<div class="space-y-3">
-					<h1 class="text-2xl font-semibold tracking-tight">Welcome to Cordn</h1>
+					<h1 class="text-2xl font-semibold tracking-tight">
+						{TORII_NODE_BUILD ? 'Welcome to your team' : 'Welcome to Cordn'}
+					</h1>
 					<p class="text-sm text-muted-foreground">
 						Private group messaging, end-to-end encrypted. Your identity is a key you hold — no
 						email, no phone number.

@@ -12,6 +12,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Spinner } from '$lib/components/ui/spinner';
 	import { DEFAULT_CHAT_COORDINATOR_PUBKEY } from '$lib/constants/chat';
+	import { TORII_NODE_BUILD } from '$lib/torii/build';
 	import { queryClient } from '$lib/query-client';
 	import { chatQueryKeys } from '$lib/queries/chatQueryKeys';
 	import {
@@ -106,7 +107,11 @@
 		coordinatorParam ? decodeCoordinatorQueryParam(coordinatorParam) : null
 	);
 	const selectedCoordinatorKey = $derived(
-		!coordinatorParam ? DEFAULT_CHAT_COORDINATOR_PUBKEY : (coordinatorQuery?.coordinatorKey ?? '')
+		!coordinatorParam
+			? TORII_NODE_BUILD
+				? (getDefaultChatCoordinator()?.pubkey ?? '')
+				: DEFAULT_CHAT_COORDINATOR_PUBKEY
+			: (coordinatorQuery?.coordinatorKey ?? '')
 	);
 	const coordinatorError = $derived(
 		coordinatorParam && !coordinatorQuery ? 'This profile link has a malformed coordinator.' : ''
