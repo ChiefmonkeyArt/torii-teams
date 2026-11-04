@@ -12,6 +12,7 @@ import { profileDisplayName } from '$lib/utils/profileName';
 import { buildUniqueSlugId, normalizePubKey, pubkeyToHexColor } from '$lib/utils';
 import { DEFAULT_CHAT_COORDINATOR_PUBKEY } from '$lib/constants/chat';
 import { TORII_NODE_BUILD } from '$lib/torii/build';
+import { isSeededCordnCoordinator } from '$lib/torii/teamReachability';
 
 const STORAGE_KEY = 'cordn-chat-coordinators';
 
@@ -126,6 +127,7 @@ function saveCoordinators() {
 function loadCoordinators() {
 	if (!browser) return;
 	let firstRun = false;
+	let cleanedSeed = false;
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
 		if (!raw) {
@@ -133,6 +135,16 @@ function loadCoordinators() {
 		} else {
 			const parsed = JSON.parse(raw) as PersistedCoordinators;
 			chatCoordinatorsStore.coordinators = (parsed.coordinators ?? []).map(migrateCoordinator);
+			// Torii node build: drop the Cordn seed torii.2 stored (ADR 0004).
+			if (TORII_NODE_BUILD) {
+				const kept = chatCoordinatorsStore.coordinators.filter(
+					(entry) => !isSeededCordnCoordinator(entry)
+				);
+				if (kept.length !== chatCoordinatorsStore.coordinators.length) {
+					chatCoordinatorsStore.coordinators = kept;
+					cleanedSeed = true;
+				}
+			}
 			autoPublishRetiredByOwner = parsed.autoPublishRetiredByOwner ?? {};
 			ensureSingleDefault();
 		}
@@ -150,6 +162,7 @@ function loadCoordinators() {
 	// gate. Seeding only on first run (not on every empty store) means a user
 	// who deliberately removes all coordinators isn't re-seeded.
 	// Torii node build: the node file seeds the node's coordinator instead.
+	if (cleanedSeed) saveCoordinators();
 	if (firstRun && !TORII_NODE_BUILD) {
 		upsertChatCoordinator({
 			pubkey: DEFAULT_CHAT_COORDINATOR_PUBKEY,

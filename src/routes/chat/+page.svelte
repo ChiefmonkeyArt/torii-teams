@@ -35,6 +35,7 @@
 	import { refreshChatFeedAction } from '$lib/services/chatUiActions.svelte';
 	import { appUpdateStore, reloadForUpdate } from '$lib/services/appUpdate.svelte';
 	import CheckCheck from '@lucide/svelte/icons/check-check';
+	import { teamReachability, teamReadyAckKey } from '$lib/torii/teamReachability';
 
 	// Pull-to-refresh on the chat list (native shell + standalone PWA only — a plain
 	// browser tab keeps the browser's own PTR as the emergency reload). When a web
@@ -135,15 +136,54 @@
 		localStorage.setItem(REACHABILITY_DISMISSED_KEY, '1');
 		reachabilityCalloutDismissed = true;
 	}
-	const uncoveredCoordinatorLabels = $derived.by(() =>
-		reachabilityStore.uncoveredCoordinatorKeys.map((key) => getCoordinatorLabel(key))
+	// Torii build: the node coordinator has its own team card below (ADR 0004).
+	const nodeCoordinatorKey = $derived(
+		TORII_NODE_BUILD ? safeNormalizePubKey(projectChannels.coordinator) : ''
 	);
+	const uncoveredOtherKeys = $derived(
+		reachabilityStore.uncoveredCoordinatorKeys.filter((key) => key !== nodeCoordinatorKey)
+	);
+	const uncoveredCoordinatorLabels = $derived.by(() =>
+		uncoveredOtherKeys.map((key) => getCoordinatorLabel(key))
+	);
+	const activePubkeyHex = $derived(safeNormalizePubKey($activeAccount?.pubkey ?? ''));
+	const teamState = $derived(
+		teamReachability(nodeCoordinatorKey, activePubkeyHex, reachabilityStore)
+	);
+	let teamReadyAcked = $state<Record<string, boolean>>({});
+	const teamReadyDismissed = $derived(
+		Boolean(activePubkeyHex) &&
+			(teamReadyAcked[activePubkeyHex] ??
+				(browser && localStorage.getItem(teamReadyAckKey(activePubkeyHex)) === '1'))
+	);
+	// The startup pass can run before the node file adds the node coordinator
+	// (first visit): re-check once per account when it left the node unverified.
+	let teamRecheckedFor = '';
+	$effect(() => {
+		const node = nodeCoordinatorKey;
+		const owner = activePubkeyHex;
+		if (!node || !owner || teamRecheckedFor === owner) return;
+		if (!reachabilityStore.checked || reachabilityStore.ownerPubkey !== owner) return;
+		if (
+			reachabilityStore.coveredCoordinatorKeys.includes(node) ||
+			reachabilityStore.uncoveredCoordinatorKeys.includes(node)
+		) {
+			return;
+		}
+		teamRecheckedFor = owner;
+		void maintainReachability().catch(() => undefined);
+	});
+	function dismissTeamReady() {
+		if (!activePubkeyHex) return;
+		localStorage.setItem(teamReadyAckKey(activePubkeyHex), '1');
+		teamReadyAcked = { ...teamReadyAcked, [activePubkeyHex]: true };
+	}
 	const showReachabilityCallout = $derived.by(
 		() =>
 			hasAccount &&
 			reachabilityStore.checked &&
 			reachabilityStore.ownerPubkey === safeNormalizePubKey($activeAccount?.pubkey ?? '') &&
-			reachabilityStore.uncoveredCoordinatorKeys.length > 0 &&
+			uncoveredOtherKeys.length > 0 &&
 			!migrationBannerStore.detected &&
 			!reachabilityCalloutDismissed
 	);
@@ -171,7 +211,8 @@
 			// Explicit action overrides the auto-publish opt-out.
 			await maintainReachability({ publish: true });
 			if (reachabilityStore.uncoveredCoordinatorKeys.length > 0) {
-				reachabilityError = `Still unreachable on ${uncoveredCoordinatorLabels.join(', ')}.`;
+				const labels = reachabilityStore.uncoveredCoordinatorKeys.map(getCoordinatorLabel);
+				reachabilityError = `Still unreachable on ${labels.join(', ')}.`;
 				return;
 			}
 			toast.success('You are reachable', {
@@ -225,6 +266,48 @@
 	>
 		{#if hasAccount}
 			<div class="mx-auto flex max-w-6xl flex-col gap-6">
+				{#if nodeCoordinatorKey && teamState === 'missing'}
+					<Card.Root class="border-amber-500/40 bg-amber-500/5" data-torii-team="missing">
+						<Card.Header class="space-y-1.5">
+							<Card.Title>Your team can't add you yet</Card.Title>
+							<Card.Description>
+								This node doesn't have your chat key yet, so nobody can add you to a project chat.
+							</Card.Description>
+						</Card.Header>
+						<Card.Content class="space-y-3">
+							{#if reachabilityError}
+								<p class="text-sm text-destructive">{reachabilityError}</p>
+							{/if}
+							<Button onclick={makeReachable} disabled={makingReachable}>
+								{#if makingReachable}
+									<Spinner class="mr-2 size-4" />
+								{/if}
+								{makingReachable ? 'Setting up…' : 'Fix it now'}
+							</Button>
+						</Card.Content>
+					</Card.Root>
+				{:else if nodeCoordinatorKey && teamState === 'checking'}
+					<div
+						class="flex items-center gap-2 rounded-2xl border border-border p-4 text-sm text-muted-foreground"
+						data-torii-team="checking"
+					>
+						<Spinner class="size-4" />
+						Getting you ready so your team can add you…
+					</div>
+				{:else if nodeCoordinatorKey && teamState === 'ready' && !teamReadyDismissed}
+					<Card.Root class="border-emerald-500/40 bg-emerald-500/5" data-torii-team="ready">
+						<Card.Header class="space-y-1.5">
+							<Card.Title>Your team can now add you</Card.Title>
+							<Card.Description>
+								A project owner can add you to the project chat. It shows up on the left when they
+								do.
+							</Card.Description>
+						</Card.Header>
+						<Card.Content>
+							<Button variant="ghost" onclick={dismissTeamReady}>Got it</Button>
+						</Card.Content>
+					</Card.Root>
+				{/if}
 				{#if showStorageDisclaimer}
 					<Card.Root class="border-amber-500/40 bg-amber-500/5">
 						<Card.Header class="space-y-1.5">
@@ -356,21 +439,28 @@
 						{TORII_NODE_BUILD ? 'Welcome to your team' : 'Welcome to Cordn'}
 					</h1>
 					<p class="text-sm text-muted-foreground">
-						Private group messaging, end-to-end encrypted. Your identity is a key you hold — no
-						email, no phone number.
+						{#if TORII_NODE_BUILD}
+							Sign in so your team can add you. Just visiting isn't enough: signing in puts your
+							chat key on this node.
+						{:else}
+							Private group messaging, end-to-end encrypted. Your identity is a key you hold — no
+							email, no phone number.
+						{/if}
 					</p>
 				</div>
 				<AccountLoginDialog
-					triggerLabel="Get started"
+					triggerLabel={TORII_NODE_BUILD ? 'Sign in' : 'Get started'}
 					triggerVariant="default"
 					triggerClass="h-11 px-8 text-base"
 				/>
-				<a
-					href={resolve('/')}
-					class="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-				>
-					What is Cordn?
-				</a>
+				{#if !TORII_NODE_BUILD}
+					<a
+						href={resolve('/')}
+						class="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+					>
+						What is Cordn?
+					</a>
+				{/if}
 			</div>
 		{/if}
 	</div>

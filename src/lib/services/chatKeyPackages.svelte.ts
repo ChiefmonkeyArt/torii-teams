@@ -22,6 +22,7 @@ import {
 import {
 	getCoordinatorLabel,
 	isAutoCoverageRetired,
+	listChatCoordinators,
 	listKnownCoordinatorKeys,
 	markCoordinatorUsed,
 	retireAutoCoverage
@@ -56,6 +57,9 @@ import {
 import { manager } from '$lib/services/accountManager.svelte';
 import { persistedChatBool } from '$lib/services/chatComposerSettings.svelte';
 import { browser } from '$app/environment';
+import { listChatGroups } from '$lib/services/chatGroups.svelte';
+import { TORII_NODE_BUILD } from '$lib/torii/build';
+import { shouldAutoCover } from '$lib/torii/teamReachability';
 
 export interface StoredKeyPackageRecord {
 	id: string;
@@ -1138,10 +1142,13 @@ export const reachabilityStore = $state<{
 	/** Whose summary this is — a stale summary from another account must never render. */
 	ownerPubkey: string;
 	uncoveredCoordinatorKeys: string[];
+	/** Coordinators that VERIFIED they serve a key package for us after this pass. */
+	coveredCoordinatorKeys: string[];
 }>({
 	checked: false,
 	ownerPubkey: '',
-	uncoveredCoordinatorKeys: []
+	uncoveredCoordinatorKeys: [],
+	coveredCoordinatorKeys: []
 });
 
 export interface CoordinatorReachabilitySummary {
@@ -1214,8 +1221,19 @@ async function runMaintainReachability(options: { publish?: boolean }): Promise<
 	// Auto-coverage targets only: coordinators retired by an adopted retraction
 	// (fleet-wide purge) stay out of the automatic pass — explicit per-
 	// coordinator actions still reach them through ensureLastResortPublished.
+	// Torii builds (ADR 0004): Cordn's public coordinator only when used on purpose.
+	const deliberateKeys = new Set(
+		TORII_NODE_BUILD
+			? [
+					...listChatCoordinators().map((entry) => normalizePubKey(entry.pubkey)),
+					...listChatGroups().map((group) => normalizePubKey(group.coordinatorKey))
+				]
+			: []
+	);
 	const coordinatorKeys = dedupeStrings(listKnownCoordinatorKeys().map(normalizePubKey)).filter(
-		(key) => !isAutoCoverageRetired(ownerPubkey, key)
+		(key) =>
+			!isAutoCoverageRetired(ownerPubkey, key) &&
+			shouldAutoCover(key, TORII_NODE_BUILD, deliberateKeys)
 	);
 	// Sweep dedupe stamp: the heartbeat sweep skips while this holds — a
 	// changed account or coordinator set (a group's coordinator, an added one)
@@ -1283,10 +1301,13 @@ async function runMaintainReachability(options: { publish?: boolean }): Promise<
 			}
 		})
 	);
+	const uncoveredKeys = stillUncovered.filter((key): key is string => key !== undefined);
 	reachabilityStore.ownerPubkey = ownerPubkey;
-	reachabilityStore.uncoveredCoordinatorKeys = stillUncovered.filter(
-		(key): key is string => key !== undefined
-	);
+	reachabilityStore.uncoveredCoordinatorKeys = uncoveredKeys;
+	// Verified only: an unreachable coordinator (no summary) is neither.
+	reachabilityStore.coveredCoordinatorKeys = observations
+		.filter(({ coordinatorKey, summary }) => summary && !uncoveredKeys.includes(coordinatorKey))
+		.map(({ coordinatorKey }) => coordinatorKey);
 	reachabilityStore.checked = true;
 }
 

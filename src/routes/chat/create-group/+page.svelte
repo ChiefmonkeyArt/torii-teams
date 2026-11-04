@@ -24,6 +24,8 @@
 	import { listChatKeyPackages } from '$lib/services/chatKeyPackages.svelte';
 	import { createChatGroup, inviteChatGroupMembers } from '$lib/services/chatGroups.svelte';
 	import { safeNormalizePubKey } from '$lib/utils';
+	import { TORII_NODE_BUILD } from '$lib/torii/build';
+	import { projectChannels } from '$lib/torii/projectChannels.svelte';
 	import { toast } from 'svelte-sonner';
 	import AccountLoginDialog from '$lib/components/AccountLoginDialog.svelte';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
@@ -44,6 +46,9 @@
 	function resolveInitialCoordinatorKey() {
 		const fromUrl = safeNormalizePubKey(page.url.searchParams.get('coordinator') ?? '');
 		if (fromUrl) return fromUrl;
+		// Torii node build: the node's coordinator, never a stored upstream one (ADR 0004).
+		const node = TORII_NODE_BUILD ? safeNormalizePubKey(projectChannels.coordinator) : '';
+		if (node) return node;
 		return getDefaultChatCoordinator()?.pubkey ?? listChatCoordinators()[0]?.pubkey ?? '';
 	}
 	let coordinatorKey = $state(resolveInitialCoordinatorKey());
