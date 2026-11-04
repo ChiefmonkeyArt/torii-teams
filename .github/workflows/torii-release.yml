@@ -37,6 +37,9 @@ jobs:
       - run: pnpm exec vitest run --project server
       - run: pnpm lint
       - run: pnpm build
+        env:
+          # Torii node build: never contact Cordn's public coordinator (ADR 0003).
+          VITE_TORII_NODE_BUILD: '1'
       - name: Package
         env:
           TAG: ${{ github.ref_name }}

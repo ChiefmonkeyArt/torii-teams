@@ -11,6 +11,7 @@ import { getCoordinatorServerName } from '$lib/services/coordinatorServerInfo.sv
 import { profileDisplayName } from '$lib/utils/profileName';
 import { buildUniqueSlugId, normalizePubKey, pubkeyToHexColor } from '$lib/utils';
 import { DEFAULT_CHAT_COORDINATOR_PUBKEY } from '$lib/constants/chat';
+import { TORII_NODE_BUILD } from '$lib/torii/build';
 
 const STORAGE_KEY = 'cordn-chat-coordinators';
 
@@ -148,7 +149,8 @@ function loadCoordinators() {
 	// (which of several is preselected in create-group), never a functional
 	// gate. Seeding only on first run (not on every empty store) means a user
 	// who deliberately removes all coordinators isn't re-seeded.
-	if (firstRun) {
+	// Torii node build: the node file seeds the node's coordinator instead.
+	if (firstRun && !TORII_NODE_BUILD) {
 		upsertChatCoordinator({
 			pubkey: DEFAULT_CHAT_COORDINATOR_PUBKEY,
 			label: 'Default coordinator'
