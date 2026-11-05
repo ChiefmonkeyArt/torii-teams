@@ -4,6 +4,8 @@
 
 import { listChatGroupMembers, listChatGroups } from '$lib/services/chatGroups.svelte';
 import { manager } from '$lib/services/accountManager.svelte';
+import { eventStore } from '$lib/services/eventStore';
+import { setProfileSource } from './toriiProfiles.svelte';
 import { safeNormalizePubKey as normalizePubKey } from '$lib/utils';
 import type { ToriiNodeConfig } from './nodeConfig';
 import {
@@ -11,6 +13,7 @@ import {
 	ContinuumError,
 	matchProjectGroup,
 	type GroupLike,
+	type RosterTeams,
 	type TeamProject
 } from './continuumApi';
 
@@ -24,6 +27,10 @@ export const projectChannels = $state<{
 	owners: Record<string, string | null>;
 	/** Roster pubkeys per project; absent when the roster was unreadable. */
 	rosters: Record<string, string[]>;
+	/** Membership signals per project (ADR 0006); absent on an older Continuum. */
+	teams: Record<string, RosterTeams>;
+	/** Continuum knows we opened Teams; null on an older Continuum. */
+	ready: boolean | null;
 	coordinator: string;
 	relays: string[];
 }>({
@@ -33,6 +40,8 @@ export const projectChannels = $state<{
 	projects: [],
 	owners: {},
 	rosters: {},
+	teams: {},
+	ready: null,
 	coordinator: '',
 	relays: []
 });
@@ -72,21 +81,30 @@ function explain(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-/** Load projects with a stored session; never prompts the signer. */
-export function refreshProjectChannels(options: { force?: boolean } = {}): Promise<void> {
+/**
+ * Load projects with a stored session; never prompts the signer. `quiet` is
+ * the background refresh (60 s tick, Continuum's roster-changed message): it
+ * keeps what is on screen and only replaces it with a good reply.
+ */
+export function refreshProjectChannels(
+	options: { force?: boolean; quiet?: boolean } = {}
+): Promise<void> {
 	const pubkey = manager.getActive()?.pubkey ?? '';
 	if (!options.force && pubkey && pubkey === loadedFor && projectChannels.status === 'ready') {
 		return Promise.resolve();
 	}
+	if (options.quiet && (projectChannels.status !== 'ready' || pubkey !== loadedFor)) {
+		return Promise.resolve();
+	}
 	if (inflight) return inflight;
-	inflight = loadProjectChannels().finally(() => {
+	inflight = loadProjectChannels(Boolean(options.quiet)).finally(() => {
 		inflight = null;
 	});
 	return inflight;
 }
 
-async function loadProjectChannels(): Promise<void> {
-	loadedFor = '';
+async function loadProjectChannels(quiet = false): Promise<void> {
+	if (!quiet) loadedFor = '';
 	const account = manager.getActive();
 	if (!client || !account) {
 		if (client) projectChannels.status = 'signed-out';
@@ -97,28 +115,43 @@ async function loadProjectChannels(): Promise<void> {
 		projectChannels.status = 'signed-out';
 		return;
 	}
-	projectChannels.status = 'loading';
+	if (!quiet) projectChannels.status = 'loading';
 	try {
 		const me = await client.me();
 		const owners: Record<string, string | null> = {};
 		const rosters: Record<string, string[]> = {};
+		const teams: Record<string, RosterTeams> = {};
+		let unreadable = false;
 		await Promise.all(
 			me.projects.map(async (p) => {
 				const roster = await client!.roster(p.slug);
+				if (!roster) unreadable = true;
 				owners[p.slug] = roster?.owner ?? null;
 				if (roster?.members) rosters[p.slug] = roster.members;
+				if (roster?.teams) teams[p.slug] = roster.teams;
 			})
 		);
+		// A background refresh never swaps a good view for a partial one.
+		if (quiet && unreadable) return;
 		projectChannels.owner = me.owner || me.projects.some((p) => p.role === 'owner');
 		projectChannels.projects = me.projects;
 		projectChannels.owners = owners;
 		projectChannels.rosters = rosters;
+		projectChannels.teams = teams;
+		projectChannels.ready = me.ready;
 		projectChannels.error = '';
 		projectChannels.status = 'ready';
 		loadedFor = account.pubkey;
+		const c = client;
+		setProfileSource({ profiles: (pks) => c.profiles(pks), avatar: (pk) => c.avatar(pk) }, (ev) =>
+			eventStore.add(ev)
+		);
 	} catch (error) {
 		if (error instanceof ContinuumError && error.status === 401) {
+			setProfileSource(null);
 			projectChannels.status = 'signed-out';
+		} else if (quiet) {
+			// Keep the current view; the next tick tries again.
 		} else {
 			projectChannels.status = 'error';
 			projectChannels.error = explain(error);
@@ -140,12 +173,38 @@ export async function signInToContinuum(): Promise<void> {
 	}
 }
 
+/**
+ * Tell Continuum this client's key packages are on the node coordinator
+ * (verified by the caller from reachability), once per session. Bearer only.
+ */
+let readySentFor = '';
+export async function reportReady(): Promise<void> {
+	const pubkey = manager.getActive()?.pubkey ?? '';
+	if (!client || projectChannels.status !== 'ready' || projectChannels.ready !== false) return;
+	if (!pubkey || readySentFor === pubkey) return;
+	readySentFor = pubkey;
+	try {
+		await client.markReady();
+		projectChannels.ready = true;
+	} catch {
+		readySentFor = ''; // try again on a later tick
+	}
+}
+
+/** Owner: Continuum's chat record and membership signals. */
+export function continuumClient(): ContinuumClient | null {
+	return client;
+}
+
 export function signOutOfContinuum(): void {
+	setProfileSource(null);
 	client?.signOut();
 	loadedFor = '';
 	projectChannels.status = client ? 'signed-out' : 'off';
 	projectChannels.projects = [];
 	projectChannels.rosters = {};
+	projectChannels.teams = {};
+	projectChannels.ready = null;
 }
 
 function groupLikes(): GroupLike[] {
@@ -176,7 +235,8 @@ export function projectGroup(slug: string): GroupLike | null {
 		slug,
 		projectChannels.owners[slug] ?? null,
 		normalizePubKey(projectChannels.coordinator),
-		groupLikes()
+		groupLikes(),
+		projectChannels.teams[slug]?.chatGroupId ?? null
 	);
 }
 

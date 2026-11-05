@@ -3,6 +3,8 @@
 	import { activeAccount } from '$lib/services/accountManager.svelte';
 	import { listChatGroupMembers, type StoredChatGroup } from '$lib/services/chatGroups.svelte';
 	import { metadataRelays } from '$lib/services/relay-pool';
+	import { TORII_NODE_BUILD } from '$lib/torii/build';
+	import { toriiAvatarSrc } from '$lib/torii/toriiProfiles.svelte';
 	import { normalizePubKey, pubkeyToHexColor } from '$lib/utils';
 	import { getDirectChatTargetPubkey } from '$lib/components/chat/chatGroupDisplay';
 	import { useProfileHints } from '$lib/services/useProfileHints.svelte';
@@ -56,11 +58,14 @@
 
 {#snippet memberAvatar(pubkey: string, avatarClass: string, fbClass: string)}
 	{@const profile = getProfile(pubkey)}
+	{@const memberSrc = TORII_NODE_BUILD
+		? toriiAvatarSrc(pubkey, profile?.picture)
+		: profile?.picture}
 	<Avatar class={avatarClass}>
-		{#if profile?.picture && showImages}
+		{#if memberSrc && showImages}
 			<AvatarImage
-				src={profile.picture}
-				alt={profile.name || profile.displayName || pubkey}
+				src={memberSrc}
+				alt={profile?.name || profile?.displayName || pubkey}
 				class="object-cover"
 			/>
 		{/if}

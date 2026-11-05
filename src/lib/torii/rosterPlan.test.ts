@@ -9,6 +9,11 @@ import {
 	autoAcceptProject,
 	markerSlugs,
 	planRosterSync,
+	planOwnerSignals,
+	nextWelcomePace,
+	welcomeDue,
+	WELCOME_MIN_MS,
+	WELCOME_MAX_MS,
 	waitingMembers
 } from './rosterPlan';
 
@@ -142,5 +147,120 @@ describe('signer pacing', () => {
 		expect(needsWelcomeCheck(['a'], owners, 'me', () => false)).toBe(false);
 		expect(needsWelcomeCheck(['a', 'b'], owners, 'me', (s) => s === 'b')).toBe(false);
 		expect(needsWelcomeCheck(['a', 'b'], owners, 'me', () => false)).toBe(true);
+	});
+});
+
+describe('planOwnerSignals (ADR 0006)', () => {
+	const teams = (over = {}) => ({
+		chatGroupId: null,
+		claimed: false,
+		ready: [],
+		added: [],
+		...over
+	});
+	const base = { me: O, owner: O, roster: [O, A, B], slug: 'site', now: 1_000_000_000 };
+
+	it('only the owner acts, on a readable roster', () => {
+		expect(planOwnerSignals({ ...base, me: A, localGroup: null, teams: teams() }).chat).toBe(
+			'wait'
+		);
+		expect(
+			planOwnerSignals({ ...base, roster: undefined, localGroup: null, teams: teams() }).chat
+		).toBe('wait');
+	});
+
+	it('creates a chat nobody has claimed, once per retry window', () => {
+		expect(planOwnerSignals({ ...base, localGroup: null, teams: teams() }).chat).toBe('create');
+		expect(
+			planOwnerSignals({
+				...base,
+				localGroup: null,
+				teams: teams(),
+				attemptedAt: { 'chat:site': base.now - 1000 }
+			}).chat
+		).toBe('wait');
+	});
+
+	it('never duplicates a chat claimed or recorded by another device', () => {
+		expect(
+			planOwnerSignals({ ...base, localGroup: null, teams: teams({ claimed: true }) }).chat
+		).toBe('elsewhere');
+		expect(
+			planOwnerSignals({ ...base, localGroup: null, teams: teams({ chatGroupId: 'g' }) }).chat
+		).toBe('elsewhere');
+		expect(
+			planOwnerSignals({
+				...base,
+				localGroup: { id: 'other', memberPubkeys: [O] },
+				teams: teams({ chatGroupId: 'g' })
+			}).chat
+		).toBe('elsewhere');
+	});
+
+	it('records an existing local chat (torii.4/5 migration)', () => {
+		const p = planOwnerSignals({
+			...base,
+			localGroup: { id: 'g', memberPubkeys: [O, A] },
+			teams: teams()
+		});
+		expect(p.chat).toBe('record');
+		expect(p.markAdded).toEqual([A]);
+	});
+
+	it('invites only ready members, each at most once per retry window', () => {
+		const localGroup = { id: 'g', memberPubkeys: [O] };
+		const t = teams({ chatGroupId: 'g', ready: [A] });
+		const p = planOwnerSignals({ ...base, localGroup, teams: t });
+		expect(p).toMatchObject({ chat: 'ok', invite: [A], waiting: [B], remove: [] });
+		const again = planOwnerSignals({
+			...base,
+			localGroup,
+			teams: t,
+			attemptedAt: { [A]: base.now - 60_000 }
+		});
+		expect(again.invite).toEqual([]);
+		expect(again.waiting).toEqual([A, B]);
+		expect(
+			planOwnerSignals({
+				...base,
+				localGroup,
+				teams: t,
+				attemptedAt: { [A]: base.now - INVITE_RETRY_MS }
+			}).invite
+		).toEqual([A]);
+	});
+
+	it('removes people taken off the roster (never more than half) and reports both ways', () => {
+		const p = planOwnerSignals({
+			...base,
+			roster: [O, A],
+			localGroup: { id: 'g', memberPubkeys: [O, A, X] },
+			teams: teams({ chatGroupId: 'g', added: [A, X, B] })
+		});
+		expect(p.remove).toEqual([X]);
+		expect(p.markAdded).toEqual([]);
+		expect(p.markRemoved).toEqual([B]);
+		const many = planOwnerSignals({
+			...base,
+			roster: [O],
+			localGroup: { id: 'g', memberPubkeys: [O, A, B] },
+			teams: teams({ chatGroupId: 'g' })
+		});
+		expect(many.remove).toEqual([]);
+	});
+
+	it('member welcome checks: only projects the owner added us to, backing off to 30 min', () => {
+		const projects = [
+			{ slug: 'a', added: true },
+			{ slug: 'b', added: false },
+			{ slug: 'c', added: true },
+			{ slug: 'mine', added: true }
+		];
+		expect(welcomeDue(projects, { a: O, b: O, c: O, mine: A }, A, (s) => s === 'c')).toEqual(['a']);
+		let pace = WELCOME_MIN_MS;
+		const seen = [pace];
+		for (let i = 0; i < 8; i++) seen.push((pace = nextWelcomePace(pace)));
+		expect(seen.slice(0, 5)).toEqual([60_000, 120_000, 240_000, 480_000, 960_000]);
+		expect(seen.at(-1)).toBe(WELCOME_MAX_MS);
 	});
 });

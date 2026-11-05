@@ -8,6 +8,7 @@ import { ChatKinds, SYSTEM_MESSAGE_KIND } from '$lib/chat/kinds';
 import { findImetaTag, type MediaReference } from '$lib/services/chatMediaCipher';
 import { parseChatProfileMentions } from '$lib/services/chatMentions';
 import { normalizePubKey } from '$lib/utils';
+import { pickProfileName } from '$lib/utils/profileName';
 import type { ProfileContent } from 'applesauce-core/helpers';
 
 export type ChatGroupProfileHints = Record<string, ProfileContent>;
@@ -20,7 +21,9 @@ export function getProfileDisplayName(
 ): string {
 	const profile = profileHints?.[pubkey];
 	const npub = nip19.npubEncode(pubkey);
-	return profile?.name || profile?.displayName || profile?.nip05 || `${npub.slice(0, 12)}…`;
+	return (
+		pickProfileName(profile?.name, profile?.displayName, profile?.nip05) || `${npub.slice(0, 12)}…`
+	);
 }
 
 /**

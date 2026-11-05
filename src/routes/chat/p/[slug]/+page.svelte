@@ -26,6 +26,9 @@
 	});
 	const me = $derived(normalizePubKey($activeAccount?.pubkey ?? ''));
 	const isOwner = $derived(Boolean(me) && projectChannels.owners[slug] === me);
+	// ADR 0006: with Continuum's signals the owner's chat starts by itself.
+	const signals = $derived(Boolean(projectChannels.teams[slug]));
+	const added = $derived(projectChannels.projects.find((p) => p.slug === slug)?.added ?? false);
 	const waiting = $derived(
 		isOwner
 			? (rosterSync.waiting[slug] ?? [])
@@ -58,7 +61,14 @@
 		<div
 			class="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground"
 		>
-			{#if isOwner}
+			{#if isOwner && rosterSync.elsewhere[slug]}
+				<div class="max-w-xs space-y-2">
+					<p>This chat was started on another of your devices.</p>
+					<p class="text-xs">Open Teams there to add people. It appears here once you are in it.</p>
+				</div>
+			{:else if isOwner && signals && !rosterSync.error[slug]}
+				<p class="max-w-xs">Starting the chat for this project…</p>
+			{:else if isOwner}
 				<div class="max-w-xs space-y-3">
 					<p>
 						Start the chat for this project. Everyone on the roster is added as soon as they sign
@@ -76,6 +86,8 @@
 						>{rosterSync.busy[slug] ? 'Starting…' : 'Start project chat'}</button
 					>
 				</div>
+			{:else if added}
+				You've been added. Joining the chat…
 			{:else}
 				Waiting for the project owner to add you. Keep this page open or come back later.
 			{/if}

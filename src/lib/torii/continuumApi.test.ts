@@ -7,6 +7,7 @@ import {
 	parseRosterOwner,
 	parseRoster,
 	parseTeamMe,
+	parseRosterTeams,
 	projectMarker,
 	type GroupLike
 } from './continuumApi';
@@ -79,7 +80,10 @@ describe('ContinuumClient', () => {
 		expect(c.hasSession(ME)).toBe(true);
 		expect(c.hasSession(OWNER)).toBe(false);
 		const me = await c.me();
-		expect(me.projects).toEqual([{ slug: 'site', role: 'member', caps: [] }]);
+		expect(me.projects).toEqual([
+			{ slug: 'site', role: 'member', caps: [], chat: false, added: false }
+		]);
+		expect(me.ready).toBeNull();
 		expect(await c.rosterOwner('site')).toBe(OWNER);
 		// never the owner admin route, never cookies
 		for (const [url, init] of f.mock.calls) {
@@ -172,7 +176,7 @@ describe('parsers', () => {
 					{ slug: 'x' }
 				]
 			})?.projects
-		).toEqual([{ slug: 'ok', role: 'member', caps: [] }]);
+		).toEqual([{ slug: 'ok', role: 'member', caps: [], chat: false, added: false }]);
 		expect(parseTeamMe({ pubkey: 'zz', projects: [] })).toBeNull();
 		expect(parseRosterOwner({ roster: { owner: 'npub1…' } })).toBeNull();
 	});
@@ -186,8 +190,12 @@ describe('parsers', () => {
 					members: [{ pubkey: A }, { pubkey: A }, { pubkey: 'npub1x' }, null, { pubkey: OWNER }]
 				}
 			})
-		).toEqual({ owner: OWNER, members: [OWNER, A] });
-		expect(parseRoster({ roster: { owner: OWNER } })).toEqual({ owner: OWNER, members: null });
+		).toEqual({ owner: OWNER, members: [OWNER, A], teams: null });
+		expect(parseRoster({ roster: { owner: OWNER } })).toEqual({
+			owner: OWNER,
+			members: null,
+			teams: null
+		});
 		expect(parseRoster({ roster: null })).toBeNull();
 	});
 });
@@ -223,5 +231,101 @@ describe('matchProjectGroup', () => {
 		expect(matchProjectGroup('site', OWNER, COORD, [{ ...base, adminPubkeys: null }])?.id).toBe(
 			'g1'
 		);
+	});
+});
+
+describe('membership signals (ADR 0006)', () => {
+	it('parses ready / chat / added from /api/team/me and the roster', () => {
+		const me = parseTeamMe({
+			pubkey: ME,
+			ready: true,
+			projects: [{ slug: 'site', role: 'viewer', caps: [], chat: true, added: true }]
+		});
+		expect(me?.ready).toBe(true);
+		expect(me?.projects[0]).toMatchObject({ chat: true, added: true });
+		expect(parseTeamMe({ pubkey: ME, ready: 'yes', projects: [] })?.ready).toBeNull();
+		expect(
+			parseRosterTeams({
+				chat: { group_id: 'grp-1', claimed: false },
+				ready: [ME, ME, 'junk'],
+				added: [OWNER]
+			})
+		).toEqual({ chatGroupId: 'grp-1', claimed: false, ready: [ME], added: [OWNER] });
+		expect(parseRosterTeams({ chat: { group_id: 'bad id!' } })?.chatGroupId).toBeNull();
+		expect(parseRosterTeams(null)).toBeNull();
+	});
+
+	it('posts ready, chat ops and members with the bearer token; 409 codes surface', async () => {
+		const posts: Array<[string, unknown]> = [];
+		const f = vi.fn(async (url: string, init?: RequestInit) => {
+			const path = new URL(url).pathname;
+			if (path === '/api/auth/challenge') return json(200, { challenge: 'f'.repeat(32) });
+			if (path === '/api/team/auth/verify')
+				return json(200, { token: TOKEN, expires_at: 2_000_000_000 });
+			expect((init?.headers as Record<string, string>).authorization).toBe(`Bearer ${TOKEN}`);
+			if (init?.method === 'POST') posts.push([path, JSON.parse(String(init.body))]);
+			if (path === '/api/projects/site/teams/chat') return json(409, { error: 'claimed' });
+			return json(200, { ok: true });
+		});
+		const c = new ContinuumClient(ORIGIN, {
+			fetch: f as never,
+			storage: memStore(),
+			now: () => 1_900_000_000
+		});
+		await c.signIn(signer(), ME);
+		await c.markReady();
+		await c.markMembers('site', [ME, 'junk'], [OWNER]);
+		await expect(c.chatOp('site', 'claim')).rejects.toMatchObject({ status: 409, code: 'claimed' });
+		await expect(c.chatOp('site', 'set', 'bad id!')).rejects.toThrow(/bad group id/);
+		await expect(c.chatOp('../x', 'claim')).rejects.toThrow(/bad slug/);
+		expect(posts).toEqual([
+			['/api/team/ready', {}],
+			['/api/projects/site/teams/members', { added: [ME], removed: [OWNER] }],
+			['/api/projects/site/teams/chat', { op: 'claim' }]
+		]);
+	});
+
+	it('profiles keep only kind-0 events by the asked pubkey; avatars only raster blobs', async () => {
+		const ev = { kind: 0, pubkey: ME, content: '{}', tags: [], created_at: 1, id: 'x', sig: 'y' };
+		const f = vi.fn(async (url: string) => {
+			const u = new URL(url);
+			if (u.pathname === '/api/auth/challenge') return json(200, { challenge: 'f'.repeat(32) });
+			if (u.pathname === '/api/team/auth/verify')
+				return json(200, { token: TOKEN, expires_at: 2_000_000_000 });
+			if (u.pathname === '/api/team/profiles') {
+				expect(u.searchParams.get('p')).toBe(`${ME},${OWNER}`);
+				return json(200, {
+					profiles: { [ME]: { event: ev }, [OWNER]: { event: { ...ev, pubkey: ME } } }
+				});
+			}
+			if (u.pathname === `/api/team/avatar/${ME}`)
+				return new Response(new Blob([new Uint8Array(16)], { type: 'image/png' }));
+			if (u.pathname === `/api/team/avatar/${OWNER}`)
+				return new Response(new Blob(['<svg/>'], { type: 'image/svg+xml' }));
+			return json(404, {});
+		});
+		const c = new ContinuumClient(ORIGIN, {
+			fetch: f as never,
+			storage: memStore(),
+			now: () => 1_900_000_000
+		});
+		expect(await c.avatar(ME)).toBeNull(); // no session yet
+		await c.signIn(signer(), ME);
+		expect(await c.profiles([ME, OWNER, 'junk'])).toEqual({ [ME]: ev, [OWNER]: null });
+		expect((await c.avatar(ME))?.type).toBe('image/png');
+		expect(await c.avatar(OWNER)).toBeNull();
+	});
+
+	it('a recorded chat id settles two look-alike groups', () => {
+		const g = (id: string): GroupLike => ({
+			id,
+			coordinatorKey: COORD,
+			description: projectMarker('site'),
+			adminPubkeys: [OWNER],
+			memberPubkeys: [OWNER]
+		});
+		expect(matchProjectGroup('site', OWNER, COORD, [g('a'), g('b')])).toBeNull();
+		expect(matchProjectGroup('site', OWNER, COORD, [g('a'), g('b')], 'b')?.id).toBe('b');
+		expect(matchProjectGroup('site', OWNER, COORD, [g('a'), g('b')], 'zz')).toBeNull();
 	});
 });

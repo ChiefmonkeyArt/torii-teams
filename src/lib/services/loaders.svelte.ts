@@ -5,8 +5,22 @@ import { eventStore } from './eventStore';
 import { getOutboxes } from 'applesauce-core/helpers';
 import { kinds } from 'nostr-tools';
 import { SvelteSet } from 'svelte/reactivity';
+import { TORII_NODE_BUILD } from '$lib/torii/build';
+import { profileLoader } from '$lib/torii/toriiProfiles.svelte';
 // Create address loader
-export const addressLoader = createAddressLoader(relayPool, { eventStore });
+const relayAddressLoader = createAddressLoader(relayPool, { eventStore });
+type AddressLoader = typeof relayAddressLoader;
+/**
+ * Torii builds (ADR 0006): profiles (kind 0) come from the node agent, never
+ * from public relays; everything else keeps the relay loader. With
+ * metadataRelays empty, relay-list lookups without explicit relays ask nobody.
+ */
+export const addressLoader: AddressLoader = TORII_NODE_BUILD
+	? (((pointer: Parameters<AddressLoader>[0]) =>
+			pointer.kind === kinds.Metadata
+				? profileLoader(pointer.pubkey)
+				: relayAddressLoader(pointer)) as unknown as AddressLoader)
+	: relayAddressLoader;
 
 // Loads events by id (nevent/note embeds): pointer relay hints first, then a
 // small set of well-known read relays. Batches + dedupes through eventStore.
