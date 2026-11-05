@@ -28,6 +28,7 @@
 	import ImageIcon from '@lucide/svelte/icons/image';
 	import X from '@lucide/svelte/icons/x';
 	import VoiceNotePlayer from './VoiceNotePlayer.svelte';
+	import { isNodeFileUrl, nodeFilesUrl } from '$lib/torii/nodeFiles';
 	import type { ChatMessage } from './chat.types';
 
 	/**
@@ -70,6 +71,10 @@
 	// a silent blank — the blob still downloads and opens in a native viewer.
 	let imageDecodeFailed = $state(false);
 
+	// Torii node with a file server (ADR 0007): media stored on another host is
+	// never fetched; the bubble says where it is instead.
+	const foreign = $derived(Boolean(ref && nodeFilesUrl() && !isNodeFileUrl(ref.url)));
+
 	// Resolve only confirmed media (optimistic items show the local preview).
 	$effect(() => {
 		if (!browser) return;
@@ -84,6 +89,12 @@
 		if (!currentRef || !key || !message.tags) {
 			resolved = null;
 			loading = false;
+			return;
+		}
+		if (foreign) {
+			resolved = null;
+			loading = false;
+			failed = true;
 			return;
 		}
 		// Auto-load gates the fetch/decrypt. The override lives in module scope
@@ -259,7 +270,18 @@
 				<Download class="size-4 shrink-0 text-muted-foreground" />
 			</button>
 		{:else if isFailed}
-			{#if failed}
+			{#if failed && foreign}
+				<div
+					class={cn(
+						'flex items-center gap-2 rounded-xl px-2.5 py-2 text-xs',
+						message.isOwn ? 'text-primary-foreground/80' : 'text-muted-foreground'
+					)}
+					title="This file is on a server outside your team's node, so it isn't loaded."
+				>
+					<AlertTriangle class="size-4 shrink-0" />
+					<span>Stored outside this node</span>
+				</div>
+			{:else if failed}
 				<!-- Load failure (dead store link): a plain error that stays an error fed the
 				 remount re-fetch blink loop — the card itself is the retry affordance. -->
 				<button

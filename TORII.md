@@ -50,6 +50,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | Own white-labelled team UI, roster = membership, ADR 0005                                 | `0.6.1-torii.4`                                             |
 | No signer popup loop: no pass on focus, paced coordinator checks (ADR 0005)               | `0.6.1-torii.5`                                             |
 | Membership signals: ready/added, quiet 60 s roster poll, profiles via Continuum, ADR 0006 | `0.6.1-torii.6`                                             |
+| Files on the node's own server (`/files/`), Continuum-session uploads, ADR 0007           | `0.6.1-torii.7`                                             |
 
 ### Using actions (J1 slice 2)
 
@@ -113,8 +114,9 @@ Continuum and the marketplace (an ADR per app).
 Released: `0.6.1-torii.1` (d2a2f22, Suite v0.9.29-alpha), `0.6.1-torii.2`
 (411c435, v0.9.30-alpha), `0.6.1-torii.3` (ec2bc86, v0.9.33-alpha),
 `0.6.1-torii.4` (7382de5, v0.9.34-alpha; PR #9 plus ADR 0005) and
-`0.6.1-torii.5` (05a6c37, v0.9.35-alpha; signer pacing) and `0.6.1-torii.6`
-(membership signals and Continuum-served profiles, ADR 0006, this PR). A Torii tag runs
+`0.6.1-torii.5` (05a6c37, v0.9.35-alpha; signer pacing), `0.6.1-torii.6`
+(590d204, v0.9.36-alpha; membership signals, ADR 0006) and `0.6.1-torii.7`
+(images and files on the node's own server, [ADR 0007](docs/torii/adr-0007-node-files.md), this PR). A Torii tag runs
 `.github/workflows/torii-release.yml`, which publishes a checksummed web build
 for the Suite installer.
 

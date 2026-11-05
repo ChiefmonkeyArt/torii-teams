@@ -71,6 +71,28 @@ describe('continuum and browser relays', () => {
 		).toBeUndefined();
 		expect(parseNodeConfig({ ...good, continuum: 7 })).toBeNull();
 	});
+	it('keeps a same-origin /files server only alongside Continuum (ADR 0007)', () => {
+		const C = { ...good, continuum: 'https://c.example.com' };
+		const page = 'https://teams.example.com';
+		const files = 'https://teams.example.com/files';
+		expect(parseNodeConfig({ ...C, files }, page)?.files).toBe(files);
+		expect(parseNodeConfig({ ...C, files: `${files}/` }, page)?.files).toBe(files);
+		expect(parseNodeConfig({ ...good, files }, page)?.files).toBeUndefined();
+		expect(
+			parseNodeConfig({ ...C, files: 'https://other.example.com/files' }, page)?.files
+		).toBeUndefined();
+		expect(
+			parseNodeConfig({ ...C, files: 'https://teams.example.com/blobs' }, page)?.files
+		).toBeUndefined();
+		expect(
+			parseNodeConfig({ ...C, files: 'http://teams.example.com/files' })?.files
+		).toBeUndefined();
+		expect(
+			parseNodeConfig({ ...C, files: 'https://u:p@teams.example.com/files' })?.files
+		).toBeUndefined();
+		expect(parseNodeConfig({ ...C, files: `${files}?x=1` })?.files).toBeUndefined();
+		expect(parseNodeConfig({ ...C, files: 7 })).toBeNull();
+	});
 	it('drops ws:// relays on https pages (mixed content)', () => {
 		const relays = ['wss://relay.example.com', 'ws://torii-teams.fips:10547'];
 		expect(browserRelays(relays, 'https:')).toEqual(['wss://relay.example.com']);

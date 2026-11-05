@@ -1,3 +1,4 @@
+import { assertNodeFetch, nodeFilesAuth } from '$lib/torii/nodeFiles';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from 'applesauce-core/helpers';
 import { finalizeEvent, generateSecretKey } from 'nostr-tools/pure';
@@ -141,13 +142,20 @@ export async function uploadBlob(params: {
 }): Promise<UploadedBlob> {
 	const server = params.serverUrl.replace(/\/+$/, '');
 	const sha256Hex = bytesToHex(sha256(params.blob));
-	const authEvent = await buildBlossomAuth({
-		signer: params.signer,
-		action: 'upload',
-		serverUrl: server,
-		sha256Hex,
-		content: 'Upload encrypted media'
-	});
+	// Torii node file server (ADR 0007): the Continuum session, not a Nostr event.
+	const nodeAuth = nodeFilesAuth(server);
+	if (nodeAuth === null) throw new BlossomUploadError('Sign in to the team to send files', 401);
+	const authorization = nodeAuth
+		? `Bearer ${nodeAuth}`
+		: blossomAuthHeader(
+				await buildBlossomAuth({
+					signer: params.signer,
+					action: 'upload',
+					serverUrl: server,
+					sha256Hex,
+					content: 'Upload encrypted media'
+				})
+			);
 
 	// `responseType: 'text'` (not 'json') so both the success descriptor AND the
 	// error body are readable as text cross-origin — matching the old fetch path's
@@ -158,7 +166,7 @@ export async function uploadBlob(params: {
 		xhr.responseType = 'text';
 		xhr.setRequestHeader('X-SHA-256', sha256Hex);
 		xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-		xhr.setRequestHeader('Authorization', blossomAuthHeader(authEvent));
+		xhr.setRequestHeader('Authorization', authorization);
 
 		if (params.onProgress) {
 			const report = params.onProgress;
@@ -265,17 +273,23 @@ export async function deleteBlob(params: {
 	signer: BlossomSigner;
 }): Promise<BlobDeleteResult> {
 	const server = params.serverUrl.replace(/\/+$/, '');
-	const event = await buildBlossomAuth({
-		signer: params.signer,
-		action: 'delete',
-		serverUrl: server,
-		sha256Hex: params.sha256Hex,
-		content: 'Delete superseded document'
-	});
+	const nodeAuth = nodeFilesAuth(server);
+	if (nodeAuth === null) return { ok: false, status: 401, reason: 'no team session' };
+	const authorization = nodeAuth
+		? `Bearer ${nodeAuth}`
+		: blossomAuthHeader(
+				await buildBlossomAuth({
+					signer: params.signer,
+					action: 'delete',
+					serverUrl: server,
+					sha256Hex: params.sha256Hex,
+					content: 'Delete superseded document'
+				})
+			);
 	try {
 		const res = await fetch(`${server}/${params.sha256Hex}`, {
 			method: 'DELETE',
-			headers: { Authorization: blossomAuthHeader(event) }
+			headers: { Authorization: authorization }
 		});
 		if (res.ok || res.status === 404) return { ok: true, status: res.status };
 		return {
@@ -295,6 +309,8 @@ export async function deleteBlob(params: {
  * add a signed-get retry path only when a server we use actually demands it.
  */
 export async function fetchBlob(url: string, signal?: AbortSignal): Promise<Uint8Array> {
+	// Torii node with a file server: never contact another host (ADR 0007).
+	assertNodeFetch(url);
 	const res = await fetch(url, { signal });
 	if (!res.ok) {
 		throw new Error(`Blossom fetch failed: ${res.status} ${res.statusText}`);

@@ -244,6 +244,11 @@ export class ContinuumClient {
 		);
 	}
 
+	/** The live session token (node file server uploads, ADR 0007), or null. */
+	bearer(): string | null {
+		return this.session && this.session.expiresAt > this.now() + 30 ? this.session.token : null;
+	}
+
 	signOut(): void {
 		this.session = null;
 		this.deps.storage.removeItem(sessionKey(this.origin));

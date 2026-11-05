@@ -15,6 +15,7 @@ import {
 	verifyBlobRoundtrip,
 	type BlossomSigner
 } from '$lib/services/chatBlossomClient';
+import { ForeignMediaError, setNodeFiles } from '$lib/torii/nodeFiles';
 
 /**
  * BUD-11/02 self-check with a stub signer and a mocked global fetch. Asserts
@@ -43,6 +44,7 @@ const originalXhr = (globalThis as unknown as { XMLHttpRequest?: typeof XMLHttpR
 	.XMLHttpRequest;
 
 afterEach(() => {
+	setNodeFiles(null);
 	globalThis.fetch = originalFetch;
 	(globalThis as unknown as { XMLHttpRequest?: typeof XMLHttpRequest }).XMLHttpRequest =
 		originalXhr;
@@ -431,5 +433,68 @@ describe('verifyBlobRoundtrip', () => {
 		await expect(verifyBlobRoundtrip('https://x/abc', '0'.repeat(64))).rejects.toThrow(
 			'round-trip sha256 mismatch'
 		);
+	});
+});
+
+describe('Torii node file server (ADR 0007)', () => {
+	const FILES = 'https://teams.example.com/files';
+
+	test('uploads with the Continuum bearer and never asks the signer', async () => {
+		setNodeFiles(FILES, () => 'session-token');
+		const blob = new Uint8Array([7, 7]);
+		const sha = bytesToHex(sha256(blob));
+		const calls = installXhrMock(() => ({
+			status: 201,
+			body: JSON.stringify({ url: `${FILES}/${sha}`, sha256: sha, size: 2 })
+		}));
+		const signer = stubSigner();
+		const result = await uploadBlob({ serverUrl: FILES, blob, signer });
+		expect(result.url).toBe(`${FILES}/${sha}`);
+		expect(calls[0]!.url).toBe(`${FILES}/upload`);
+		expect(calls[0]!.headers['authorization']).toBe('Bearer session-token');
+		expect(signer.last).toBeNull();
+	});
+
+	test('refuses to upload without a session (no Nostr fallback)', async () => {
+		setNodeFiles(FILES, () => null);
+		const calls = installXhrMock(() => ({ status: 201, body: '{}' }));
+		const err = await uploadBlob({
+			serverUrl: FILES,
+			blob: new Uint8Array([1]),
+			signer: stubSigner()
+		}).catch((e) => e);
+		expect(err).toBeInstanceOf(BlossomUploadError);
+		expect(err.status).toBe(401);
+		expect(calls).toHaveLength(0);
+	});
+
+	test('deletes with the bearer; signed out is a quiet not-ok', async () => {
+		let auth = '';
+		globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+			auth = new Headers(init?.headers).get('authorization') ?? '';
+			return new Response(null, { status: 204 });
+		}) as typeof fetch;
+		let token: string | null = 'tok';
+		setNodeFiles(FILES, () => token);
+		const sha = 'b'.repeat(64);
+		expect((await deleteBlob({ serverUrl: FILES, sha256Hex: sha, signer: stubSigner() })).ok).toBe(
+			true
+		);
+		expect(auth).toBe('Bearer tok');
+		token = null;
+		const res = await deleteBlob({ serverUrl: FILES, sha256Hex: sha, signer: stubSigner() });
+		expect(res).toMatchObject({ ok: false, status: 401 });
+	});
+
+	test('never fetches a blob stored off the node', async () => {
+		setNodeFiles(FILES, () => null);
+		let called = false;
+		globalThis.fetch = (async () => {
+			called = true;
+			return new Response(new Uint8Array([1]), { status: 200 });
+		}) as typeof fetch;
+		await expect(fetchBlob(`${SERVER}abc`)).rejects.toBeInstanceOf(ForeignMediaError);
+		expect(called).toBe(false);
+		expect(Array.from(await fetchBlob(`${FILES}/abc`))).toEqual([1]);
 	});
 });
