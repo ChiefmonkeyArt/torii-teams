@@ -42,7 +42,9 @@
 		void untrack(() => signInToContinuum());
 	});
 
-	// Roster ⇄ chat membership: on load, when chats change, on focus, every 5 min.
+	// Roster ⇄ chat membership: on load, when chats change, and a paced check
+	// while visible. Never on window focus: closing a signer popup refocuses
+	// the page, which would open the next popup (endless prompts, torii.4).
 	const groupsKey = $derived(watchableGroupsSignature());
 	$effect(() => {
 		void groupsKey;
@@ -54,11 +56,7 @@
 			if (document.visibilityState === 'visible') void syncRosters();
 		};
 		const id = setInterval(tick, SYNC_INTERVAL_MS);
-		window.addEventListener('focus', tick);
-		return () => {
-			clearInterval(id);
-			window.removeEventListener('focus', tick);
-		};
+		return () => clearInterval(id);
 	});
 
 	// Can the team add me? (ADR 0004). The startup pass can run before the node

@@ -64,8 +64,8 @@ rules in `rosterPlan.ts`):
    when the roster was read successfully, still lists the owner, and the
    removal is at most half of the chat (a bad read never empties a chat).
 
-The pass runs when projects load, when the chat's members change, when the
-tab regains focus, and every 5 minutes.
+The pass runs when projects load, when the chat's members change, and on a
+paced check while the page is visible (see "Signer prompts").
 
 On a **member's** client, a welcome is accepted automatically only when all
 hold: its description carries `torii:project=<slug>` for a project in the
@@ -73,6 +73,25 @@ member's `/api/team/me`; it is on the node coordinator; its members include
 that project's owner; and every member in it is on that project's roster.
 Anything else is left alone. Display still goes through `matchProjectGroup`
 (fails closed on look-alikes).
+
+### Signer prompts (torii.5)
+
+Every coordinator call is signed and its reply decrypted by the user's signer;
+with a browser extension each is a popup. torii.4 ran a pass on window focus.
+Closing a popup refocuses the page, so each popup opened the next: endless
+prompts. Since torii.5:
+
+- No pass on window focus.
+- A pass calls the coordinator only when it has something to find out: the
+  owner only while a roster member is not in the chat yet; a member only while
+  one of their projects has no chat on this device. Otherwise it makes no
+  signer call.
+- Automatic passes that do need the coordinator run at most once per pace:
+  5 minutes, doubling while nothing changes up to 30, back to 5 after a
+  change. "Start project chat" and a page load run at once.
+
+So a teammate who signs in is added within the current pace (at most 30
+minutes; reloading the owner's page does it at once).
 
 ### Relation to ADR 0004
 
