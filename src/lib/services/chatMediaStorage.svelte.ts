@@ -1,3 +1,4 @@
+import { nodeFilesUrl, nodeServers } from '$lib/torii/nodeFiles';
 import { browser } from '$app/environment';
 import { SvelteSet } from 'svelte/reactivity';
 
@@ -62,7 +63,7 @@ function loadBlossomServer(): string {
 let blossomServer = $state(loadBlossomServer());
 
 export function getBlossomServer(): string {
-	return blossomServer;
+	return nodeFilesUrl() ?? blossomServer;
 }
 
 export function setBlossomServer(url: string): void {
@@ -249,8 +250,11 @@ async function uploadBlobWithFallback(
 	// (indexOf keeps the first occurrence, so `configured` stays first). Tiny list
 	// (~4 servers), so the O(n²) dedupe is irrelevant; avoids a mutable Set, which
 	// the svelte/reactivity rule flags in .svelte.ts files.
-	const order = [configured, ...BLOSSOM_SERVERS.map((s) => normalizeServerUrl(s))].filter(
-		(s, i, arr) => arr.indexOf(s) === i
+	// A Torii node with a file server: the node only, no public fallback (ADR 0007).
+	const order = nodeServers(
+		[configured, ...BLOSSOM_SERVERS.map((s) => normalizeServerUrl(s))].filter(
+			(s, i, arr) => arr.indexOf(s) === i
+		)
 	);
 
 	let lastError: unknown;

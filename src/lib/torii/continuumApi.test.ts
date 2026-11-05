@@ -97,6 +97,9 @@ describe('ContinuumClient', () => {
 			now: () => 1_900_000_000
 		});
 		expect(c2.hasSession(ME)).toBe(true);
+		expect(c2.bearer()).toBe(TOKEN);
+		c2.signOut();
+		expect(c2.bearer()).toBeNull();
 	});
 
 	it('rejects a signer that answers with another key', async () => {

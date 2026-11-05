@@ -29,6 +29,8 @@ export interface ToriiNodeConfig {
 	git?: string;
 	/** Continuum origin on this node, for member sign-in (absent if not installed). */
 	continuum?: string;
+	/** The node file server, https://<this host>/files (ADR 0007; needs Continuum). */
+	files?: string;
 }
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -49,7 +51,7 @@ function isAllowedRelay(value: string): boolean {
 }
 
 /** Strict parse; null on anything unexpected. */
-export function parseNodeConfig(raw: unknown): ToriiNodeConfig | null {
+export function parseNodeConfig(raw: unknown, pageOrigin?: string): ToriiNodeConfig | null {
 	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
 	const input = raw as Record<string, unknown>;
 	if (input.version !== 1) return null;
@@ -85,7 +87,37 @@ export function parseNodeConfig(raw: unknown): ToriiNodeConfig | null {
 		const continuum = parseOrigin(input.continuum);
 		if (continuum) config.continuum = continuum;
 	}
+	if (input.files !== undefined) {
+		if (typeof input.files !== 'string') return null;
+		const files = parseFilesUrl(input.files, pageOrigin);
+		// Only with Continuum: its session is what lets members upload.
+		if (files && config.continuum) config.files = files;
+	}
 	return config;
+}
+
+/**
+ * The node file server: `<origin>/files` on this page's own origin (the CSP
+ * allows uploads only to 'self'). Null for anything else.
+ */
+function parseFilesUrl(value: string, pageOrigin?: string): string | null {
+	try {
+		const url = new URL(value);
+		const origin = parseOrigin(url.origin);
+		if (
+			!origin ||
+			url.username ||
+			url.password ||
+			url.search ||
+			url.hash ||
+			url.pathname.replace(/\/+$/, '') !== '/files'
+		)
+			return null;
+		if (pageOrigin && origin !== pageOrigin) return null;
+		return `${origin}/files`;
+	} catch {
+		return null;
+	}
 }
 
 /** An https origin (http only for loopback); null otherwise. Paths are dropped. */
@@ -137,7 +169,10 @@ export async function fetchNodeConfig(
 	const text = await response.text();
 	if (text.length > NODE_CONFIG_MAX_BYTES) return null;
 	try {
-		return parseNodeConfig(JSON.parse(text));
+		return parseNodeConfig(
+			JSON.parse(text),
+			typeof location === 'undefined' ? undefined : location.origin
+		);
 	} catch {
 		return null;
 	}

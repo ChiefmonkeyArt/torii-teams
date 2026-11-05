@@ -15,6 +15,7 @@
  * Re-publish hooks (§10): `onGroupStateAdvance(gid)` + `onMetaStateChange()`,
  * fire-and-forget, no-ops when disabled or no signer/seal.
  */
+import { nodeServers } from '$lib/torii/nodeFiles';
 import { browser, dev } from '$app/environment';
 import { generateSecretKey, getPublicKey, finalizeEvent, verifyEvent } from 'nostr-tools/pure';
 import { bytesToHex, hexToBytes } from 'nostr-tools/utils';
@@ -639,7 +640,7 @@ function makeBlossomStore(signer: BlossomSigner): BlobStore {
 			// (sha256(blob)) is deterministic, so every successful upload returns
 			// the same address regardless of which server wins the race.
 			const config = getMultiDeviceConfig();
-			const servers = config?.blossomServers ?? BLOSSOM_SERVERS;
+			const servers = nodeServers(config?.blossomServers ?? BLOSSOM_SERVERS);
 			// Content addressing is local (spec §6 MUST): the address is the hash of
 			// OUR sealed bytes — the same helper the read path re-verifies with —
 			// never a server's claim. A host whose response disagrees (lying or
@@ -703,7 +704,9 @@ async function reapAddresses(
 ): Promise<void> {
 	const targets = [...new Set(addresses.filter(Boolean))];
 	if (targets.length === 0) return;
-	const clean = [...new Set(servers.map((s) => s.replace(/\/+$/, '')))].filter(Boolean);
+	const clean = [...new Set(nodeServers(servers).map((s) => s.replace(/\/+$/, '')))].filter(
+		Boolean
+	);
 	const results = await Promise.allSettled(
 		targets.flatMap((address) =>
 			clean.map((server) => deleteBlob({ serverUrl: server, sha256Hex: address, signer }))
@@ -775,7 +778,7 @@ async function reapAllReachable(config: MultiDeviceOwnerConfig): Promise<void> {
 	const pointer: TipPointer = {
 		groups: tip.groups,
 		metaAddress: tip.metaAddress,
-		servers: config.blossomServers
+		servers: nodeServers(config.blossomServers)
 	};
 	const targets: string[] = [];
 	if (tip.metaAddress) targets.push(tip.metaAddress);
@@ -1179,7 +1182,7 @@ export function hasUnpublishedLastResortChange(): boolean {
 
 /** An empty tip pointer (used when the fetched tip parses to nothing). */
 function emptyTipPointer(config: MultiDeviceOwnerConfig): TipPointer {
-	return { groups: [], servers: config.blossomServers };
+	return { groups: [], servers: nodeServers(config.blossomServers) };
 }
 
 /** Live groups' local epochs, decoded once per collection — the input side of
@@ -1250,7 +1253,7 @@ async function fetchTipForPublish(
 	) {
 		dbg('ignoring stale tip', { eventId: tipEvent.id.slice(0, 12) });
 		return {
-			pointer: { ...config.lastSeenTip, servers: config.blossomServers },
+			pointer: { ...config.lastSeenTip, servers: nodeServers(config.blossomServers) },
 			deferred: false,
 			tipEventId: config.lastSeenTipEventId
 		};
@@ -1258,7 +1261,7 @@ async function fetchTipForPublish(
 	if (tipEvent.id === config.lastSeenTipEventId && config.lastSeenTip) {
 		dbg('republish tip unchanged', { eventId: tipEvent.id.slice(0, 12) });
 		return {
-			pointer: { ...config.lastSeenTip, servers: config.blossomServers },
+			pointer: { ...config.lastSeenTip, servers: nodeServers(config.blossomServers) },
 			deferred: false,
 			tipEventId: tipEvent.id
 		};
@@ -1740,7 +1743,11 @@ async function publish(plan: PublishPlan, attempt = 0): Promise<void> {
 
 	// Rewrite the tip with the full inventory; §4.3 drops tombstoned gids.
 	const groups = buildInventory(pointer, resealed, tombstonedGids);
-	await finalizeTipPublish({ groups, metaAddress, servers: config.blossomServers }, config, counts);
+	await finalizeTipPublish(
+		{ groups, metaAddress, servers: nodeServers(config.blossomServers) },
+		config,
+		counts
+	);
 	// The push landed: the next failure starts the backoff ladder fresh.
 	retryDelayMs = 2_000;
 	// Record sealed epochs ONLY now — after the tip rewrite landed on relays. A
@@ -2192,7 +2199,7 @@ export interface TipTransition {
 
 /** Read-order server list: the tip's advertised hosts first, then the configured fallbacks. */
 function readServers(pointer: TipPointer, config: MultiDeviceOwnerConfig | undefined): string[] {
-	return [...pointer.servers, ...(config?.blossomServers ?? BLOSSOM_SERVERS)];
+	return nodeServers([...pointer.servers, ...(config?.blossomServers ?? BLOSSOM_SERVERS)]);
 }
 
 /**

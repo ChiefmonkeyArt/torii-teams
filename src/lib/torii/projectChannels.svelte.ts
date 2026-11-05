@@ -2,6 +2,8 @@
 // project the member is on (owner decision 2026-11-04: the project is the only
 // unit of access; no lobby, no team-wide group, no other groups shown).
 
+import { TORII_NODE_BUILD } from './build';
+import { setNodeFiles } from './nodeFiles';
 import { listChatGroupMembers, listChatGroups } from '$lib/services/chatGroups.svelte';
 import { manager } from '$lib/services/accountManager.svelte';
 import { eventStore } from '$lib/services/eventStore';
@@ -59,6 +61,8 @@ export function startProjectChannels(config: ToriiNodeConfig, relays: string[]):
 		fetch: fetch.bind(window),
 		storage: sessionStorage
 	});
+	const files = client;
+	if (TORII_NODE_BUILD && config.files) setNodeFiles(config.files, () => files.bearer());
 	projectChannels.coordinator = config.coordinator;
 	projectChannels.relays = relays;
 	projectChannels.status = 'signed-out';
