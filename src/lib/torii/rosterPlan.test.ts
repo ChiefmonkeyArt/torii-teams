@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
 	INVITE_RETRY_MS,
+	PACE_MAX_MS,
+	PACE_MIN_MS,
+	coordinatorDue,
+	needsWelcomeCheck,
+	nextPace,
 	autoAcceptProject,
 	markerSlugs,
 	planRosterSync,
@@ -118,5 +123,24 @@ describe('autoAcceptProject', () => {
 		expect(autoAcceptProject(ok, { ...ctx, rosters: {} })).toBeNull();
 		expect(autoAcceptProject(ok, { ...ctx, owners: { site: null } })).toBeNull();
 		expect(autoAcceptProject(ok, { ...ctx, nodeCoordinator: '' })).toBeNull();
+	});
+});
+
+describe('signer pacing', () => {
+	it('doubles while idle, caps, and resets on progress', () => {
+		expect(nextPace(PACE_MIN_MS, false)).toBe(PACE_MIN_MS * 2);
+		expect(nextPace(PACE_MAX_MS, false)).toBe(PACE_MAX_MS);
+		expect(nextPace(PACE_MAX_MS, true)).toBe(PACE_MIN_MS);
+	});
+	it('is due on the first pass and after the pace only', () => {
+		expect(coordinatorDue(1000, null, PACE_MIN_MS)).toBe(true);
+		expect(coordinatorDue(PACE_MIN_MS - 1, 0, PACE_MIN_MS)).toBe(false);
+		expect(coordinatorDue(PACE_MIN_MS, 0, PACE_MIN_MS)).toBe(true);
+	});
+	it('checks welcomes only for a project of someone else with no chat here', () => {
+		const owners = { a: 'me', b: 'boss' };
+		expect(needsWelcomeCheck(['a'], owners, 'me', () => false)).toBe(false);
+		expect(needsWelcomeCheck(['a', 'b'], owners, 'me', (s) => s === 'b')).toBe(false);
+		expect(needsWelcomeCheck(['a', 'b'], owners, 'me', () => false)).toBe(true);
 	});
 });

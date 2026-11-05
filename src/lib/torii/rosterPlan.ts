@@ -6,6 +6,33 @@ import { projectMarker } from './continuumApi';
 /** Do not retry a failed invite for this long. */
 export const INVITE_RETRY_MS = 10 * 60 * 1000;
 
+/**
+ * Every coordinator call asks the user's signer (a popup with extension
+ * signers). Automatic passes that need the coordinator run at most once per
+ * pace; the pace doubles while nothing changes and resets on progress.
+ */
+export const PACE_MIN_MS = 5 * 60 * 1000;
+export const PACE_MAX_MS = 30 * 60 * 1000;
+
+export function nextPace(pace: number, progressed: boolean): number {
+	return progressed ? PACE_MIN_MS : Math.min(PACE_MAX_MS, Math.max(PACE_MIN_MS, pace * 2));
+}
+
+export function coordinatorDue(now: number, lastAt: number | null, pace: number): boolean {
+	return lastAt === null || now - lastAt >= pace;
+}
+
+/** A member's client only needs to look for welcomes while a project of
+ *  theirs (owned by someone else) has no chat on this device. */
+export function needsWelcomeCheck(
+	slugs: string[],
+	owners: Readonly<Record<string, string | null>>,
+	me: string,
+	hasChat: (slug: string) => boolean
+): boolean {
+	return slugs.some((s) => owners[s] !== me && !hasChat(s));
+}
+
 export interface RosterPlanInput {
 	me: string;
 	owner: string | null;

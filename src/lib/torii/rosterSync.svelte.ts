@@ -23,9 +23,17 @@ import { manager } from '$lib/services/accountManager.svelte';
 import { safeNormalizePubKey as normalizePubKey } from '$lib/utils';
 import { projectMarker } from './continuumApi';
 import { projectChannels, projectGroup } from './projectChannels.svelte';
-import { autoAcceptProject, planRosterSync } from './rosterPlan';
+import {
+	autoAcceptProject,
+	coordinatorDue,
+	needsWelcomeCheck,
+	nextPace,
+	PACE_MIN_MS,
+	planRosterSync
+} from './rosterPlan';
 
-export const SYNC_INTERVAL_MS = 5 * 60 * 1000;
+/** How often the page asks whether a paced pass is due (no signer call). */
+export const SYNC_INTERVAL_MS = 60 * 1000;
 
 /** Per project: roster members who cannot be added until they sign in. */
 export const rosterSync = $state<{
@@ -36,14 +44,21 @@ export const rosterSync = $state<{
 
 const failedAt: Record<string, number> = {};
 const createRequested = new Set<string>();
+// Coordinator pacing (see rosterPlan PACE_*): each call is a signer prompt.
+let lastCoordinatorAt: number | null = null;
+let pace = PACE_MIN_MS;
+/** Set by a pass that called the coordinator / changed membership. */
+let touched = false;
+let progressed = false;
 
-/** The owner asked to start this project's chat; runs a sync pass now. */
+/** The owner asked to start this project's chat; runs a pass now. */
 export function startProjectChat(slug: string): Promise<void> {
 	createRequested.add(slug);
-	return syncRosters();
+	return syncRosters({ now: true });
 }
 let running: Promise<void> | null = null;
 let again = false;
+let forceNext = false;
 
 /** Web Locks keep two tabs from creating two chats for one project. */
 async function withLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
@@ -64,11 +79,26 @@ async function syncOwnedProject(slug: string, me: string): Promise<void> {
 	if (!coordinator) return;
 
 	let group = projectGroup(slug);
+	// Nothing to ask the coordinator: everyone on the roster is in the chat.
+	if (group && !createRequested.has(slug)) {
+		const local = planRosterSync({
+			me,
+			owner,
+			roster,
+			groupMembers: group.memberPubkeys,
+			available: new Set()
+		});
+		if (!local.waiting.length && !local.remove.length) {
+			rosterSync.waiting[slug] = [];
+			return;
+		}
+	}
 	// Creation needs the owner's click: a second device of the owner has no
 	// local copy of an existing chat and would otherwise make a duplicate.
 	if (!group && !createRequested.has(slug)) return;
 	if (!group) {
 		createRequested.delete(slug);
+		touched = progressed = true;
 		await withLock(`torii.createProjectChat:${slug}`, async () => {
 			if (projectGroup(slug)) return; // another tab won the race
 			const plan = planRosterSync({ me, owner, roster, groupMembers: null, available: new Set() });
@@ -84,6 +114,7 @@ async function syncOwnedProject(slug: string, me: string): Promise<void> {
 		if (!group) return;
 	}
 
+	touched = true;
 	const available = new Set(
 		(await listCoordinatorAvailableKeyPackages(group.id)).map((k) => k.stablePubkey)
 	);
@@ -95,6 +126,7 @@ async function syncOwnedProject(slug: string, me: string): Promise<void> {
 		available,
 		failedAt
 	});
+	if (plan.invite.length || plan.remove.length) progressed = true;
 	if (plan.invite.length) {
 		const result = await inviteChatGroupMembers({
 			groupId: group.id,
@@ -112,6 +144,10 @@ async function syncOwnedProject(slug: string, me: string): Promise<void> {
 async function acceptProjectWelcomes(me: string): Promise<void> {
 	const coordinator = normalizePubKey(projectChannels.coordinator);
 	if (!coordinator) return;
+	const slugs = projectChannels.projects.map((p) => p.slug);
+	if (!needsWelcomeCheck(slugs, projectChannels.owners, me, (s) => Boolean(projectGroup(s))))
+		return;
+	touched = true;
 	await refreshCoordinatorWelcomeNotificationsAction(coordinator).catch(() => {});
 	const ctx = {
 		nodeCoordinator: coordinator,
@@ -135,7 +171,7 @@ async function acceptProjectWelcomes(me: string): Promise<void> {
 		setWelcomeSubmitting(w.id);
 		try {
 			await acceptChatWelcome({ welcomeId: w.id });
-			accepted = true;
+			accepted = progressed = true;
 		} catch (error) {
 			rosterSync.error[slug] = message(error);
 		} finally {
@@ -145,10 +181,13 @@ async function acceptProjectWelcomes(me: string): Promise<void> {
 	if (accepted) void refreshWelcomeNotificationsAction().catch(() => {});
 }
 
-async function syncOnce(): Promise<void> {
+async function syncOnce(force: boolean): Promise<void> {
 	const account = manager.getActive();
 	if (!account || projectChannels.status !== 'ready') return;
+	if (!force && !coordinatorDue(Date.now(), lastCoordinatorAt, pace)) return;
 	const me = normalizePubKey(account.pubkey);
+	touched = progressed = false;
+	let failed = false;
 	await acceptProjectWelcomes(me).catch(() => {});
 	for (const p of projectChannels.projects) {
 		if (projectChannels.owners[p.slug] !== me) continue;
@@ -157,15 +196,24 @@ async function syncOnce(): Promise<void> {
 			await syncOwnedProject(p.slug, me);
 			delete rosterSync.error[p.slug];
 		} catch (error) {
+			failed = true;
 			rosterSync.error[p.slug] = message(error);
 		} finally {
 			rosterSync.busy[p.slug] = false;
 		}
 	}
+	if (touched || failed) {
+		lastCoordinatorAt = Date.now();
+		pace = nextPace(pace, progressed && !failed);
+	}
 }
 
-/** Run a pass now; overlapping calls coalesce into one follow-up pass. */
-export function syncRosters(): Promise<void> {
+/**
+ * Run a pass. Automatic passes are paced (no signer prompt loops); `now` is
+ * for a user's click. Overlapping calls coalesce into one follow-up pass.
+ */
+export function syncRosters(opts: { now?: boolean } = {}): Promise<void> {
+	if (opts.now) forceNext = true;
 	if (running) {
 		again = true;
 		return running;
@@ -173,7 +221,9 @@ export function syncRosters(): Promise<void> {
 	running = (async () => {
 		do {
 			again = false;
-			await syncOnce();
+			const force = forceNext;
+			forceNext = false;
+			await syncOnce(force);
 		} while (again);
 	})().finally(() => {
 		running = null;
