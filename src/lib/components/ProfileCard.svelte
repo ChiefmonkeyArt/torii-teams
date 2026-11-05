@@ -12,6 +12,7 @@
 	import { resolve } from '$app/paths';
 	import { getLoadAvatars } from '$lib/services/chatMediaStorage.svelte';
 	import Avatar from './Avatar.svelte';
+	import { TORII_NODE_BUILD } from '$lib/torii/build';
 
 	let {
 		pubkey,
@@ -80,7 +81,7 @@
 {/snippet}
 {#if isExtended}
 	<div class="w-full overflow-hidden rounded-lg border border-border bg-card">
-		{#if profile?.banner && showImages}
+		{#if profile?.banner && showImages && !TORII_NODE_BUILD}
 			<img src={profile.banner} alt="" class="h-32 w-full object-cover" />
 		{/if}
 

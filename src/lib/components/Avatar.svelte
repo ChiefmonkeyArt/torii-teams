@@ -11,6 +11,8 @@
 <script lang="ts">
 	import { getLoadAvatars } from '$lib/services/chatMediaStorage.svelte';
 	import { pubkeyToHexColor, cn } from '$lib/utils';
+	import { TORII_NODE_BUILD } from '$lib/torii/build';
+	import { toriiAvatarSrc } from '$lib/torii/toriiProfiles.svelte';
 
 	/**
 	 * Bare profile avatar: the picture when one is available AND "load avatars"
@@ -26,26 +28,29 @@
 	}: { pubkey: string; picture?: string; size?: string; alt?: string } = $props();
 
 	const showImage = $derived(getLoadAvatars());
+	// Torii builds (ADR 0006): the avatar comes through the node agent as a
+	// blob, never straight from the profile's image host.
+	const src = $derived(TORII_NODE_BUILD ? toriiAvatarSrc(pubkey, picture) : picture);
 	// Fade a never-seen picture in over the always-painted fallback color (the
 	// bitmap can't paint until fetched/decoded); already-loaded pictures skip
 	// the fade entirely via the session-wide set above.
-	const loaded = $derived(picture ? loadedPictures.has(picture) : false);
+	const loaded = $derived(src ? loadedPictures.has(src) : false);
 </script>
 
-{#if picture && showImage}
+{#if src && showImage}
 	<div
 		class={cn('overflow-hidden rounded-full', size)}
 		style={`background-color: ${pubkeyToHexColor(pubkey)}`}
 	>
 		<img
-			src={picture}
+			{src}
 			{alt}
 			class={cn(
 				'h-full w-full object-cover transition-opacity duration-200',
 				loaded ? 'opacity-100' : 'opacity-0'
 			)}
 			decoding="sync"
-			onload={() => picture && loadedPictures.add(picture)}
+			onload={() => src && loadedPictures.add(src)}
 		/>
 	</div>
 {:else}

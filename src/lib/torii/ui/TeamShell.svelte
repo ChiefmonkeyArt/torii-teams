@@ -13,8 +13,10 @@
 	import TeamProjectList from './TeamProjectList.svelte';
 	import TeamSignIn from './TeamSignIn.svelte';
 	import {
+		continuumClient,
 		projectChannels,
 		refreshProjectChannels,
+		reportReady,
 		signInToContinuum,
 		signOutOfContinuum
 	} from '../projectChannels.svelte';
@@ -51,12 +53,30 @@
 		if (projectChannels.status !== 'ready' || !$activeAccount) return;
 		void untrack(() => syncRosters());
 	});
+	// ADR 0006: every tick also re-reads /api/team/me and the rosters quietly
+	// (bearer only, no signer), so a new project, teammate or "added" shows up
+	// without a reload. Continuum's Team page posts `torii:roster-changed`
+	// after a save, which does the same at once.
+	const refreshThenSync = async () => {
+		await refreshProjectChannels({ force: true, quiet: true });
+		await syncRosters();
+	};
 	onMount(() => {
 		const tick = () => {
-			if (document.visibilityState === 'visible') void syncRosters();
+			if (document.visibilityState === 'visible') void refreshThenSync();
 		};
 		const id = setInterval(tick, SYNC_INTERVAL_MS);
-		return () => clearInterval(id);
+		const onMessage = (e: MessageEvent) => {
+			const origin = continuumClient()?.origin;
+			if (!origin || e.origin !== origin) return;
+			const data = e.data as { type?: unknown } | null;
+			if (data?.type === 'torii:roster-changed') void refreshThenSync();
+		};
+		window.addEventListener('message', onMessage);
+		return () => {
+			clearInterval(id);
+			window.removeEventListener('message', onMessage);
+		};
 	});
 
 	// Can the team add me? (ADR 0004). The startup pass can run before the node
@@ -71,6 +91,12 @@
 		if (reach !== 'checking') return;
 		recheckedFor = me;
 		void maintainReachability().catch(() => undefined);
+	});
+	// Ready only once our key package is confirmed on the node coordinator.
+	$effect(() => {
+		if (reach !== 'ready' || projectChannels.status !== 'ready' || projectChannels.ready !== false)
+			return;
+		void untrack(() => reportReady());
 	});
 	let fixing = $state(false);
 	let fixError = $state('');

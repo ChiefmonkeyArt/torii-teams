@@ -133,3 +133,109 @@ export function autoAcceptProject(welcome: WelcomeLike, ctx: WelcomeContext): st
 	const onRoster = new Set(roster);
 	return members.every((pk) => onRoster.has(pk)) ? slug : null;
 }
+
+// ── Membership signals (ADR 0006) ─────────────────────────────────────────
+// With Continuum's signals the owner's client calls the coordinator only when
+// there is work it can do: create a chat nobody has claimed, add someone whose
+// client reported ready, remove someone taken off the roster. Each attempt is
+// remembered per person for INVITE_RETRY_MS, so a call that does not stick
+// never turns into a prompt every minute.
+
+/** A member's welcome check backs off 1, 2, 4 … 30 minutes. */
+export const WELCOME_MIN_MS = 60 * 1000;
+export const WELCOME_MAX_MS = 30 * 60 * 1000;
+
+export function nextWelcomePace(pace: number): number {
+	return Math.min(WELCOME_MAX_MS, Math.max(WELCOME_MIN_MS, pace * 2));
+}
+
+export interface OwnerSignalsInput {
+	me: string;
+	owner: string | null;
+	roster: string[] | undefined;
+	/** The project chat on this device, or null. */
+	localGroup: { id: string; memberPubkeys: string[] } | null;
+	teams: {
+		chatGroupId: string | null;
+		claimed: boolean;
+		ready: readonly string[];
+		added: readonly string[];
+	};
+	/** Last attempt per key (ms): pubkeys for invites/removals, `chat:<slug>` for creation. */
+	attemptedAt?: Readonly<Record<string, number>>;
+	slug: string;
+	now?: number;
+}
+
+export type ChatAction = 'ok' | 'create' | 'record' | 'elsewhere' | 'wait';
+
+export interface OwnerSignalsPlan {
+	chat: ChatAction;
+	invite: string[];
+	remove: string[];
+	/** Tell Continuum: these are in the chat now / not any more. */
+	markAdded: string[];
+	markRemoved: string[];
+	/** On the roster, not in the chat, not addable yet (not ready, or retrying). */
+	waiting: string[];
+}
+
+const NO_SIGNALS: OwnerSignalsPlan = {
+	chat: 'wait',
+	invite: [],
+	remove: [],
+	markAdded: [],
+	markRemoved: [],
+	waiting: []
+};
+
+export function planOwnerSignals(input: OwnerSignalsInput): OwnerSignalsPlan {
+	const { me, owner, roster, localGroup, teams, slug } = input;
+	if (!owner || me !== owner || !roster || !roster.includes(owner)) return NO_SIGNALS;
+	const now = input.now ?? Date.now();
+	const attempted = input.attemptedAt ?? {};
+	const recent = (key: string) => now - (attempted[key] ?? -Infinity) < INVITE_RETRY_MS;
+	const others = roster.filter((p) => p !== me);
+
+	if (!localGroup) {
+		// Started on another device (or being started there): never duplicate it.
+		if (teams.chatGroupId || teams.claimed)
+			return { ...NO_SIGNALS, chat: 'elsewhere', waiting: others };
+		return { ...NO_SIGNALS, chat: recent(`chat:${slug}`) ? 'wait' : 'create', waiting: others };
+	}
+	if (teams.chatGroupId && teams.chatGroupId !== localGroup.id) {
+		return { ...NO_SIGNALS, chat: 'elsewhere', waiting: others };
+	}
+	const chat: ChatAction = teams.chatGroupId ? 'ok' : 'record';
+	const inGroup = new Set(localGroup.memberPubkeys);
+	const onRoster = new Set(roster);
+	const ready = new Set(teams.ready);
+	const added = new Set(teams.added);
+	const invite: string[] = [];
+	const waiting: string[] = [];
+	for (const pk of others) {
+		if (inGroup.has(pk)) continue;
+		if (ready.has(pk) && !recent(pk)) invite.push(pk);
+		else waiting.push(pk);
+	}
+	let remove = localGroup.memberPubkeys.filter(
+		(pk) => pk !== me && !onRoster.has(pk) && !recent(pk)
+	);
+	// A bad read must never empty a chat: remove at most half of it at once.
+	if (remove.length > Math.floor(localGroup.memberPubkeys.length / 2)) remove = [];
+	const markAdded = others.filter((pk) => inGroup.has(pk) && !added.has(pk));
+	const markRemoved = [...added].filter((pk) => !inGroup.has(pk));
+	return { chat, invite, remove, markAdded, markRemoved, waiting };
+}
+
+/** Member: projects whose owner says we were added but which have no chat here. */
+export function welcomeDue(
+	projects: ReadonlyArray<{ slug: string; added: boolean }>,
+	owners: Readonly<Record<string, string | null>>,
+	me: string,
+	hasChat: (slug: string) => boolean
+): string[] {
+	return projects
+		.filter((p) => p.added && owners[p.slug] !== me && !hasChat(p.slug))
+		.map((p) => p.slug);
+}

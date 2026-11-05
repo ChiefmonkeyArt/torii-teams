@@ -24,7 +24,7 @@
 	import { ensureProfileLoaded } from '$lib/queries/chatProfileQueries';
 	import * as Marker from '$lib/components/ui/marker/index.js';
 	import MarkerName from './MarkerName.svelte';
-	import { profileDisplayName } from '$lib/utils/profileName';
+	import { pickProfileName, profileDisplayName } from '$lib/utils/profileName';
 	import { nip19 } from 'nostr-tools';
 	import Check from '@lucide/svelte/icons/check';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
@@ -210,7 +210,9 @@
 	const authorNpub = $derived(nip19.npubEncode(message.author));
 	const authorHref = $derived(resolve('/p/[identifier]', { identifier: authorNpub }));
 	const displayName = $derived.by(
-		() => profile?.name || profile?.display_name || profile?.nip05 || `${authorNpub.slice(0, 12)}…`
+		() =>
+			pickProfileName(profile?.name, profile?.display_name, profile?.nip05) ||
+			`${authorNpub.slice(0, 12)}…`
 	);
 	const replyParts = $derived.by(() =>
 		message.replyTo ? getCachedChatMessageParts(message.replyTo.id, message.replyTo.text) : []
