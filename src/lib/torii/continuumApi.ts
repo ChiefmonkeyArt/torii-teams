@@ -129,8 +129,9 @@ export const INVITE_GONE = 'This invite no longer works. Ask for a new one.';
 
 const cleanName = (v: unknown) =>
 	typeof v === 'string'
-		? v
-				.replace(/[\u0000-\u001f\u007f]/g, '')
+		? [...v]
+				.filter((ch) => ch.charCodeAt(0) > 31 && ch.charCodeAt(0) !== 127)
+				.join('')
 				.trim()
 				.slice(0, NAME_MAX)
 		: '';
@@ -311,7 +312,7 @@ export class ContinuumClient {
 	}
 
 	private loadPending(): PendingInvite | null {
-		let p: PendingInvite | null = null;
+		let p: PendingInvite | null;
 		try {
 			const raw = this.deps.storage.getItem(pendingKey(this.origin));
 			p = raw ? (JSON.parse(raw) as PendingInvite) : null;
