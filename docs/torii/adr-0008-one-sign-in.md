@@ -1,7 +1,8 @@
 # ADR 0008: One sign-in, one Allow
 
-Date: 2026-11-06. Status: **Proposed** (owner request, 2026-11-06: "one login
-and 'Allow All' and everything just works"). Planned for `0.6.1-torii.8` with
+Date: 2026-11-06. Status: **Accepted** (owner, 2026-11-06: "Accept ADR 0008
+and implement it for torii.8"; request: "one login and 'Allow All' and
+everything just works"). Shipped in `0.6.1-torii.8` with
 Continuum `0.2.197-alpha` and Suite `v0.9.38-alpha`. Amends ADR 0002 (Teams in
 Continuum: where the session lives) and builds on ADR 0006 (quiet signer) and
 ADR 0007 (uploads use the Continuum session).

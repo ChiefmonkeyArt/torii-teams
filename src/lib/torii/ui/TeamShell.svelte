@@ -14,9 +14,12 @@
 	import TeamSignIn from './TeamSignIn.svelte';
 	import {
 		continuumClient,
+		hasContinuumSession,
 		projectChannels,
 		refreshProjectChannels,
+		renewContinuumSession,
 		reportReady,
+		requestSessionHandoff,
 		signInToContinuum,
 		signOutOfContinuum
 	} from '../projectChannels.svelte';
@@ -34,14 +37,24 @@
 	});
 
 	// Nostr sign-in leads straight into Continuum's challenge, once per account
-	// per page load (a declined prompt leaves the Continue button).
+	// per page load (a declined prompt leaves the Continue button). Inside
+	// Continuum's Team view the owner is already signed in there, so ask it
+	// for the session first: no second challenge (ADR 0008).
 	const triedContinuumFor = new Set<string>();
 	$effect(() => {
 		const pubkey = $activeAccount?.pubkey;
 		const status = projectChannels.status;
 		if (!pubkey || status !== 'signed-out' || triedContinuumFor.has(pubkey)) return;
 		triedContinuumFor.add(pubkey);
-		void untrack(() => signInToContinuum());
+		void untrack(async () => {
+			// A stored session (reload, new tab): no challenge, just load it.
+			if (hasContinuumSession(pubkey)) return refreshProjectChannels({ force: true });
+			if (embedded) {
+				projectChannels.status = 'signing-in';
+				if (await requestSessionHandoff()) return refreshProjectChannels({ force: true });
+			}
+			return signInToContinuum();
+		});
 	});
 
 	// Roster ⇄ chat membership: on load, when chats change, and a paced check
@@ -65,6 +78,12 @@
 		const tick = () => {
 			if (document.visibilityState === 'visible') void refreshThenSync();
 		};
+		// Renewal is network only (no signer), so focus is safe here (ADR 0008).
+		const renew = () => {
+			if (document.visibilityState === 'visible') void renewContinuumSession();
+		};
+		window.addEventListener('focus', renew);
+		document.addEventListener('visibilitychange', renew);
 		const id = setInterval(tick, SYNC_INTERVAL_MS);
 		const onMessage = (e: MessageEvent) => {
 			const origin = continuumClient()?.origin;
@@ -76,6 +95,8 @@
 		return () => {
 			clearInterval(id);
 			window.removeEventListener('message', onMessage);
+			window.removeEventListener('focus', renew);
+			document.removeEventListener('visibilitychange', renew);
 		};
 	});
 

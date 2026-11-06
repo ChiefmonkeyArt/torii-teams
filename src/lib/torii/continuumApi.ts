@@ -2,7 +2,9 @@
 // projects (TEAMS-2a slice 2). Continuum's contract, docs/adr-team-collaboration.md:
 //   POST /api/auth/challenge {}            -> {challenge, expires_in, kind: 22242}
 //   sign kind 22242 {content: challenge, tags: [["challenge", challenge]]}
-//   POST /api/team/auth/verify {event}     -> {token: "m1....", expires_at}
+//   POST /api/team/auth/verify {event}     -> {token: "m2....", expires_at}
+//   POST /api/team/auth/refresh (Bearer)   -> {token, expires_at}; 403 not_member,
+//                                             401 expired / max_lifetime_reached (ADR 0008)
 //   GET  /api/team/me (Bearer)             -> {pubkey, owner, projects, teams_app_url}
 //   GET  /api/projects/:slug/roster        -> {roster: {owner, members...}, role, teams}
 // Membership signals and profiles (ADR 0006, Continuum adr-teams-membership-signals):
@@ -11,9 +13,12 @@
 //   POST /api/projects/:slug/teams/members {added, removed}                    (owner)
 //   GET  /api/team/profiles?p=hex,…        -> {profiles: {hex: {event}}}
 //   GET  /api/team/avatar/:hex             -> image bytes
-// Bearer only, no cookies, no refresh: a 401 means sign a new challenge.
-// The owner signs in through the same member route and gets the same scoped
-// token: the owner's admin token never lives on this origin (ADR 0002).
+// Bearer only, no cookies. One sign-in (ADR 0008): the token lives in this
+// origin's localStorage and renews without the signer until Continuum's
+// absolute cap (7 days by default); only then is a new challenge signed.
+// The owner signs in through the same member route, or receives the same
+// scoped token from the Continuum Team view that frames us (handoff): the
+// owner's admin token never lives on this origin (ADR 0002).
 
 import type { EventTemplate, NostrEvent } from 'nostr-tools';
 
@@ -47,6 +52,8 @@ export interface ContinuumSession {
 	token: string;
 	expiresAt: number;
 	pubkey: string;
+	/** When this client stored the token; sets the renewal point. */
+	issuedAt: number;
 }
 
 export interface SignerLike {
@@ -71,7 +78,9 @@ export class ContinuumError extends Error {
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
-const TOKEN_RE = /^m1\.[A-Za-z0-9._-]{10,512}$/;
+const TOKEN_RE = /^m[12]\.[A-Za-z0-9._-]{10,512}$/;
+/** Renew once less than this share of the token's life is left (ADR 0008). */
+export const RENEW_AT_REMAINING = 0.25;
 const MAX_PROJECTS = 200;
 const MAX_BODY = 64 * 1024;
 const MAX_PROFILES_BODY = 1024 * 1024;
@@ -207,6 +216,16 @@ export function parseRoster(raw: unknown): ProjectRoster | null {
 	return { owner, members: [...members], teams };
 }
 
+/** The source and origin checks for a `torii:session` message (pubkey: adopt). */
+export function acceptsHandoff(
+	e: Pick<MessageEvent, 'source' | 'origin' | 'data'>,
+	parent: unknown,
+	continuumOrigin: string
+): boolean {
+	const data = e.data as { type?: unknown } | null;
+	return e.source === parent && e.origin === continuumOrigin && data?.type === 'torii:session';
+}
+
 export class ContinuumClient {
 	private session: ContinuumSession | null = null;
 
@@ -226,15 +245,38 @@ export class ContinuumClient {
 	}
 
 	private load(): ContinuumSession | null {
+		let s: ContinuumSession | null;
 		try {
 			const raw = this.deps.storage.getItem(sessionKey(this.origin));
 			if (!raw) return null;
-			const s = JSON.parse(raw) as ContinuumSession;
-			if (!TOKEN_RE.test(s.token) || !HEX64.test(s.pubkey)) return null;
-			return s.expiresAt > this.now() + 30 ? s : null;
+			s = JSON.parse(raw) as ContinuumSession;
 		} catch {
+			s = null;
+		}
+		const ok =
+			s &&
+			typeof s.token === 'string' &&
+			TOKEN_RE.test(s.token) &&
+			typeof s.pubkey === 'string' &&
+			HEX64.test(s.pubkey) &&
+			Number.isFinite(s.expiresAt) &&
+			s.expiresAt > this.now() + 30;
+		if (!ok) {
+			// Expired or malformed: never leave a dead token in localStorage.
+			this.deps.storage.removeItem(sessionKey(this.origin));
 			return null;
 		}
+		return { ...s!, issuedAt: Number.isFinite(s!.issuedAt) ? s!.issuedAt : this.now() };
+	}
+
+	private store(token: unknown, expiresAt: unknown, pubkey: string): void {
+		if (typeof token !== 'string' || !TOKEN_RE.test(token)) {
+			throw new ContinuumError(0, null, 'bad token from Continuum');
+		}
+		const now = this.now();
+		const exp = typeof expiresAt === 'number' && expiresAt > now ? expiresAt : now + 3600;
+		this.session = { token, expiresAt: exp, pubkey, issuedAt: now };
+		this.deps.storage.setItem(sessionKey(this.origin), JSON.stringify(this.session));
 	}
 
 	/** A stored session for this pubkey that has not expired. */
@@ -244,9 +286,79 @@ export class ContinuumClient {
 		);
 	}
 
+	/** A different key signed in: drop the old key's session (ADR 0008). */
+	keepOnlyFor(pubkey: string): void {
+		if (this.session && this.session.pubkey !== pubkey) this.signOut();
+	}
+
 	/** The live session token (node file server uploads, ADR 0007), or null. */
 	bearer(): string | null {
 		return this.session && this.session.expiresAt > this.now() + 30 ? this.session.token : null;
+	}
+
+	/** Time to renew: under a quarter of the token's life is left. */
+	needsRenewal(): boolean {
+		const s = this.session;
+		if (!s) return false;
+		const life = Math.max(1, s.expiresAt - s.issuedAt);
+		return s.expiresAt - this.now() < life * RENEW_AT_REMAINING;
+	}
+
+	private renewing: Promise<boolean> | null = null;
+
+	/**
+	 * Renew the session without the signer (ADR 0008). True when a session is
+	 * live afterwards. A refusal (removed from every roster, past the 7-day
+	 * cap, expired) clears it so the next step is one fresh sign-in; a network
+	 * error keeps it and the next load or focus tries again.
+	 */
+	renew(): Promise<boolean> {
+		if (!this.session) return Promise.resolve(false);
+		if (!this.needsRenewal()) return Promise.resolve(true);
+		this.renewing ??= this.doRenew().finally(() => {
+			this.renewing = null;
+		});
+		return this.renewing;
+	}
+
+	private async doRenew(): Promise<boolean> {
+		const s = this.session!;
+		try {
+			const res = (await call(this.deps.fetch, `${this.origin}/api/team/auth/refresh`, {
+				method: 'POST',
+				token: s.token
+			})) as { token?: unknown; expires_at?: unknown };
+			if (this.session !== s) return Boolean(this.session); // signed out or replaced meanwhile
+			this.store(res?.token, res?.expires_at, s.pubkey);
+			return true;
+		} catch (error) {
+			if (error instanceof ContinuumError && (error.status === 401 || error.status === 403)) {
+				if (this.session === s) this.signOut();
+				return false;
+			}
+			return this.session !== null && this.session.expiresAt > this.now() + 30;
+		}
+	}
+
+	/**
+	 * A session handed over by the Continuum Team view (owner, ADR 0008). The
+	 * caller has checked the message's source and origin; this checks the
+	 * token shape and that it is for the signed-in key.
+	 */
+	adopt(raw: unknown, pubkey: string): boolean {
+		const m = (raw && typeof raw === 'object' ? raw : {}) as {
+			token?: unknown;
+			expires_at?: unknown;
+			pubkey?: unknown;
+		};
+		if (m.pubkey !== pubkey || !HEX64.test(pubkey)) return false;
+		if (typeof m.expires_at !== 'number' || m.expires_at <= this.now() + 30) return false;
+		try {
+			this.store(m.token, m.expires_at, pubkey);
+			return true;
+		} catch {
+			return false;
+		}
 	}
 
 	signOut(): void {
@@ -273,12 +385,7 @@ export class ContinuumClient {
 			method: 'POST',
 			body: JSON.stringify({ event })
 		})) as { token?: unknown; expires_at?: unknown };
-		if (typeof res?.token !== 'string' || !TOKEN_RE.test(res.token)) {
-			throw new ContinuumError(0, null, 'bad token from Continuum');
-		}
-		const expiresAt = typeof res.expires_at === 'number' ? res.expires_at : this.now() + 3600;
-		this.session = { token: res.token, expiresAt, pubkey };
-		this.deps.storage.setItem(sessionKey(this.origin), JSON.stringify(this.session));
+		this.store(res?.token, res?.expires_at, pubkey);
 	}
 
 	private async authed(

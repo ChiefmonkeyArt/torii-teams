@@ -13,6 +13,7 @@ import type { ToriiNodeConfig } from './nodeConfig';
 import {
 	ContinuumClient,
 	ContinuumError,
+	acceptsHandoff,
 	matchProjectGroup,
 	type GroupLike,
 	type RosterTeams,
@@ -59,13 +60,17 @@ export function startProjectChannels(config: ToriiNodeConfig, relays: string[]):
 	if (!config.continuum || typeof window === 'undefined') return;
 	client = new ContinuumClient(config.continuum, {
 		fetch: fetch.bind(window),
-		storage: sessionStorage
+		// One sign-in (ADR 0008): survives reloads and new tabs. Cleared on
+		// sign-out, a 401, a key change and expiry.
+		storage: localStorage
 	});
 	const files = client;
 	if (TORII_NODE_BUILD && config.files) setNodeFiles(config.files, () => files.bearer());
 	projectChannels.coordinator = config.coordinator;
 	projectChannels.relays = relays;
-	projectChannels.status = 'signed-out';
+	// 'loading', not 'signed-out': the stored session is checked first, so a
+	// reload or new tab never races into a fresh challenge (ADR 0008).
+	projectChannels.status = 'loading';
 	void refreshProjectChannels();
 }
 
@@ -115,6 +120,9 @@ async function loadProjectChannels(quiet = false): Promise<void> {
 		return;
 	}
 	const pubkey = normalizePubKey(account.pubkey);
+	client.keepOnlyFor(pubkey);
+	// Renew quietly when under a quarter of the token's life is left: no signer.
+	if (client.hasSession(pubkey)) await client.renew();
 	if (!client.hasSession(pubkey)) {
 		projectChannels.status = 'signed-out';
 		return;
@@ -161,6 +169,51 @@ async function loadProjectChannels(quiet = false): Promise<void> {
 			projectChannels.error = explain(error);
 		}
 	}
+}
+
+/** A live stored session for this key: load it instead of signing (ADR 0008). */
+export function hasContinuumSession(pubkey: string): boolean {
+	return Boolean(client?.hasSession(normalizePubKey(pubkey)));
+}
+
+/** Renew the session if due (load, focus, tick); never prompts the signer. */
+export async function renewContinuumSession(): Promise<void> {
+	const account = manager.getActive();
+	if (!client || !account) return;
+	const pubkey = normalizePubKey(account.pubkey);
+	if (!client.hasSession(pubkey) || !client.needsRenewal()) return;
+	if (!(await client.renew()) && projectChannels.status === 'ready') {
+		signOutOfContinuum();
+	}
+}
+
+/**
+ * Owner inside Continuum's Team view (ADR 0008): ask the parent for the
+ * owner's team session instead of signing a second challenge. Accepted only
+ * from window.parent, from the node file's Continuum origin, for the key the
+ * signer gave us. Resolves false after `waitMs` so sign-in can go ahead.
+ */
+export function requestSessionHandoff(waitMs = 2500): Promise<boolean> {
+	const account = manager.getActive();
+	if (!client || !account || typeof window === 'undefined' || window.parent === window) {
+		return Promise.resolve(false);
+	}
+	const c = client;
+	const pubkey = normalizePubKey(account.pubkey);
+	return new Promise((resolve) => {
+		const done = (ok: boolean) => {
+			clearTimeout(timer);
+			window.removeEventListener('message', onMessage);
+			resolve(ok);
+		};
+		const onMessage = (e: MessageEvent) => {
+			if (!acceptsHandoff(e, window.parent, c.origin)) return;
+			if (c.adopt(e.data, pubkey)) done(true);
+		};
+		const timer = setTimeout(() => done(false), waitMs);
+		window.addEventListener('message', onMessage);
+		window.parent.postMessage({ type: 'torii:session-request', pubkey }, c.origin);
+	});
 }
 
 /** Sign a Continuum challenge with the active account (one signer prompt). */

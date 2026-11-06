@@ -38,20 +38,20 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 
 ## Status
 
-| Step                                                                                             | State                                                       |
-| ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
-| J1 slice 1: action kind, role-checked fold, panel views, `/action` parser                        | Merged (PR #1)                                              |
-| J1 slice 2: chat wiring (see below)                                                              | Merged (PR #2)                                              |
-| J1 slice 3: whole-history fold, edit form, Assign to me                                          | Merged (PR #3)                                              |
-| Continuum mount (TEAMS-2c a): node settings, release workflow, ADR 0001                          | Merged (PRs #4, #5); released `0.6.1-torii.1`; not deployed |
-| Teams in Continuum: per-project sidebar, Continuum sign-in, ADR 0002                             | `0.6.1-torii.2`                                             |
-| No upstream services by default, project-only main pane, ADR 0003                                | `0.6.1-torii.3`; live on chiefmonkey.art                    |
-| Sign in to be addable, "Your team can now add you", ADR 0004                                     | Merged (PR #9); ships in `0.6.1-torii.4`                    |
-| Own white-labelled team UI, roster = membership, ADR 0005                                        | `0.6.1-torii.4`                                             |
-| No signer popup loop: no pass on focus, paced coordinator checks (ADR 0005)                      | `0.6.1-torii.5`                                             |
-| Membership signals: ready/added, quiet 60 s roster poll, profiles via Continuum, ADR 0006        | `0.6.1-torii.6`                                             |
-| Files on the node's own server (`/files/`), Continuum-session uploads, ADR 0007                  | `0.6.1-torii.7`                                             |
-| One sign-in, one Allow: consent card, lasting member session, owner handoff, ADR 0008 (proposed) | planned `0.6.1-torii.8`                                     |
+| Step                                                                                      | State                                                       |
+| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| J1 slice 1: action kind, role-checked fold, panel views, `/action` parser                 | Merged (PR #1)                                              |
+| J1 slice 2: chat wiring (see below)                                                       | Merged (PR #2)                                              |
+| J1 slice 3: whole-history fold, edit form, Assign to me                                   | Merged (PR #3)                                              |
+| Continuum mount (TEAMS-2c a): node settings, release workflow, ADR 0001                   | Merged (PRs #4, #5); released `0.6.1-torii.1`; not deployed |
+| Teams in Continuum: per-project sidebar, Continuum sign-in, ADR 0002                      | `0.6.1-torii.2`                                             |
+| No upstream services by default, project-only main pane, ADR 0003                         | `0.6.1-torii.3`; live on chiefmonkey.art                    |
+| Sign in to be addable, "Your team can now add you", ADR 0004                              | Merged (PR #9); ships in `0.6.1-torii.4`                    |
+| Own white-labelled team UI, roster = membership, ADR 0005                                 | `0.6.1-torii.4`                                             |
+| No signer popup loop: no pass on focus, paced coordinator checks (ADR 0005)               | `0.6.1-torii.5`                                             |
+| Membership signals: ready/added, quiet 60 s roster poll, profiles via Continuum, ADR 0006 | `0.6.1-torii.6`                                             |
+| Files on the node's own server (`/files/`), Continuum-session uploads, ADR 0007           | `0.6.1-torii.7`                                             |
+| One sign-in, one Allow: consent card, lasting member session, owner handoff, ADR 0008     | `0.6.1-torii.8`                                             |
 
 ### Using actions (J1 slice 2)
 
@@ -116,8 +116,10 @@ Released: `0.6.1-torii.1` (d2a2f22, Suite v0.9.29-alpha), `0.6.1-torii.2`
 (411c435, v0.9.30-alpha), `0.6.1-torii.3` (ec2bc86, v0.9.33-alpha),
 `0.6.1-torii.4` (7382de5, v0.9.34-alpha; PR #9 plus ADR 0005) and
 `0.6.1-torii.5` (05a6c37, v0.9.35-alpha; signer pacing), `0.6.1-torii.6`
-(590d204, v0.9.36-alpha; membership signals, ADR 0006) and `0.6.1-torii.7`
-(images and files on the node's own server, [ADR 0007](docs/torii/adr-0007-node-files.md), this PR). A Torii tag runs
+(590d204, v0.9.36-alpha; membership signals, ADR 0006), `0.6.1-torii.7`
+(1dd4ce4, v0.9.37-alpha; files on the node's own server,
+[ADR 0007](docs/torii/adr-0007-node-files.md)) and `0.6.1-torii.8` (one
+sign-in, [ADR 0008](docs/torii/adr-0008-one-sign-in.md), this PR). A Torii tag runs
 `.github/workflows/torii-release.yml`, which publishes a checksummed web build
 for the Suite installer.
 
