@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
 	ContinuumClient,
 	ContinuumError,
+	acceptsHandoff,
 	matchProjectGroup,
 	parseRosterOwner,
 	parseRoster,
@@ -160,10 +161,116 @@ describe('ContinuumClient', () => {
 		expect(
 			new ContinuumClient(ORIGIN, { fetch: server() as never, storage: store }).hasSession(ME)
 		).toBe(false);
+		expect(store.m.size).toBe(0); // the dead token is removed, not left behind
 		store.setItem(`torii.continuumSession:${ORIGIN}`, '{bad');
 		expect(
 			new ContinuumClient(ORIGIN, { fetch: server() as never, storage: store }).hasSession(ME)
 		).toBe(false);
+		expect(store.m.size).toBe(0);
+	});
+});
+
+describe('one sign-in (ADR 0008)', () => {
+	const M2 = 'm2.1900000000.1900000000.1900086400.' + 'a'.repeat(64) + '.' + 'f'.repeat(64);
+	const KEY = `torii.continuumSession:${ORIGIN}`;
+	const boot = (now: { t: number }, f = server(), store = memStore()) => ({
+		store,
+		f,
+		c: new ContinuumClient(ORIGIN, { fetch: f as never, storage: store, now: () => now.t })
+	});
+
+	it('a stored session survives a new client (reload / new tab) with no challenge', async () => {
+		const now = { t: 1_900_000_000 };
+		const { c, store } = boot(now);
+		await c.signIn(signer(), ME);
+		const f2 = server();
+		const again = new ContinuumClient(ORIGIN, {
+			fetch: f2 as never,
+			storage: store,
+			now: () => now.t
+		});
+		expect(again.hasSession(ME)).toBe(true);
+		await again.me();
+		const paths = f2.mock.calls.map(([u]) => new URL(String(u)).pathname);
+		expect(paths).not.toContain('/api/auth/challenge');
+		expect(paths).not.toContain('/api/team/auth/verify');
+	});
+
+	it('renews only under a quarter of the life left, without the signer', async () => {
+		const now = { t: 1_900_000_000 };
+		const refresh = vi.fn(() => json(200, { token: M2, expires_at: now.t + 86_400 }));
+		const f = server({ '/api/team/auth/refresh': refresh });
+		const { c, store } = boot(now, f);
+		const sg = signer();
+		await c.signIn(sg, ME); // expires 2_000_000_000: life 100_000_000 s
+		now.t = 1_900_000_000 + 74_000_000;
+		expect(c.needsRenewal()).toBe(false);
+		expect(await c.renew()).toBe(true);
+		expect(refresh).not.toHaveBeenCalled();
+		now.t = 1_900_000_000 + 76_000_000;
+		expect(c.needsRenewal()).toBe(true);
+		await Promise.all([c.renew(), c.renew()]); // one request for concurrent callers
+		expect(refresh).toHaveBeenCalledTimes(1);
+		expect(sg.signEvent).toHaveBeenCalledTimes(1); // only the first sign-in
+		expect(c.bearer()).toBe(M2);
+		expect(JSON.parse(store.getItem(KEY)!).token).toBe(M2);
+		const auth = f.mock.calls.find(([u]) => String(u).endsWith('/api/team/auth/refresh'))![1];
+		expect((auth?.headers as Record<string, string>).authorization).toBe(`Bearer ${TOKEN}`);
+	});
+
+	it('a refused renewal clears the session; a network error keeps it', async () => {
+		for (const [status, code] of [
+			[403, 'not_member'],
+			[401, 'max_lifetime_reached'],
+			[401, 'expired']
+		] as const) {
+			const now = { t: 1_900_000_000 };
+			const { c, store } = boot(
+				now,
+				server({ '/api/team/auth/refresh': () => json(status, { code }) })
+			);
+			await c.signIn(signer(), ME);
+			now.t = 1_999_000_000;
+			expect(await c.renew()).toBe(false);
+			expect(c.hasSession(ME)).toBe(false);
+			expect(store.m.size).toBe(0);
+		}
+		const now = { t: 1_900_000_000 };
+		const { c } = boot(
+			now,
+			server({
+				'/api/team/auth/refresh': () => {
+					throw new TypeError('fetch failed');
+				}
+			})
+		);
+		await c.signIn(signer(), ME);
+		now.t = 1_999_000_000;
+		expect(await c.renew()).toBe(true);
+		expect(c.hasSession(ME)).toBe(true);
+	});
+
+	it('another key signing in drops the old key session', async () => {
+		const now = { t: 1_900_000_000 };
+		const { c, store } = boot(now);
+		await c.signIn(signer(), ME);
+		c.keepOnlyFor(ME);
+		expect(c.hasSession(ME)).toBe(true);
+		c.keepOnlyFor(OWNER);
+		expect(c.hasSession(ME)).toBe(false);
+		expect(store.m.size).toBe(0);
+	});
+
+	it('adopts a handed-over session only for the signed-in key and a live token', () => {
+		const now = { t: 1_900_000_000 };
+		const { c } = boot(now);
+		expect(c.adopt({ token: M2, expires_at: now.t + 600, pubkey: OWNER }, ME)).toBe(false);
+		expect(c.adopt({ token: 'admin.x', expires_at: now.t + 600, pubkey: ME }, ME)).toBe(false);
+		expect(c.adopt({ token: M2, expires_at: now.t + 10, pubkey: ME }, ME)).toBe(false);
+		expect(c.adopt(null, ME)).toBe(false);
+		expect(c.hasSession(ME)).toBe(false);
+		expect(c.adopt({ token: M2, expires_at: now.t + 600, pubkey: ME }, ME)).toBe(true);
+		expect(c.bearer()).toBe(M2);
 	});
 });
 
@@ -330,5 +437,21 @@ describe('membership signals (ADR 0006)', () => {
 		expect(matchProjectGroup('site', OWNER, COORD, [g('a'), g('b')])).toBeNull();
 		expect(matchProjectGroup('site', OWNER, COORD, [g('a'), g('b')], 'b')?.id).toBe('b');
 		expect(matchProjectGroup('site', OWNER, COORD, [g('a'), g('b')], 'zz')).toBeNull();
+	});
+});
+
+describe('session handoff checks (ADR 0008)', () => {
+	const parent = {};
+	const ok = { source: parent, origin: ORIGIN, data: { type: 'torii:session' } };
+	it('accepts only the parent window, the Continuum origin and the session type', () => {
+		expect(acceptsHandoff(ok as never, parent, ORIGIN)).toBe(true);
+		expect(acceptsHandoff({ ...ok, source: {} } as never, parent, ORIGIN)).toBe(false);
+		expect(acceptsHandoff({ ...ok, origin: 'https://evil.example' } as never, parent, ORIGIN)).toBe(
+			false
+		);
+		expect(
+			acceptsHandoff({ ...ok, data: { type: 'torii:roster-changed' } } as never, parent, ORIGIN)
+		).toBe(false);
+		expect(acceptsHandoff({ ...ok, data: null } as never, parent, ORIGIN)).toBe(false);
 	});
 });

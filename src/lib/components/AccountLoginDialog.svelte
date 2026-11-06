@@ -13,6 +13,7 @@
 		isAndroidNative,
 		type InstalledSignerApp
 	} from '$lib/services/nativeBridge';
+	import { TEAM_SIGNER_PERMISSIONS } from '$lib/torii/signerPermissions';
 	import { ExtensionSigner, NostrConnectSigner } from 'applesauce-signers/signers';
 	import {
 		ExtensionAccount,
@@ -206,7 +207,9 @@
 			const uri = signer.getNostrConnectURI({
 				name: TORII_NODE_BUILD ? APP_NAME : 'Cordn-web',
 				url: publicWebOrigin(),
-				image: `${publicWebOrigin()}/favicon.svg`
+				image: `${publicWebOrigin()}/favicon.svg`,
+				// One approval covers every later call (Torii ADR 0008).
+				permissions: TORII_NODE_BUILD ? TEAM_SIGNER_PERMISSIONS : undefined
 			});
 
 			nostrConnectUri = uri;
@@ -247,10 +250,12 @@
 			loading = true;
 			error = '';
 
-			const signer = await NostrConnectSigner.fromBunkerURI(bunkerUri.trim());
-
-			// Connect to the remote signer
-			await signer.connect();
+			// fromBunkerURI connects (with the secret) itself; a second connect
+			// would replay a one-time secret. Torii asks for every permission
+			// it will use in that one request (ADR 0008).
+			const signer = await NostrConnectSigner.fromBunkerURI(bunkerUri.trim(), {
+				permissions: TORII_NODE_BUILD ? TEAM_SIGNER_PERMISSIONS : undefined
+			});
 
 			// Get the user's public key
 			const pubkey = await signer.getPublicKey();
