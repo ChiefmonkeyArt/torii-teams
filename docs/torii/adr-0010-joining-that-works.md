@@ -124,6 +124,11 @@ outside request) and the motion stops for `prefers-reduced-motion`. The
   animation?" Added as section 6.
 - Section 5, reactions: Cordn already shows a reaction button beside the
   bubble on hover and focus, so the change is the double-click only.
+- Found in local testing: the waiting page asked only once a minute, so
+  after Let in it could sit for up to 60 s. It now asks every 20 s while
+  waiting (network only; 3 a minute, far under Continuum's 20-a-minute
+  limit). The account menu's waiting count also refreshes when the tab
+  comes back into view.
 
 ## Consequences
 

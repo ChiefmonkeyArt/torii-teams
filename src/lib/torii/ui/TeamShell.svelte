@@ -26,7 +26,7 @@
 		signInToContinuum,
 		signOutOfContinuum
 	} from '../projectChannels.svelte';
-	import { SYNC_INTERVAL_MS, syncRosters } from '../rosterSync.svelte';
+	import { SYNC_INTERVAL_MS, WAIT_CHECK_MS, syncRosters } from '../rosterSync.svelte';
 	import { isEmbedded, navigateTarget } from './embed';
 	import { maintainReachability, reachabilityStore } from '$lib/services/chatKeyPackages.svelte';
 	import { safeNormalizePubKey } from '$lib/utils';
@@ -93,6 +93,12 @@
 		window.addEventListener('focus', renew);
 		document.addEventListener('visibilitychange', renew);
 		const id = setInterval(tick, SYNC_INTERVAL_MS);
+		// Waiting to be let in (ADR 0010): ask more often so the chat opens soon
+		// after the owner presses Let in. Network only; stops once in or refused.
+		const waitId = setInterval(() => {
+			if (document.visibilityState === 'visible' && projectChannels.status === 'waiting')
+				void checkInvite();
+		}, WAIT_CHECK_MS);
 		const onMessage = (e: MessageEvent) => {
 			const origin = continuumClient()?.origin;
 			if (!origin || e.origin !== origin) return;
@@ -108,6 +114,7 @@
 		window.addEventListener('message', onMessage);
 		return () => {
 			clearInterval(id);
+			clearInterval(waitId);
 			window.removeEventListener('message', onMessage);
 			window.removeEventListener('focus', renew);
 			document.removeEventListener('visibilitychange', renew);
