@@ -3,6 +3,7 @@
 	// Mounted by /chat/+layout in Torii builds; the engine effects stay there.
 	import type { Snippet } from 'svelte';
 	import { onMount, untrack } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { activeAccount, logout } from '$lib/services/accountManager.svelte';
@@ -26,7 +27,7 @@
 		signOutOfContinuum
 	} from '../projectChannels.svelte';
 	import { SYNC_INTERVAL_MS, syncRosters } from '../rosterSync.svelte';
-	import { isEmbedded } from './embed';
+	import { isEmbedded, navigateTarget } from './embed';
 	import { maintainReachability, reachabilityStore } from '$lib/services/chatKeyPackages.svelte';
 	import { safeNormalizePubKey } from '$lib/utils';
 	import { teamReachability } from '../teamReachability';
@@ -97,6 +98,12 @@
 			if (!origin || e.origin !== origin) return;
 			const data = e.data as { type?: unknown } | null;
 			if (data?.type === 'torii:roster-changed') void refreshThenSync();
+			// Continuum's one frame (ADR 0010): show the project it asks for.
+			const to = navigateTarget(e, window.parent, origin);
+			if (to !== null) {
+				const href = to ? resolve('/chat/p/[slug]', { slug: to }) : resolve('/chat');
+				if (href !== page.url.pathname) void goto(href, { keepFocus: true, noScroll: true });
+			}
 		};
 		window.addEventListener('message', onMessage);
 		return () => {
@@ -194,16 +201,19 @@
 					>
 				</div>
 			{/if}
-			<div class="flex items-center gap-2 border-t border-border px-3 py-2 text-sm">
-				<span class="min-w-0 flex-1">
-					<MemberName pubkey={$activeAccount!.pubkey} />
-				</span>
-				<button
-					type="button"
-					class="rounded-md px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-					onclick={signOut}>Sign out</button
-				>
-			</div>
+			<!-- Embedded, Continuum's account menu is the one identity (ADR 0010). -->
+			{#if !embedded}
+				<div class="flex items-center gap-2 border-t border-border px-3 py-2 text-sm">
+					<span class="min-w-0 flex-1">
+						<MemberName pubkey={$activeAccount!.pubkey} />
+					</span>
+					<button
+						type="button"
+						class="rounded-md px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+						onclick={signOut}>Sign out</button
+					>
+				</div>
+			{/if}
 		</aside>
 		<main class="{onHome ? 'hidden md:flex' : 'flex'} relative min-w-0 flex-1 flex-col pt-safe">
 			{#if signerReadinessStore.waiting}

@@ -251,6 +251,19 @@
 		interactionControlsActive = true;
 	}
 
+	// Torii (ADR 0010): double-click a message to react, so reactions are
+	// found without hunting for the hover button.
+	function openReactionsByDoubleClick(event: MouseEvent) {
+		if (message.deleted || !isStoredEvent || isSystemMessage) return;
+		if (
+			(event.target as Element | null)?.closest?.('a, button, input, textarea, [contenteditable]')
+		)
+			return;
+		window.getSelection?.()?.removeAllRanges();
+		interactionControlsActive = true;
+		reactionMenuOpen = true;
+	}
+
 	function maybeDeactivateInteractionControls() {
 		if (reactionMenuOpen || actionsMenuOpen || customReactionOpen) return;
 		interactionControlsActive = false;
@@ -693,6 +706,7 @@
 				onpointerenter={activateInteractionControls}
 				onfocusin={activateInteractionControls}
 				onpointerleave={maybeDeactivateInteractionControls}
+				ondblclick={openReactionsByDoubleClick}
 			>
 				<div class="relative flex max-w-full min-w-0 flex-col gap-1.5" class:items-end={isOwn}>
 					{#if shouldMountInteractionControls}

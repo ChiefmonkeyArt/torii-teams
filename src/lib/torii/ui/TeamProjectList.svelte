@@ -22,7 +22,7 @@
 				slug: p.slug,
 				href: resolve('/chat/p/[slug]', { slug: p.slug }),
 				unread: summary?.unreadCount ?? 0,
-				preview: groupId ? shown : isOwner ? 'Not started' : 'Waiting to be added'
+				preview: groupId ? shown : isOwner ? 'Not started' : 'Chat opens soon'
 			};
 		})
 	);

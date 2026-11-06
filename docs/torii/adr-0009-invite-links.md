@@ -3,7 +3,9 @@
 Date: 2026-11-06. Status: **Accepted** (owner, 2026-11-06: "Accept ADR 0009
 and implement it for torii.9"); proposed the same day ("Write the
 invite-link ADR next"). Implemented in `0.6.1-torii.9` with Continuum
-`v0.2.198-alpha` and Suite `v0.9.39-alpha`; see "Amendments on acceptance". Target: `0.6.1-torii.9` with a Continuum and a Suite
+`v0.2.198-alpha` and Suite `v0.9.39-alpha`; see "Amendments on acceptance". Amended by
+[ADR 0010](adr-0010-joining-that-works.md) (personal links straight in,
+group links ask first or straight in, places default to seats left). Target: `0.6.1-torii.9` with a Continuum and a Suite
 release. Builds on ADR 0002 (Teams in Continuum), ADR 0006 (membership
 signals) and ADR 0008 (one sign-in). Continuum owns invites (Continuum
 `docs/adr-team-collaboration.md`, "Decision: access model", 2026-11-04: "the

@@ -5,7 +5,12 @@ const h = vi.hoisted(() => ({
 	channels: {
 		status: 'signed-out',
 		error: '',
-		invite: null as null | { ownerName: string; projectName: string }
+		invite: null as null | {
+			ownerName: string;
+			projectName: string;
+			personal?: boolean;
+			straightIn?: boolean;
+		}
 	},
 	signIn: vi.fn(async () => {}),
 	account: null as null | { pubkey: string }
@@ -126,4 +131,44 @@ test('invite: a dead or declined link shows one line and no button', () => {
 	);
 	expect(el.querySelectorAll('button').length).toBe(0);
 	Object.assign(h.channels, { status: 'signed-out', error: '' });
+});
+
+test('personal invite (ADR 0010): the shisa welcome, lively, and straight in', () => {
+	h.account = { pubkey: 'a'.repeat(64) };
+	Object.assign(h.channels, {
+		status: 'signed-out',
+		invite: { ownerName: 'Olive', projectName: 'Studio', personal: true, straightIn: true }
+	});
+	const el = show();
+	const shisa = el.querySelector('[data-testid="shisa-welcome"]')!;
+	expect(shisa.classList.contains('lively')).toBe(true);
+	expect(shisa.getAttribute('aria-hidden')).toBe('true');
+	expect(shisa.querySelector('img')!.getAttribute('alt')).toBe('');
+	expect(el.querySelector('[data-testid="invite-how"]')!.textContent!.trim()).toBe(
+		'Sign in and you are straight in.'
+	);
+	Object.assign(h.channels, { invite: null });
+});
+
+test('ask-first group link: the shisa sits still and the owner lets you in', () => {
+	h.account = { pubkey: 'a'.repeat(64) };
+	Object.assign(h.channels, {
+		status: 'signed-out',
+		invite: { ownerName: 'Olive', projectName: 'Studio', personal: false, straightIn: false }
+	});
+	const el = show();
+	expect(el.querySelector('[data-testid="shisa-welcome"]')!.classList.contains('lively')).toBe(
+		false
+	);
+	expect(el.querySelector('[data-testid="invite-how"]')!.textContent!.trim()).toBe(
+		'Sign in, then Olive lets you in.'
+	);
+	Object.assign(h.channels, { invite: null });
+});
+
+test('no invite: no shisa', () => {
+	h.account = null;
+	Object.assign(h.channels, { status: 'signed-out', invite: null });
+	const el = show();
+	expect(el.querySelector('[data-testid="shisa-welcome"]')).toBeNull();
 });

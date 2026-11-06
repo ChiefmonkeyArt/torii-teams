@@ -53,6 +53,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | Files on the node's own server (`/files/`), Continuum-session uploads, ADR 0007           | `0.6.1-torii.7`                                             |
 | One sign-in, one Allow: consent card, lasting member session, owner handoff, ADR 0008     | `0.6.1-torii.8`                                             |
 | Invite links: opaque `/chat/join/<id>#<secret>`, named and open invites, ADR 0009         | `0.6.1-torii.9`                                             |
+| Joining that works: straight-in links, one Teams frame, shisa welcome, ADR 0010           | `0.6.1-torii.10`                                            |
 
 ### Using actions (J1 slice 2)
 
@@ -113,6 +114,11 @@ the app reads it at startup and clears the address bar (`inviteLink.ts`). The
 sign-in card names who invited you, the one signature claims the link, and an
 open link waits ("Asked Olive to let you in") until the owner presses Let in:
 [`docs/torii/adr-0009-invite-links.md`](docs/torii/adr-0009-invite-links.md).
+Since torii.10 a personal link is straight in, a group link either asks
+first (the default) or lets people straight in on an owner-signed grant, and
+the invite screens show the shisa welcome; embedded, Teams hides its own
+account footer and follows Continuum's `torii:navigate`:
+[`docs/torii/adr-0010-joining-that-works.md`](docs/torii/adr-0010-joining-that-works.md).
 High priority after the MVP: FIPS on by default across Plebeian, Quest,
 Continuum and the marketplace (an ADR per app).
 
@@ -127,9 +133,11 @@ Released: `0.6.1-torii.1` (d2a2f22, Suite v0.9.29-alpha), `0.6.1-torii.2`
 (1dd4ce4, v0.9.37-alpha; files on the node's own server,
 [ADR 0007](docs/torii/adr-0007-node-files.md)), `0.6.1-torii.8` (one
 sign-in, 05c9502, v0.9.38-alpha,
-[ADR 0008](docs/torii/adr-0008-one-sign-in.md)) and `0.6.1-torii.9` (invite
+[ADR 0008](docs/torii/adr-0008-one-sign-in.md)), `0.6.1-torii.9` (invite
 links, v0.9.39-alpha, Continuum v0.2.198-alpha,
-[ADR 0009](docs/torii/adr-0009-invite-links.md)). A Torii tag runs
+[ADR 0009](docs/torii/adr-0009-invite-links.md)) and `0.6.1-torii.10`
+(joining that works, v0.9.40-alpha, Continuum v0.2.199-alpha,
+[ADR 0010](docs/torii/adr-0010-joining-that-works.md)). A Torii tag runs
 `.github/workflows/torii-release.yml`, which publishes a checksummed web build
 for the Suite installer.
 

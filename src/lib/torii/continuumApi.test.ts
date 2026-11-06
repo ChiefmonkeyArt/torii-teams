@@ -486,7 +486,17 @@ describe('invite links (ADR 0009)', () => {
 				owner_name: 'x'.repeat(200),
 				avatar: 'u'
 			})
-		).toEqual({ kind: 'open', projectName: 'Studio', ownerName: 'x'.repeat(80) });
+		).toEqual({
+			kind: 'open',
+			projectName: 'Studio',
+			ownerName: 'x'.repeat(80),
+			straightIn: false
+		});
+		// ADR 0010: a straight-in group link; an older Continuum without the
+		// field means named links are straight in and open links ask first.
+		expect(parseInvitePeek({ kind: 'open', straight_in: true })?.straightIn).toBe(true);
+		expect(parseInvitePeek({ kind: 'open', straight_in: 'yes' })?.straightIn).toBe(false);
+		expect(parseInvitePeek({ kind: 'named' })?.straightIn).toBe(true);
 		expect(parseInvitePeek({ kind: 'admin' })).toBeNull();
 		const f = server({
 			'/api/team/invite/peek': () => json(404, { code: 'invite_unavailable' })

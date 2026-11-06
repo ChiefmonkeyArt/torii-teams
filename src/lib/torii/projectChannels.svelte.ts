@@ -37,6 +37,10 @@ export type ChannelsStatus =
 export interface InviteView {
 	projectName: string;
 	ownerName: string;
+	/** A personal (named) link: the welcome card animates (ADR 0010). */
+	personal?: boolean;
+	/** Signs straight in, no waiting for the owner. */
+	straightIn?: boolean;
 }
 
 export const projectChannels = $state<{
@@ -55,6 +59,8 @@ export const projectChannels = $state<{
 	relays: string[];
 	/** An invite link opened in this tab, or the one we are waiting on. */
 	invite: InviteView | null;
+	/** Just joined through a link: a welcome until the chat is ready (ADR 0010). */
+	welcome: InviteView | null;
 }>({
 	status: 'off',
 	error: '',
@@ -66,7 +72,8 @@ export const projectChannels = $state<{
 	ready: null,
 	coordinator: '',
 	relays: [],
-	invite: null
+	invite: null,
+	welcome: null
 });
 
 let client: ContinuumClient | null = null;
@@ -105,7 +112,12 @@ async function readInvite(): Promise<void> {
 	try {
 		const peek = await client.peekInvite(link);
 		if (peek) {
-			projectChannels.invite = { projectName: peek.projectName, ownerName: peek.ownerName };
+			projectChannels.invite = {
+				projectName: peek.projectName,
+				ownerName: peek.ownerName,
+				personal: peek.kind === 'named',
+				straightIn: peek.straightIn
+			};
 			return;
 		}
 	} catch {
@@ -296,6 +308,7 @@ export async function signInToContinuum(): Promise<void> {
 				projectChannels.status = 'waiting';
 				return;
 			}
+			projectChannels.welcome = projectChannels.invite ?? names;
 			projectChannels.invite = null;
 		} else {
 			await client.signIn(account.signer, pubkey);
@@ -326,6 +339,7 @@ export function checkInvite(): Promise<void> {
 		const state = await c.checkWaiting();
 		if (projectChannels.status !== 'waiting') return;
 		if (state === 'in') {
+			projectChannels.welcome = projectChannels.invite;
 			projectChannels.invite = null;
 			projectChannels.status = 'loading';
 			await refreshProjectChannels({ force: true });
@@ -383,6 +397,7 @@ export function signOutOfContinuum(): void {
 	client?.signOut();
 	forgetInvite();
 	projectChannels.invite = null;
+	projectChannels.welcome = null;
 	loadedFor = '';
 	projectChannels.status = client ? 'signed-out' : 'off';
 	projectChannels.projects = [];
