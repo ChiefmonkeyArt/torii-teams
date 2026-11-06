@@ -13,14 +13,31 @@ import type { ToriiNodeConfig } from './nodeConfig';
 import {
 	ContinuumClient,
 	ContinuumError,
+	INVITE_GONE,
 	acceptsHandoff,
 	matchProjectGroup,
 	type GroupLike,
+	type InviteLink,
 	type RosterTeams,
 	type TeamProject
 } from './continuumApi';
+import { dropInvite, heldInvite } from './inviteLink';
 
-export type ChannelsStatus = 'off' | 'signed-out' | 'signing-in' | 'loading' | 'ready' | 'error';
+export type ChannelsStatus =
+	| 'off'
+	| 'signed-out'
+	| 'signing-in'
+	| 'loading'
+	| 'ready'
+	| 'error'
+	/** Used an open invite; the owner has not let us in yet (ADR 0009). */
+	| 'waiting';
+
+/** The invite this tab carries, as the link describes itself (names only). */
+export interface InviteView {
+	projectName: string;
+	ownerName: string;
+}
 
 export const projectChannels = $state<{
 	status: ChannelsStatus;
@@ -36,6 +53,8 @@ export const projectChannels = $state<{
 	ready: boolean | null;
 	coordinator: string;
 	relays: string[];
+	/** An invite link opened in this tab, or the one we are waiting on. */
+	invite: InviteView | null;
 }>({
 	status: 'off',
 	error: '',
@@ -46,7 +65,8 @@ export const projectChannels = $state<{
 	teams: {},
 	ready: null,
 	coordinator: '',
-	relays: []
+	relays: [],
+	invite: null
 });
 
 let client: ContinuumClient | null = null;
@@ -54,6 +74,10 @@ let client: ContinuumClient | null = null;
 // but only the first call for a pubkey reaches Continuum.
 let inflight: Promise<void> | null = null;
 let loadedFor = '';
+let link: InviteLink | null = null;
+/** The link in this tab no longer works: say so instead of a plain sign-in. */
+let inviteGone = false;
+const tabStorage = () => (typeof sessionStorage === 'undefined' ? null : sessionStorage);
 
 /** Called once with the node file; turns project mode on only when Continuum is set. */
 export function startProjectChannels(config: ToriiNodeConfig, relays: string[]): void {
@@ -71,7 +95,30 @@ export function startProjectChannels(config: ToriiNodeConfig, relays: string[]):
 	// 'loading', not 'signed-out': the stored session is checked first, so a
 	// reload or new tab never races into a fresh challenge (ADR 0008).
 	projectChannels.status = 'loading';
-	void refreshProjectChannels();
+	void readInvite().finally(() => void refreshProjectChannels());
+}
+
+/** Read the invite this tab carries (captured at startup) without signing in. */
+async function readInvite(): Promise<void> {
+	link = heldInvite(tabStorage());
+	if (!client || !link) return;
+	try {
+		const peek = await client.peekInvite(link);
+		if (peek) {
+			projectChannels.invite = { projectName: peek.projectName, ownerName: peek.ownerName };
+			return;
+		}
+	} catch {
+		// Offline: keep the link; the claim answers for real.
+		return;
+	}
+	forgetInvite();
+	inviteGone = true;
+}
+
+function forgetInvite(): void {
+	link = null;
+	dropInvite(tabStorage());
 }
 
 export function projectModeOn(): boolean {
@@ -124,6 +171,18 @@ async function loadProjectChannels(quiet = false): Promise<void> {
 	// Renew quietly when under a quarter of the token's life is left: no signer.
 	if (client.hasSession(pubkey)) await client.renew();
 	if (!client.hasSession(pubkey)) {
+		const waiting = client.pendingFor(pubkey);
+		if (waiting) {
+			projectChannels.invite = { projectName: waiting.projectName, ownerName: waiting.ownerName };
+			projectChannels.status = 'waiting';
+			void checkInvite();
+			return;
+		}
+		if (inviteGone) {
+			projectChannels.status = 'error';
+			projectChannels.error = INVITE_GONE;
+			return;
+		}
 		projectChannels.status = 'signed-out';
 		return;
 	}
@@ -152,6 +211,8 @@ async function loadProjectChannels(quiet = false): Promise<void> {
 		projectChannels.teams = teams;
 		projectChannels.ready = me.ready;
 		projectChannels.error = '';
+		projectChannels.invite = null;
+		forgetInvite(); // already in: the link has nothing left to do
 		projectChannels.status = 'ready';
 		loadedFor = account.pubkey;
 		const c = client;
@@ -216,17 +277,81 @@ export function requestSessionHandoff(waitMs = 2500): Promise<boolean> {
 	});
 }
 
-/** Sign a Continuum challenge with the active account (one signer prompt). */
+/**
+ * Sign a Continuum challenge with the active account (one signer prompt).
+ * With an invite in this tab the same signature claims it (ADR 0009).
+ */
 export async function signInToContinuum(): Promise<void> {
 	const account = manager.getActive();
 	if (!client || !account) return;
 	projectChannels.status = 'signing-in';
+	inviteGone = false;
+	const pubkey = normalizePubKey(account.pubkey);
 	try {
-		await client.signIn(account.signer, normalizePubKey(account.pubkey));
+		if (link) {
+			const names = projectChannels.invite ?? { projectName: '', ownerName: '' };
+			const r = await client.claimInvite(account.signer, pubkey, link, names);
+			forgetInvite();
+			if (r.state === 'waiting') {
+				projectChannels.status = 'waiting';
+				return;
+			}
+			projectChannels.invite = null;
+		} else {
+			await client.signIn(account.signer, pubkey);
+		}
 		await refreshProjectChannels({ force: true });
 	} catch (error) {
+		if (error instanceof ContinuumError && error.code === 'invite_unavailable') {
+			forgetInvite();
+			projectChannels.invite = null;
+			projectChannels.status = 'error';
+			projectChannels.error = INVITE_GONE;
+			return;
+		}
 		projectChannels.status = 'error';
 		projectChannels.error = explain(error);
+	}
+}
+
+/**
+ * While waiting on an invite: has the owner let us in? Network only, never
+ * the signer (load, focus, the 60 s tick). Refusal shows one plain line.
+ */
+let checking: Promise<void> | null = null;
+export function checkInvite(): Promise<void> {
+	if (!client || projectChannels.status !== 'waiting') return Promise.resolve();
+	const c = client;
+	checking ??= (async () => {
+		const state = await c.checkWaiting();
+		if (projectChannels.status !== 'waiting') return;
+		if (state === 'in') {
+			projectChannels.invite = null;
+			projectChannels.status = 'loading';
+			await refreshProjectChannels({ force: true });
+		} else if (state === 'refused') {
+			projectChannels.invite = null;
+			projectChannels.status = 'error';
+			projectChannels.error = INVITE_GONE;
+		}
+	})().finally(() => {
+		checking = null;
+	});
+	return checking;
+}
+
+/** While waiting: tell Continuum the owner's client can add us (once per key). */
+let readyWaitingFor = '';
+export async function reportReadyWaiting(): Promise<void> {
+	const pubkey = manager.getActive()?.pubkey ?? '';
+	if (!client || projectChannels.status !== 'waiting' || !pubkey || readyWaitingFor === pubkey) {
+		return;
+	}
+	readyWaitingFor = pubkey;
+	try {
+		await client.markReadyWaiting();
+	} catch {
+		readyWaitingFor = '';
 	}
 }
 
@@ -256,6 +381,8 @@ export function continuumClient(): ContinuumClient | null {
 export function signOutOfContinuum(): void {
 	setProfileSource(null);
 	client?.signOut();
+	forgetInvite();
+	projectChannels.invite = null;
 	loadedFor = '';
 	projectChannels.status = client ? 'signed-out' : 'off';
 	projectChannels.projects = [];

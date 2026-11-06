@@ -18,8 +18,13 @@
 	import { toriiRedirect } from '$lib/torii/ui/routes';
 	import { activeGroupId } from '$lib/utils/groupShareLink';
 	import { defineCustomElements } from '@ionic/pwa-elements/loader';
+	import { captureInvite } from '$lib/torii/inviteLink';
 
 	let { children } = $props();
+
+	// Invite links (ADR 0009): take the secret out of the address bar before
+	// any request leaves the page (component init runs before every onMount).
+	if (TORII_NODE_BUILD && typeof window !== 'undefined') captureInvite(window);
 
 	// Torii builds show only the team routes (ADR 0005).
 	const toriiTarget = $derived.by(() => {

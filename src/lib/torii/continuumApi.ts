@@ -13,6 +13,12 @@
 //   POST /api/projects/:slug/teams/members {added, removed}                    (owner)
 //   GET  /api/team/profiles?p=hex,…        -> {profiles: {hex: {event}}}
 //   GET  /api/team/avatar/:hex             -> image bytes
+// Invite links (ADR 0009):
+//   POST /api/team/invite/peek  {id, secret}        -> {kind, project_name, owner_name}
+//   POST /api/team/invite/claim {id, secret, event} -> {token: m2, slug} | {pending, token: j1}
+//   POST /api/team/auth/refresh (Bearer j1)         -> m2 once let in; 409 pending, 403 refused
+//   POST /api/team/ready (Bearer j1)                -> allowed while waiting
+//   Every link failure is the same 404 {code: 'invite_unavailable'}.
 // Bearer only, no cookies. One sign-in (ADR 0008): the token lives in this
 // origin's localStorage and renews without the signer until Continuum's
 // absolute cap (7 days by default); only then is a new challenge signed.
@@ -79,6 +85,10 @@ export class ContinuumError extends Error {
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 const TOKEN_RE = /^m[12]\.[A-Za-z0-9._-]{10,512}$/;
+const PENDING_RE = /^j1\.[A-Za-z0-9._-]{10,512}$/;
+export const INVITE_ID_RE = /^[A-Za-z0-9_-]{16}$/;
+export const INVITE_SECRET_RE = /^[A-Za-z0-9_-]{22}$/;
+const NAME_MAX = 80;
 /** Renew once less than this share of the token's life is left (ADR 0008). */
 export const RENEW_AT_REMAINING = 0.25;
 const MAX_PROJECTS = 200;
@@ -88,6 +98,63 @@ const MAX_AVATAR_BYTES = 512 * 1024;
 const GROUP_ID_RE = /^[A-Za-z0-9_.:-]{1,128}$/;
 
 const sessionKey = (origin: string) => `torii.continuumSession:${origin}`;
+const pendingKey = (origin: string) => `torii.continuumPending:${origin}`;
+
+/** A link someone sent us: `/chat/join/<id>#<secret>` (ADR 0009). */
+export interface InviteLink {
+	id: string;
+	secret: string;
+}
+
+/** What the link says before sign-in: display names only. */
+export interface InvitePeek {
+	kind: 'open' | 'named';
+	projectName: string;
+	ownerName: string;
+}
+
+/** Waiting for the owner to let us in (open link, ADR 0009). */
+export interface PendingInvite {
+	token: string;
+	expiresAt: number;
+	pubkey: string;
+	projectName: string;
+	ownerName: string;
+}
+
+export type ClaimResult = { state: 'in'; slug: string | null } | { state: 'waiting' };
+export type WaitState = 'in' | 'waiting' | 'refused' | 'offline';
+
+export const INVITE_GONE = 'This invite no longer works. Ask for a new one.';
+
+const cleanName = (v: unknown) =>
+	typeof v === 'string'
+		? v
+				.replace(/[\u0000-\u001f\u007f]/g, '')
+				.trim()
+				.slice(0, NAME_MAX)
+		: '';
+
+/**
+ * Read a link from the address bar: the id from the path, the secret from the
+ * fragment (never sent to any server). Null when it is not an invite link.
+ */
+export function parseInviteLink(pathname: string, hash: string): InviteLink | null {
+	const m = pathname.match(/^\/chat\/join\/([A-Za-z0-9_-]{16})\/?$/);
+	const secret = hash.replace(/^#/, '');
+	if (!m || !INVITE_SECRET_RE.test(secret)) return null;
+	return { id: m[1], secret };
+}
+
+export function parseInvitePeek(raw: unknown): InvitePeek | null {
+	const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+	if (r.kind !== 'open' && r.kind !== 'named') return null;
+	return {
+		kind: r.kind,
+		projectName: cleanName(r.project_name),
+		ownerName: cleanName(r.owner_name)
+	};
+}
 
 async function readJson(res: Response, max = MAX_BODY): Promise<unknown> {
 	const text = await res.text();
@@ -229,6 +296,8 @@ export function acceptsHandoff(
 export class ContinuumClient {
 	private session: ContinuumSession | null = null;
 
+	private pending: PendingInvite | null = null;
+
 	constructor(
 		readonly origin: string,
 		private readonly deps: {
@@ -238,6 +307,42 @@ export class ContinuumClient {
 		}
 	) {
 		this.session = this.load();
+		this.pending = this.loadPending();
+	}
+
+	private loadPending(): PendingInvite | null {
+		let p: PendingInvite | null = null;
+		try {
+			const raw = this.deps.storage.getItem(pendingKey(this.origin));
+			p = raw ? (JSON.parse(raw) as PendingInvite) : null;
+		} catch {
+			p = null;
+		}
+		const ok =
+			p &&
+			typeof p.token === 'string' &&
+			PENDING_RE.test(p.token) &&
+			typeof p.pubkey === 'string' &&
+			HEX64.test(p.pubkey) &&
+			Number.isFinite(p.expiresAt) &&
+			p.expiresAt > this.now();
+		if (!ok) {
+			this.deps.storage.removeItem(pendingKey(this.origin));
+			return null;
+		}
+		return { ...p!, projectName: cleanName(p!.projectName), ownerName: cleanName(p!.ownerName) };
+	}
+
+	private clearPending(): void {
+		this.pending = null;
+		this.deps.storage.removeItem(pendingKey(this.origin));
+	}
+
+	/** Waiting on an open invite for this key (ADR 0009). */
+	pendingFor(pubkey: string): PendingInvite | null {
+		return this.pending && this.pending.pubkey === pubkey && this.pending.expiresAt > this.now()
+			? this.pending
+			: null;
 	}
 
 	private now() {
@@ -289,6 +394,7 @@ export class ContinuumClient {
 	/** A different key signed in: drop the old key's session (ADR 0008). */
 	keepOnlyFor(pubkey: string): void {
 		if (this.session && this.session.pubkey !== pubkey) this.signOut();
+		if (this.pending && this.pending.pubkey !== pubkey) this.clearPending();
 	}
 
 	/** The live session token (node file server uploads, ADR 0007), or null. */
@@ -364,9 +470,104 @@ export class ContinuumClient {
 	signOut(): void {
 		this.session = null;
 		this.deps.storage.removeItem(sessionKey(this.origin));
+		this.clearPending();
 	}
 
-	async signIn(signer: SignerLike, pubkey: string): Promise<void> {
+	/** Who sent the link and for what; null when the link no longer works. */
+	async peekInvite(link: InviteLink): Promise<InvitePeek | null> {
+		try {
+			return parseInvitePeek(
+				await call(this.deps.fetch, `${this.origin}/api/team/invite/peek`, {
+					method: 'POST',
+					body: JSON.stringify({ id: link.id, secret: link.secret })
+				})
+			);
+		} catch (error) {
+			if (error instanceof ContinuumError && error.status === 404) return null;
+			throw error;
+		}
+	}
+
+	/**
+	 * Use a link: the same one signer prompt as sign-in. A named link (or one
+	 * for a project we are already on) signs straight in; an open link leaves
+	 * us waiting for the owner. A dead link throws code 'invite_unavailable'.
+	 */
+	async claimInvite(
+		signer: SignerLike,
+		pubkey: string,
+		link: InviteLink,
+		names: { projectName: string; ownerName: string }
+	): Promise<ClaimResult> {
+		const event = await this.signChallenge(signer, pubkey);
+		const res = (await call(this.deps.fetch, `${this.origin}/api/team/invite/claim`, {
+			method: 'POST',
+			body: JSON.stringify({ id: link.id, secret: link.secret, event })
+		})) as { token?: unknown; expires_at?: unknown; pending?: unknown; slug?: unknown };
+		if (res?.pending === true) {
+			if (typeof res.token !== 'string' || !PENDING_RE.test(res.token)) {
+				throw new ContinuumError(0, null, 'bad token from Continuum');
+			}
+			const exp =
+				typeof res.expires_at === 'number' && res.expires_at > this.now()
+					? res.expires_at
+					: this.now() + 86400;
+			this.pending = {
+				token: res.token,
+				expiresAt: exp,
+				pubkey,
+				projectName: cleanName(names.projectName),
+				ownerName: cleanName(names.ownerName)
+			};
+			this.deps.storage.setItem(pendingKey(this.origin), JSON.stringify(this.pending));
+			return { state: 'waiting' };
+		}
+		this.store(res?.token, res?.expires_at, pubkey);
+		this.clearPending();
+		return {
+			state: 'in',
+			slug: typeof res?.slug === 'string' && SLUG_RE.test(res.slug) ? res.slug : null
+		};
+	}
+
+	/**
+	 * While waiting: ask whether the owner let us in. No signer: the waiting
+	 * token is swapped for a member session once the roster lists us.
+	 */
+	async checkWaiting(): Promise<WaitState> {
+		const p = this.pending;
+		if (!p) return 'refused';
+		try {
+			const res = (await call(this.deps.fetch, `${this.origin}/api/team/auth/refresh`, {
+				method: 'POST',
+				token: p.token
+			})) as { token?: unknown; expires_at?: unknown };
+			if (this.pending !== p) return this.session ? 'in' : 'refused';
+			this.store(res?.token, res?.expires_at, p.pubkey);
+			this.clearPending();
+			return 'in';
+		} catch (error) {
+			if (error instanceof ContinuumError && error.status === 409) return 'waiting';
+			if (error instanceof ContinuumError && (error.status === 401 || error.status === 403)) {
+				if (this.pending === p) this.clearPending();
+				return 'refused';
+			}
+			return 'offline';
+		}
+	}
+
+	/** While waiting: our key packages are on the node coordinator (ADR 0006). */
+	async markReadyWaiting(): Promise<void> {
+		if (!this.pending) throw new ContinuumError(401, null, 'not waiting');
+		await call(this.deps.fetch, `${this.origin}/api/team/ready`, {
+			method: 'POST',
+			body: '{}',
+			token: this.pending.token
+		});
+	}
+
+	/** The one place the user's signer signs for Continuum (kind 22242). */
+	private async signChallenge(signer: SignerLike, pubkey: string): Promise<NostrEvent> {
 		const ch = (await call(this.deps.fetch, `${this.origin}/api/auth/challenge`, {
 			method: 'POST',
 			body: '{}'
@@ -381,6 +582,11 @@ export class ContinuumClient {
 			content: ch.challenge
 		});
 		if (event.pubkey !== pubkey) throw new ContinuumError(0, null, 'signer returned another key');
+		return event;
+	}
+
+	async signIn(signer: SignerLike, pubkey: string): Promise<void> {
+		const event = await this.signChallenge(signer, pubkey);
 		const res = (await call(this.deps.fetch, `${this.origin}/api/team/auth/verify`, {
 			method: 'POST',
 			body: JSON.stringify({ event })

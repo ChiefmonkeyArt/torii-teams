@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import {
 	ContinuumClient,
 	ContinuumError,
+	INVITE_GONE,
 	acceptsHandoff,
+	parseInviteLink,
+	parseInvitePeek,
 	matchProjectGroup,
 	parseRosterOwner,
 	parseRoster,
@@ -453,5 +456,124 @@ describe('session handoff checks (ADR 0008)', () => {
 			acceptsHandoff({ ...ok, data: { type: 'torii:roster-changed' } } as never, parent, ORIGIN)
 		).toBe(false);
 		expect(acceptsHandoff({ ...ok, data: null } as never, parent, ORIGIN)).toBe(false);
+	});
+});
+
+describe('invite links (ADR 0009)', () => {
+	const ID = 'A'.repeat(16);
+	const SECRET = 'S'.repeat(22);
+	const LINK = { id: ID, secret: SECRET };
+	const J1 = 'j1.1900000000.1900604800.' + ME + '.' + ID + '.' + 'f'.repeat(64);
+	const M2 = 'm2.1900000000.1900000000.1900086400.' + ME + '.' + 'f'.repeat(64);
+	const PKEY = `torii.continuumPending:${ORIGIN}`;
+	const names = { projectName: 'Studio', ownerName: 'Olive' };
+	const now = () => 1_900_000_000;
+
+	it('reads the id from the path and the secret from the fragment only', () => {
+		expect(parseInviteLink(`/chat/join/${ID}`, `#${SECRET}`)).toEqual(LINK);
+		expect(parseInviteLink(`/chat/join/${ID}/`, `#${SECRET}`)).toEqual(LINK);
+		expect(parseInviteLink(`/chat/join/${ID}`, '')).toBeNull();
+		expect(parseInviteLink(`/chat/join/${ID}`, '#short')).toBeNull();
+		expect(parseInviteLink('/chat/join/short', `#${SECRET}`)).toBeNull();
+		expect(parseInviteLink(`/chat/p/${ID}`, `#${SECRET}`)).toBeNull();
+	});
+
+	it('peek keeps names only, cleaned; a dead link is null', async () => {
+		expect(
+			parseInvitePeek({
+				kind: 'open',
+				project_name: 'Stu\u0000dio',
+				owner_name: 'x'.repeat(200),
+				avatar: 'u'
+			})
+		).toEqual({ kind: 'open', projectName: 'Studio', ownerName: 'x'.repeat(80) });
+		expect(parseInvitePeek({ kind: 'admin' })).toBeNull();
+		const f = server({
+			'/api/team/invite/peek': () => json(404, { code: 'invite_unavailable' })
+		});
+		const c = new ContinuumClient(ORIGIN, { fetch: f as never, storage: memStore(), now });
+		expect(await c.peekInvite(LINK)).toBeNull();
+		const body = JSON.parse(String(f.mock.calls[0][1]?.body));
+		expect(body).toEqual({ id: ID, secret: SECRET });
+	});
+
+	it('open link: one signature, then waiting; let in swaps j1 for a member session without the signer', async () => {
+		let state = 'pending';
+		const f = server({
+			'/api/team/invite/claim': () =>
+				json(200, { pending: true, token: J1, expires_at: 1_900_604_800 }),
+			'/api/team/ready': () => json(200, { ok: true }),
+			'/api/team/auth/refresh': () =>
+				state === 'pending'
+					? json(409, { code: 'pending' })
+					: json(200, { token: M2, expires_at: 1_900_086_400 })
+		});
+		const store = memStore();
+		const c = new ContinuumClient(ORIGIN, { fetch: f as never, storage: store, now });
+		const s = signer();
+		expect(await c.claimInvite(s, ME, LINK, names)).toEqual({ state: 'waiting' });
+		expect(s.signEvent).toHaveBeenCalledTimes(1);
+		expect(c.hasSession(ME)).toBe(false);
+		expect(c.pendingFor(ME)).toMatchObject({ projectName: 'Studio', ownerName: 'Olive' });
+		expect(store.getItem(PKEY)).not.toContain(SECRET);
+		// A reload keeps waiting.
+		const again = new ContinuumClient(ORIGIN, { fetch: f as never, storage: store, now });
+		expect(again.pendingFor(ME)?.token).toBe(J1);
+		expect(await again.checkWaiting()).toBe('waiting');
+		await again.markReadyWaiting();
+		const ready = f.mock.calls.find(([u]) => String(u).endsWith('/api/team/ready'));
+		expect((ready![1]?.headers as Record<string, string>).authorization).toBe(`Bearer ${J1}`);
+		state = 'in';
+		expect(await again.checkWaiting()).toBe('in');
+		expect(again.hasSession(ME)).toBe(true);
+		expect(again.pendingFor(ME)).toBeNull();
+		expect(store.getItem(PKEY)).toBeNull();
+		expect(s.signEvent).toHaveBeenCalledTimes(1);
+	});
+
+	it('refused or revoked clears the wait; offline keeps it', async () => {
+		let reply = () => json(403, { code: 'refused' });
+		const f = server({
+			'/api/team/invite/claim': () =>
+				json(200, { pending: true, token: J1, expires_at: 1_900_604_800 }),
+			'/api/team/auth/refresh': () => reply()
+		});
+		const c = new ContinuumClient(ORIGIN, { fetch: f as never, storage: memStore(), now });
+		await c.claimInvite(signer(), ME, LINK, names);
+		reply = () => {
+			throw new TypeError('offline');
+		};
+		expect(await c.checkWaiting()).toBe('offline');
+		expect(c.pendingFor(ME)).not.toBeNull();
+		reply = () => json(403, { code: 'refused' });
+		expect(await c.checkWaiting()).toBe('refused');
+		expect(c.pendingFor(ME)).toBeNull();
+		expect(INVITE_GONE).toBe('This invite no longer works. Ask for a new one.');
+	});
+
+	it('named link signs straight in; a dead link surfaces invite_unavailable', async () => {
+		let reply = () => json(200, { token: M2, expires_at: 1_900_086_400, slug: 'site' });
+		const f = server({ '/api/team/invite/claim': () => reply() });
+		const c = new ContinuumClient(ORIGIN, { fetch: f as never, storage: memStore(), now });
+		expect(await c.claimInvite(signer(), ME, LINK, names)).toEqual({ state: 'in', slug: 'site' });
+		expect(c.hasSession(ME)).toBe(true);
+		reply = () => json(404, { code: 'invite_unavailable' });
+		await expect(c.claimInvite(signer(), ME, LINK, names)).rejects.toMatchObject({
+			status: 404,
+			code: 'invite_unavailable'
+		});
+	});
+
+	it('signing out or another key drops the wait', async () => {
+		const f = server({
+			'/api/team/invite/claim': () =>
+				json(200, { pending: true, token: J1, expires_at: 1_900_604_800 })
+		});
+		const store = memStore();
+		const c = new ContinuumClient(ORIGIN, { fetch: f as never, storage: store, now });
+		await c.claimInvite(signer(), ME, LINK, names);
+		c.keepOnlyFor(OWNER);
+		expect(c.pendingFor(ME)).toBeNull();
+		expect(store.getItem(PKEY)).toBeNull();
 	});
 });

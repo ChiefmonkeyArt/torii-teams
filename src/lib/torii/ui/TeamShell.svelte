@@ -13,12 +13,14 @@
 	import TeamProjectList from './TeamProjectList.svelte';
 	import TeamSignIn from './TeamSignIn.svelte';
 	import {
+		checkInvite,
 		continuumClient,
 		hasContinuumSession,
 		projectChannels,
 		refreshProjectChannels,
 		renewContinuumSession,
 		reportReady,
+		reportReadyWaiting,
 		requestSessionHandoff,
 		signInToContinuum,
 		signOutOfContinuum
@@ -76,11 +78,16 @@
 	};
 	onMount(() => {
 		const tick = () => {
-			if (document.visibilityState === 'visible') void refreshThenSync();
+			if (document.visibilityState !== 'visible') return;
+			if (projectChannels.status === 'waiting') void checkInvite();
+			else void refreshThenSync();
 		};
 		// Renewal is network only (no signer), so focus is safe here (ADR 0008).
+		// So is asking whether the owner let us in (ADR 0009).
 		const renew = () => {
-			if (document.visibilityState === 'visible') void renewContinuumSession();
+			if (document.visibilityState !== 'visible') return;
+			if (projectChannels.status === 'waiting') void checkInvite();
+			else void renewContinuumSession();
 		};
 		window.addEventListener('focus', renew);
 		document.addEventListener('visibilitychange', renew);
@@ -118,6 +125,11 @@
 		if (reach !== 'ready' || projectChannels.status !== 'ready' || projectChannels.ready !== false)
 			return;
 		void untrack(() => reportReady());
+	});
+	// Waiting on an invite: say we can be added, so the owner's "Let in" is enough.
+	$effect(() => {
+		if (reach !== 'ready' || projectChannels.status !== 'waiting') return;
+		void untrack(() => reportReadyWaiting());
 	});
 	let fixing = $state(false);
 	let fixError = $state('');
