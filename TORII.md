@@ -52,6 +52,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | Membership signals: ready/added, quiet 60 s roster poll, profiles via Continuum, ADR 0006 | `0.6.1-torii.6`                                             |
 | Files on the node's own server (`/files/`), Continuum-session uploads, ADR 0007           | `0.6.1-torii.7`                                             |
 | One sign-in, one Allow: consent card, lasting member session, owner handoff, ADR 0008     | `0.6.1-torii.8`                                             |
+| Invite links: opaque `/chat/join/<id>#<secret>`, named and open invites, ADR 0009         | Proposed; targets `0.6.1-torii.9`                           |
 
 ### Using actions (J1 slice 2)
 
@@ -119,7 +120,8 @@ Released: `0.6.1-torii.1` (d2a2f22, Suite v0.9.29-alpha), `0.6.1-torii.2`
 (590d204, v0.9.36-alpha; membership signals, ADR 0006), `0.6.1-torii.7`
 (1dd4ce4, v0.9.37-alpha; files on the node's own server,
 [ADR 0007](docs/torii/adr-0007-node-files.md)) and `0.6.1-torii.8` (one
-sign-in, [ADR 0008](docs/torii/adr-0008-one-sign-in.md), this PR). A Torii tag runs
+sign-in, 05c9502, v0.9.38-alpha,
+[ADR 0008](docs/torii/adr-0008-one-sign-in.md)). A Torii tag runs
 `.github/workflows/torii-release.yml`, which publishes a checksummed web build
 for the Suite installer.
 
