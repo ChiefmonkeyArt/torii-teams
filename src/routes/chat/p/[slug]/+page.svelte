@@ -11,6 +11,7 @@
 	import { rosterSync, startProjectChat } from '$lib/torii/rosterSync.svelte';
 	import { waitingMembers } from '$lib/torii/rosterPlan';
 	import TeamChatHeader from '$lib/torii/ui/TeamChatHeader.svelte';
+	import ShisaWelcome from '$lib/torii/ui/ShisaWelcome.svelte';
 
 	let { params } = $props();
 	const slug = $derived(params.slug);
@@ -71,8 +72,8 @@
 			{:else if isOwner}
 				<div class="max-w-xs space-y-3">
 					<p>
-						Start the chat for this project. Everyone on the roster is added as soon as they sign
-						in.
+						Start the chat for this project. Everyone on the member list is added as soon as they
+						sign in.
 					</p>
 					<p class="text-xs">Already started it on another device? Open it there instead.</p>
 					{#if rosterSync.error[slug]}<p class="text-xs">
@@ -89,7 +90,14 @@
 			{:else if added}
 				You've been added. Joining the chat…
 			{:else}
-				Waiting for the project owner to add you. Keep this page open or come back later.
+				<div class="max-w-xs space-y-3" data-testid="joined-waiting">
+					{#if projectChannels.welcome}<ShisaWelcome lively size={180} />{/if}
+					<p class="font-medium text-foreground">You're in.</p>
+					<p>
+						{projectChannels.welcome?.ownerName || 'The project owner'} adds you to the chat the next
+						time their Continuum is open. This page updates by itself.
+					</p>
+				</div>
 			{/if}
 		</div>
 	</div>

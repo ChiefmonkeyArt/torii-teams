@@ -41,6 +41,10 @@ import {
 
 /** How often the page asks whether a paced pass is due (no signer call). */
 export const SYNC_INTERVAL_MS = 60 * 1000;
+/** While waiting on an ask-first invite (ADR 0010); 3 a minute stays far
+ * under Continuum's 20-a-minute refresh limit, even for a few people behind
+ * one address. */
+export const WAIT_CHECK_MS = 20 * 1000;
 
 /** Per project: roster members who cannot be added until they sign in. */
 export const rosterSync = $state<{

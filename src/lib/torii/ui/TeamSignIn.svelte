@@ -5,12 +5,15 @@
 	// so there are no surprise prompts later. An invite link (ADR 0009) only
 	// changes the words: the same one signature claims it, and while the owner
 	// decides this card waits without any button that could prompt the signer.
+	// ADR 0010: an invite shows the shisa pair (animated for a personal link)
+	// and says plainly whether you go straight in or wait to be let in.
 	import { onMount } from 'svelte';
 	import AccountLoginDialog from '$lib/components/AccountLoginDialog.svelte';
 	import { activeAccount } from '$lib/services/accountManager.svelte';
 	import { INVITE_GONE } from '../continuumApi';
 	import { projectChannels, signInToContinuum } from '../projectChannels.svelte';
 	import { detectSigner, signerHint, type SignerKind } from '../signerPermissions';
+	import ShisaWelcome from './ShisaWelcome.svelte';
 
 	let { embedded = false }: { embedded?: boolean } = $props();
 
@@ -29,11 +32,16 @@
 
 <div class="flex h-full items-center justify-center px-6">
 	<div class="w-full max-w-xs space-y-4 text-center" data-testid="team-consent">
-		{#if !embedded}<h1 class="text-xl font-semibold">Teams</h1>{/if}
+		{#if invite && projectChannels.status !== 'error'}
+			<ShisaWelcome lively={Boolean(invite.personal) || projectChannels.status === 'waiting'} />
+		{:else if !embedded}<h1 class="text-xl font-semibold">Teams</h1>{/if}
 		{#if projectChannels.status === 'waiting'}
 			<div class="space-y-1" data-testid="invite-waiting">
 				<p class="font-medium">Asked {asked} to let you in to {project}.</p>
-				<p class="text-sm text-muted-foreground">The chat opens here when they do.</p>
+				<p class="text-sm text-muted-foreground">
+					This page opens the chat by itself when they do. You can close it and come back to this
+					link later.
+				</p>
 			</div>
 		{:else if projectChannels.status === 'error' && projectChannels.error === INVITE_GONE}
 			<!-- A dead or declined link: one plain line, nothing that prompts the signer.
@@ -45,6 +53,11 @@
 			<div class="space-y-1">
 				{#if invite}
 					<p class="font-medium" data-testid="invite-from">{owner} invited you to {project}</p>
+					<p class="text-sm text-muted-foreground" data-testid="invite-how">
+						{invite.straightIn
+							? 'Sign in and you are straight in.'
+							: `Sign in, then ${asked} lets you in.`}
+					</p>
 				{:else}
 					<p class="font-medium">Sign in to your team</p>
 				{/if}

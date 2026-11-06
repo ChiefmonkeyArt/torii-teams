@@ -109,6 +109,8 @@ export interface InviteLink {
 /** What the link says before sign-in: display names only. */
 export interface InvitePeek {
 	kind: 'open' | 'named';
+	/** Named links and "let them straight in" group links (ADR 0010). */
+	straightIn: boolean;
 	projectName: string;
 	ownerName: string;
 }
@@ -152,6 +154,8 @@ export function parseInvitePeek(raw: unknown): InvitePeek | null {
 	if (r.kind !== 'open' && r.kind !== 'named') return null;
 	return {
 		kind: r.kind,
+		// An older Continuum sends no flag: only a named link was straight in.
+		straightIn: typeof r.straight_in === 'boolean' ? r.straight_in : r.kind === 'named',
 		projectName: cleanName(r.project_name),
 		ownerName: cleanName(r.owner_name)
 	};
