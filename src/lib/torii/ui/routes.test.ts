@@ -14,6 +14,13 @@ describe('toriiRedirect', () => {
 		expect(toriiRedirect({ ...base, pathname: '/why', search: '?embed=1' })).toBe('/chat?embed=1');
 		expect(toriiRedirect({ ...base, pathname: '/chat/news' })).toBe('/chat');
 		expect(toriiRedirect({ ...base, pathname: '/chat/p/Bad_Slug' })).toBe('/chat');
+		// An invite link is read at startup, then sent home even while loading (ADR 0009).
+		expect(toriiRedirect({ ...base, pathname: '/chat/join/AAAAAAAAAAAAAAAA', pending: true })).toBe(
+			'/chat'
+		);
+		expect(toriiRedirect({ ...base, pathname: '/chat/join/x', search: '?embed=1' })).toBe(
+			'/chat?embed=1'
+		);
 	});
 
 	it('maps a group link to its project once projects are loaded', () => {

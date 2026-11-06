@@ -1,13 +1,40 @@
 # ADR 0009: Invite links
 
-Date: 2026-11-06. Status: **Proposed** (owner, 2026-11-06: "Write the
-invite-link ADR next"). Target: `0.6.1-torii.9` with a Continuum and a Suite
+Date: 2026-11-06. Status: **Accepted** (owner, 2026-11-06: "Accept ADR 0009
+and implement it for torii.9"); proposed the same day ("Write the
+invite-link ADR next"). Implemented in `0.6.1-torii.9` with Continuum
+`v0.2.198-alpha` and Suite `v0.9.39-alpha`; see "Amendments on acceptance". Target: `0.6.1-torii.9` with a Continuum and a Suite
 release. Builds on ADR 0002 (Teams in Continuum), ADR 0006 (membership
 signals) and ADR 0008 (one sign-in). Continuum owns invites (Continuum
 `docs/adr-team-collaboration.md`, "Decision: access model", 2026-11-04: "the
 access model, invites (2a-3) ... stay in Continuum/Suite. The Teams app ...
 handles invite links"); that document gets a matching addendum in the
 implementing Continuum PR.
+
+## Amendments on acceptance
+
+Implementation changed four details; the rest stands as written below.
+
+1. **One store file.** Invites live in `memory/teams/invites.json` (0600,
+   atomic, expired entries pruned on write) next to the other Teams state,
+   not one file per project.
+2. **Peek returns names only:** `{kind, project_name, owner_name}`. No avatar:
+   fetching it would be a second request keyed to a valid link, and the name
+   is enough to recognise the sender.
+3. **Approve after the roster.** "Let in" pushes the person onto the roster,
+   signs it with the owner's signer through the existing
+   `PUT /api/projects/:slug/roster` (one signature), then calls
+   `decide {pubkey, approve: true}`, which refuses (`not_on_roster`) unless the
+   stored signed roster already lists them. The roster stays the only grant
+   and `decide` never carries an event.
+4. **One more owner route:** `GET /api/team/invites/pending` returns waiting
+   counts per project for the "(n waiting)" mark on the Team view picker.
+   Roles are Continuum's roster roles (`maintainer`, `contributor`,
+   `viewer`; default `contributor`).
+
+In Teams the root layout reads `/chat/join/<id>#<secret>` during component
+init, before any request, keeps it in this tab's `sessionStorage` (so a signer
+login or reload keeps it) and rewrites the address bar to `/chat`.
 
 ## Context
 

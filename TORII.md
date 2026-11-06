@@ -52,7 +52,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | Membership signals: ready/added, quiet 60 s roster poll, profiles via Continuum, ADR 0006 | `0.6.1-torii.6`                                             |
 | Files on the node's own server (`/files/`), Continuum-session uploads, ADR 0007           | `0.6.1-torii.7`                                             |
 | One sign-in, one Allow: consent card, lasting member session, owner handoff, ADR 0008     | `0.6.1-torii.8`                                             |
-| Invite links: opaque `/chat/join/<id>#<secret>`, named and open invites, ADR 0009         | Proposed; targets `0.6.1-torii.9`                           |
+| Invite links: opaque `/chat/join/<id>#<secret>`, named and open invites, ADR 0009         | `0.6.1-torii.9`                                             |
 
 ### Using actions (J1 slice 2)
 
@@ -107,6 +107,12 @@ changes; members' clients join automatically
 (`src/lib/torii/ui/`, `rosterPlan.ts`, `rosterSync.svelte.ts`,
 `scripts/torii-brand.mjs`):
 [`docs/torii/adr-0005-torii-ui-on-cordn-engine.md`](docs/torii/adr-0005-torii-ui-on-cordn-engine.md).
+Invite links: the owner copies one in Continuum's Team view and sends it any
+way they like. `/chat/join/<id>#<secret>` keeps the secret in the fragment;
+the app reads it at startup and clears the address bar (`inviteLink.ts`). The
+sign-in card names who invited you, the one signature claims the link, and an
+open link waits ("Asked Olive to let you in") until the owner presses Let in:
+[`docs/torii/adr-0009-invite-links.md`](docs/torii/adr-0009-invite-links.md).
 High priority after the MVP: FIPS on by default across Plebeian, Quest,
 Continuum and the marketplace (an ADR per app).
 
@@ -119,9 +125,11 @@ Released: `0.6.1-torii.1` (d2a2f22, Suite v0.9.29-alpha), `0.6.1-torii.2`
 `0.6.1-torii.5` (05a6c37, v0.9.35-alpha; signer pacing), `0.6.1-torii.6`
 (590d204, v0.9.36-alpha; membership signals, ADR 0006), `0.6.1-torii.7`
 (1dd4ce4, v0.9.37-alpha; files on the node's own server,
-[ADR 0007](docs/torii/adr-0007-node-files.md)) and `0.6.1-torii.8` (one
+[ADR 0007](docs/torii/adr-0007-node-files.md)), `0.6.1-torii.8` (one
 sign-in, 05c9502, v0.9.38-alpha,
-[ADR 0008](docs/torii/adr-0008-one-sign-in.md)). A Torii tag runs
+[ADR 0008](docs/torii/adr-0008-one-sign-in.md)) and `0.6.1-torii.9` (invite
+links, v0.9.39-alpha, Continuum v0.2.198-alpha,
+[ADR 0009](docs/torii/adr-0009-invite-links.md)). A Torii tag runs
 `.github/workflows/torii-release.yml`, which publishes a checksummed web build
 for the Suite installer.
 
