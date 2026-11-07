@@ -578,7 +578,11 @@
 				<IconComponent class="size-3.5 text-muted-foreground/60" />
 			</Marker.Icon>
 			<Marker.Content class="leading-5">
-				{#if message.systemKind === 'member-added'}
+				{#if message.systemKind === 'member-added' && !message.systemCommitter}
+					<!-- No committer: they let themselves in (ADR 0011 external join). -->
+					{@render systemName(systemTargetName)}
+					joined the group
+				{:else if message.systemKind === 'member-added'}
 					{@render systemName(systemCommitterName)}
 					added
 					{@render systemName(systemTargetName)}

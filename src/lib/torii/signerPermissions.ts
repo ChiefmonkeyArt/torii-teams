@@ -10,7 +10,14 @@ export const COORDINATOR_KIND = 25910;
 /** Multi-device tip record (MULTI_DEVICE_TIP_KIND). */
 export const DEVICE_TIP_KIND = 30078;
 
-export const TEAM_SIGNED_KINDS = [CONTINUUM_AUTH_KIND, COORDINATOR_KIND, DEVICE_TIP_KIND] as const;
+/** Binds a newcomer's self-join to their key (ADR 0011). */
+export const JOIN_BINDING_KIND = 27099;
+export const TEAM_SIGNED_KINDS = [
+	CONTINUUM_AUTH_KIND,
+	COORDINATOR_KIND,
+	JOIN_BINDING_KIND,
+	DEVICE_TIP_KIND
+] as const;
 
 export const TEAM_SIGNER_PERMISSIONS: string[] = [
 	'get_public_key',

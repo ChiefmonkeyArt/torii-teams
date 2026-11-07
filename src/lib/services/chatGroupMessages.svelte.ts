@@ -14,6 +14,7 @@ import {
 	type ProposalWithSender
 } from 'ts-mls';
 import { getEventHash, type UnsignedEvent } from 'nostr-tools';
+import { gateExternalJoin, openJoinSeal } from '$lib/torii/externalJoin';
 
 import { findImetaTag, deriveMediaKey } from '$lib/services/chatMediaCrypto';
 import {
@@ -222,7 +223,7 @@ async function processMessageBase64(params: {
 		context: { cipherSuite, authService: unsafeTestingAuthenticationService },
 		state: params.state,
 		message: decoded[0],
-		callback: params.callback
+		callback: gateExternalJoin(params.state, decoded[0], params.callback)
 	});
 }
 
@@ -902,7 +903,11 @@ export async function ingestChatGroupMessages(params: {
 			// look like this (report-05 "disappearing messages"). Open with a
 			// retained former-epoch key before calling it unopenable.
 			const former = decryptWithFormerPayloadKeys(group, message.opaqueMessageBase64);
-			if (former === null) {
+			// A newcomer joining from the node's GroupInfo (ADR 0011) seals with
+			// the join key; only an external commit may arrive that way.
+			const joined =
+				former === null ? openJoinSeal(group.state, message.opaqueMessageBase64) : null;
+			if (former === null && joined === null) {
 				const detail = errorMessage(error);
 				// Multi-device (§10.6): the seal hides the epoch, so a device behind a
 				// sibling Commit cannot distinguish "ahead of my epoch" from "corrupt"
@@ -939,8 +944,8 @@ export async function ingestChatGroupMessages(params: {
 				group.lastCursor = Math.max(group.lastCursor, message.cursor);
 				continue;
 			}
-			processableBase64 = former;
-			formerEpoch = true;
+			processableBase64 = (former ?? joined) as string;
+			formerEpoch = former !== null;
 		}
 
 		let processed: Awaited<ReturnType<typeof processMessageBase64>>;

@@ -5,9 +5,19 @@ import {
 	clientStateDecoder,
 	clientStateEncoder,
 	encode,
+	generateKeyPackage,
 	type ClientState,
 	type KeyPackage
 } from 'ts-mls';
+import type { NostrEvent } from 'nostr-tools';
+import { bytesToHex } from '@noble/hashes/utils.js';
+import {
+	createExternalJoin,
+	decodeGroupInfoBase64,
+	exportGroupInfoBase64,
+	groupIdOf,
+	sealJoinCommit
+} from '$lib/torii/externalJoin';
 import { markCoordinatorUsed } from '$lib/services/chatCoordinators.svelte';
 import {
 	onGroupStateAdvance,
@@ -18,7 +28,10 @@ import {
 import { createChatKeyPackage, pruneZombieKeyPackages } from '$lib/services/chatKeyPackages.svelte';
 import {
 	addMembersToGroup,
+	createCordnMetadataCapabilities,
+	createCredential,
 	createSelfUpdateCommit,
+	getCordnCipherSuite,
 	encodeWelcomeBase64,
 	findMemberLeafIndexByStablePubkey,
 	getCordnGroupMetadataExtension,
@@ -1727,6 +1740,84 @@ export async function acceptChatWelcome(input: { welcomeId: string }): Promise<S
 	onGroupStateAdvance(group.id);
 
 	return group;
+}
+
+/**
+ * Let ourselves into a chat from the node's GroupInfo (ADR 0011): an MLS
+ * external commit carrying the owner-signed proof, sealed with the join key.
+ * Members accept it with nobody online but them. The caller confirms the join
+ * landed (first commit per epoch wins) before trusting it, and drops the
+ * group with `deleteChatGroup` if it did not.
+ */
+export async function joinChatGroupExternal(input: {
+	groupInfoBase64: string;
+	allow: NostrEvent;
+	coordinatorKey: string;
+}): Promise<{ group: StoredChatGroup; transcriptHash: string }> {
+	const account = requireActiveAccount('You must be logged in to join a chat');
+	const me = normalizePubKey(account.pubkey);
+	const groupInfo = decodeGroupInfoBase64(input.groupInfoBase64);
+	if (!groupInfo) throw new Error('The join card could not be read');
+	const gid = groupIdOf(groupInfo);
+	if (getChatGroup(gid)) throw new Error('Already in this chat');
+	const coordinatorKey = normalizePubKey(input.coordinatorKey);
+	const cipherSuite = await getCordnCipherSuite();
+	const kp = await generateKeyPackage({
+		credential: createCredential(me),
+		capabilities: createCordnMetadataCapabilities(),
+		cipherSuite
+	});
+	const { state, commitBase64 } = await createExternalJoin({
+		groupInfo,
+		keyPackage: kp.publicPackage,
+		privateKeys: kp.privatePackage,
+		allow: input.allow,
+		sign: (template) => account.signer.signEvent(template)
+	});
+	const posted = await withCoordinatorClientRetry(account, coordinatorKey, (client) =>
+		client.PostGroupMessage({ gid, msg_64: sealJoinCommit(groupInfo.groupContext, commitBase64) })
+	);
+	const group = buildStoredChatGroup({
+		id: getProtocolGroupId(state),
+		coordinatorKey,
+		stateBase64: encodeState(state),
+		metadata: toPersistedGroupMetadata(getCordnGroupMetadataExtension(state)),
+		joinEpoch: state.groupContext.epoch
+	});
+	group.ownerPubkey = me;
+	// Our own commit is at `posted.cursor`; read from just after it.
+	group.fetchCursor = posted.cursor;
+	group.lastCursor = posted.cursor;
+	group.snapshots = [
+		{
+			groupId: group.id,
+			status: 'healthy',
+			epoch: state.groupContext.epoch.toString(),
+			cursor: posted.cursor,
+			createdAt: Date.now(),
+			stateBase64: group.stateBase64
+		}
+	];
+	persistGroup(group);
+	markCoordinatorUsed(coordinatorKey);
+	return { group, transcriptHash: bytesToHex(state.groupContext.confirmedTranscriptHash) };
+}
+
+/** Where a chat stands, for the join card and for confirming a join. */
+export function chatGroupEpochFacts(
+	groupId: string
+): { epoch: bigint; transcriptHash: string } | null {
+	const group = getChatGroup(groupId);
+	if (!group) return null;
+	const ctx = decodeStoredGroupState(group).groupContext;
+	return { epoch: ctx.epoch, transcriptHash: bytesToHex(ctx.confirmedTranscriptHash) };
+}
+
+/** The GroupInfo a member uploads so newcomers can join (ADR 0011). */
+export async function exportChatGroupInfo(groupId: string): Promise<string | null> {
+	const group = getChatGroup(groupId);
+	if (!group) return null;
+	return exportGroupInfoBase64(decodeStoredGroupState(group));
 }
 
 export async function listCoordinatorAvailableKeyPackages(

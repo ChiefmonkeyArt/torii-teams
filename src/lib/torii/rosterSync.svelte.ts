@@ -7,11 +7,19 @@
 
 import {
 	acceptChatWelcome,
+	chatGroupEpochFacts,
 	createChatGroup,
+	deleteChatGroup,
+	exportChatGroupInfo,
+	getChatGroup,
 	inviteChatGroupMembers,
+	joinChatGroupExternal,
 	listCoordinatorAvailableKeyPackages,
-	removeChatGroupMember
+	removeChatGroupMember,
+	updateChatGroupMetadata
 } from '$lib/services/chatGroups.svelte';
+import { readFloor, withFloor } from './externalJoin';
+import { JoinWhileAway, type SavedPending } from './joinWhileAway';
 import {
 	listWelcomeNotifications,
 	clearWelcomeSubmitting,
@@ -69,6 +77,97 @@ let pace = PACE_MIN_MS;
 /** Set by a pass that called the coordinator / changed membership. */
 let touched = false;
 let progressed = false;
+
+// ADR 0011: members keep the join card current; newcomers let themselves in.
+const PENDING_KEY = 'torii.joinPending';
+function loadPending(): Record<string, SavedPending> {
+	try {
+		return JSON.parse(globalThis.localStorage?.getItem(PENDING_KEY) ?? '{}') ?? {};
+	} catch {
+		return {};
+	}
+}
+const joins = new JoinWhileAway(
+	{
+		card: async (slug) => (await continuumClient()?.joinCard(slug)) ?? null,
+		put: async (slug, card) => (await continuumClient()?.putJoinCard(slug, card)) ?? false,
+		exportInfo: exportChatGroupInfo,
+		facts: chatGroupEpochFacts,
+		join: async (input) => {
+			const coordinatorKey = normalizePubKey(projectChannels.coordinator);
+			if (!coordinatorKey) throw new Error('No coordinator');
+			const { group, transcriptHash } = await joinChatGroupExternal({ ...input, coordinatorKey });
+			const facts = chatGroupEpochFacts(group.id);
+			if (!facts) throw new Error('Join not stored');
+			return { groupId: group.id, epoch: facts.epoch, transcriptHash };
+		},
+		drop: deleteChatGroup,
+		now: () => Date.now(),
+		remember: (pending) => {
+			try {
+				globalThis.localStorage?.setItem(PENDING_KEY, JSON.stringify(pending));
+			} catch {
+				// Private mode: the join is still checked this session.
+			}
+		}
+	},
+	loadPending()
+);
+
+/** True while our self-join to this project's chat awaits confirmation. */
+export function joinPending(slug: string): boolean {
+	return joins.isPending(slug);
+}
+
+/**
+ * Every member: upload the join card when the epoch moved. A newcomer on the
+ * project with no chat yet: let themselves in, then confirm (ADR 0011).
+ * Only with Continuum's signals (they carry the chat id).
+ */
+async function keepJoinCards(me: string): Promise<void> {
+	for (const p of projectChannels.projects) {
+		const slug = p.slug;
+		const teams = projectChannels.teams[slug];
+		const roster = projectChannels.rosters[slug];
+		if (!teams?.chatGroupId || !roster?.includes(me)) continue;
+		try {
+			const group = projectGroup(slug);
+			if (joins.isPending(slug)) {
+				const r = await joins.confirm(slug);
+				if (r === 'lost') progressed = true;
+				if (r === 'confirmed' || r === 'lost') continue;
+			}
+			if (group) {
+				await joins.publish(slug, group.id);
+			} else if (projectChannels.owners[slug] !== me && !teams.added.includes(me)) {
+				const r = await joins.tryJoin(slug, teams.chatGroupId);
+				if (r === 'joined') progressed = true;
+			}
+		} catch (error) {
+			// Best effort: the owner's Welcome remains the fallback.
+			console.warn('[torii/join] join card', slug, message(error));
+		}
+	}
+}
+
+/**
+ * Owner, after removing people: raise the member-list floor to the signed
+ * roster that removed them, so an older list or grant can't let them back
+ * in by themselves (ADR 0011 §4).
+ */
+async function raiseFloor(slug: string, groupId: string): Promise<void> {
+	const signedAt = (await continuumClient()?.roster(slug))?.signedAt ?? 0;
+	const meta = getChatGroup(groupId)?.metadata;
+	if (!signedAt || !meta || readFloor(meta.description) >= signedAt) return;
+	await updateChatGroupMetadata({
+		groupId,
+		name: meta.name ?? slug,
+		description: withFloor(meta.description, signedAt),
+		icon: meta.icon,
+		imageUrl: meta.imageUrl,
+		adminPubkeys: meta.adminPubkeys
+	});
+}
 
 /** The owner asked to start this project's chat; runs a pass now. */
 export function startProjectChat(slug: string): Promise<void> {
@@ -164,6 +263,7 @@ async function syncOwnedWithSignals(slug: string, me: string): Promise<void> {
 		attemptedAt[pk] = Date.now();
 		await removeChatGroupMember({ groupId: group!.id, targetStablePubkey: pk });
 	}
+	if (plan.remove.length) await raiseFloor(slug, group!.id);
 	// Report what the chat holds now (bearer only, no signer).
 	group = projectGroup(slug);
 	if (group) {
@@ -339,6 +439,7 @@ async function syncOnce(force: boolean): Promise<void> {
 			rosterSync.busy[p.slug] = false;
 		}
 	}
+	if (signals) await keepJoinCards(me);
 	if (!signals && (touched || failed)) {
 		lastCoordinatorAt = Date.now();
 		pace = nextPace(pace, progressed && !failed);

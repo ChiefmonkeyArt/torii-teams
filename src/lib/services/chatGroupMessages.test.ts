@@ -52,7 +52,10 @@ vi.mock('$lib/services/chatGroupPayloadCrypto', () => ({
 	decryptGroupPayloadBase64: vi.fn(async ({ encryptedBase64 }: { encryptedBase64: string }) => ({
 		opaqueMessageBase64: encryptedBase64
 	})),
-	encryptGroupPayloadBase64: vi.fn()
+	encryptGroupPayloadBase64: vi.fn(),
+	// ADR 0011 join seal: never opens in these tests.
+	decryptGroupPayloadWithKeyBase64: vi.fn(() => null),
+	encryptGroupPayloadWithKeyBase64: vi.fn()
 }));
 
 // Spec §10.6 rescue + bounded-hold interaction: mock ONLY the two seams the

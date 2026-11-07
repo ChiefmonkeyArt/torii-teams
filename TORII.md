@@ -55,6 +55,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | Invite links: opaque `/chat/join/<id>#<secret>`, named and open invites, ADR 0009         | `0.6.1-torii.9`                                             |
 | Joining that works: straight-in links, one Teams frame, shisa welcome, ADR 0010           | `0.6.1-torii.10`                                            |
 | One-tap thumbs up beside each message, press and hold for the emoji row (ADR 0010)        | `0.6.1-torii.11`                                            |
+| Join while the owner is away: node join card, self-join with owner-signed proof, ADR 0011 | `0.6.1-torii.12` (needs Continuum v0.2.200-alpha)           |
 
 ### Using actions (J1 slice 2)
 
@@ -120,6 +121,12 @@ first (the default) or lets people straight in on an owner-signed grant, and
 the invite screens show the shisa welcome; embedded, Teams hides its own
 account footer and follows Continuum's `torii:navigate`:
 [`docs/torii/adr-0010-joining-that-works.md`](docs/torii/adr-0010-joining-that-works.md).
+Since torii.12 people let in join the chat themselves, with nobody else
+online: members keep a GroupInfo "join card" on Continuum, and the newcomer's
+client makes an MLS external commit carrying the owner-signed roster or
+grant plus a kind `27099` binding; every member checks it the same way
+(`externalJoin.ts`, `joinWhileAway.ts`):
+[`docs/torii/adr-0011-join-while-owner-away.md`](docs/torii/adr-0011-join-while-owner-away.md).
 High priority after the MVP: FIPS on by default across Plebeian, Quest,
 Continuum and the marketplace (an ADR per app).
 
