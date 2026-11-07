@@ -15,6 +15,7 @@ import {
 } from 'ts-mls';
 import { getEventHash, type UnsignedEvent } from 'nostr-tools';
 import { gateExternalJoin, openJoinSeal } from '$lib/torii/externalJoin';
+import { gateMemberRemoval } from '$lib/torii/memberRemoval';
 
 import { findImetaTag, deriveMediaKey } from '$lib/services/chatMediaCrypto';
 import {
@@ -223,7 +224,11 @@ async function processMessageBase64(params: {
 		context: { cipherSuite, authService: unsafeTestingAuthenticationService },
 		state: params.state,
 		message: decoded[0],
-		callback: gateExternalJoin(params.state, decoded[0], params.callback)
+		callback: gateExternalJoin(
+			params.state,
+			decoded[0],
+			gateMemberRemoval(params.state, decoded[0], params.callback)
+		)
 	});
 }
 

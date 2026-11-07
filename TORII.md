@@ -56,6 +56,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | Joining that works: straight-in links, one Teams frame, shisa welcome, ADR 0010           | `0.6.1-torii.10`                                            |
 | One-tap thumbs up beside each message, press and hold for the emoji row (ADR 0010)        | `0.6.1-torii.11`                                            |
 | Join while the owner is away: node join card, self-join with owner-signed proof, ADR 0011 | `0.6.1-torii.12` (needs Continuum v0.2.200-alpha)           |
+| Remove while the owner is away, lighter start-up, gzip on the node, ADR 0012              | `0.6.1-torii.13` (Suite v0.9.43-alpha for gzip)             |
 
 ### Using actions (J1 slice 2)
 
@@ -127,6 +128,13 @@ client makes an MLS external commit carrying the owner-signed roster or
 grant plus a kind `27099` binding; every member checks it the same way
 (`externalJoin.ts`, `joinWhileAway.ts`):
 [`docs/torii/adr-0011-join-while-owner-away.md`](docs/torii/adr-0011-join-while-owner-away.md).
+Since torii.13 any member's Teams removes people the owner took off the list
+while the owner is away: the commit carries the owner's newest signed roster
+and raises the floor, and every member checks it the same way
+(`memberRemoval.ts`). The QR scanner and the camera web components now load
+when used, and the Suite serves the build gzipped (about 1.8 MB to about
+565 KB on first open):
+[`docs/torii/adr-0012-remove-while-owner-away.md`](docs/torii/adr-0012-remove-while-owner-away.md).
 High priority after the MVP: FIPS on by default across Plebeian, Quest,
 Continuum and the marketplace (an ADR per app).
 

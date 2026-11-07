@@ -286,6 +286,44 @@ export interface ProjectRoster {
 	teams: RosterTeams | null;
 	/** `created_at` of the owner-signed roster event (ADR 0011 floor); 0 if none. */
 	signedAt?: number;
+	/** The owner-signed roster event itself, unverified here (ADR 0012 proof;
+	 *  every member's client verifies it). */
+	event?: SignedEventLike;
+}
+
+export interface SignedEventLike {
+	id: string;
+	pubkey: string;
+	created_at: number;
+	kind: number;
+	tags: string[][];
+	content: string;
+	sig: string;
+}
+
+function signedEventOf(ev: unknown, owner: string): SignedEventLike | undefined {
+	const e = ev as Partial<SignedEventLike> | null;
+	if (
+		!e ||
+		e.pubkey !== owner ||
+		typeof e.id !== 'string' ||
+		typeof e.sig !== 'string' ||
+		typeof e.content !== 'string' ||
+		!Number.isSafeInteger(e.created_at) ||
+		!Number.isInteger(e.kind) ||
+		!Array.isArray(e.tags) ||
+		!e.tags.every((t) => Array.isArray(t) && t.every((x) => typeof x === 'string'))
+	)
+		return undefined;
+	return {
+		id: e.id,
+		pubkey: e.pubkey,
+		created_at: e.created_at as number,
+		kind: e.kind as number,
+		tags: e.tags,
+		content: e.content,
+		sig: e.sig
+	};
 }
 
 const hexList = (v: unknown, max = MAX_ROSTER) =>
@@ -324,13 +362,14 @@ export function parseRoster(raw: unknown): ProjectRoster | null {
 	const ev = (raw as { event?: { pubkey?: unknown; created_at?: unknown } | null }).event;
 	const signedAt =
 		ev?.pubkey === owner && Number.isSafeInteger(ev.created_at) ? (ev.created_at as number) : 0;
-	if (!Array.isArray(list)) return { owner, members: null, teams, signedAt };
+	const event = signedEventOf(ev, owner);
+	if (!Array.isArray(list)) return { owner, members: null, teams, signedAt, event };
 	const members = new Set<string>([owner]);
 	for (const m of list.slice(0, MAX_ROSTER)) {
 		const pk = (m as { pubkey?: unknown } | null)?.pubkey;
 		if (typeof pk === 'string' && HEX64.test(pk)) members.add(pk);
 	}
-	return { owner, members: [...members], teams, signedAt };
+	return { owner, members: [...members], teams, signedAt, event };
 }
 
 /** The source and origin checks for a `torii:session` message (pubkey: adopt). */

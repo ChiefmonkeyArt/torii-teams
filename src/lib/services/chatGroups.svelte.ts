@@ -10,6 +10,7 @@ import {
 	type KeyPackage
 } from 'ts-mls';
 import type { NostrEvent } from 'nostr-tools';
+import { memberRemovalCommit } from '$lib/torii/memberRemoval';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import {
 	createExternalJoin,
@@ -2145,15 +2146,20 @@ export function listChatGroupMembers(
 export async function removeChatGroupMember(input: {
 	groupId: string;
 	targetStablePubkey: string;
+	/** Torii ADR 0012: a non-admin member removes with the owner-signed roster
+	 *  that leaves the target out; every member checks it the same way. */
+	proof?: NostrEvent;
 }): Promise<StoredChatGroup> {
 	return runOutboundGroupOperation(input.groupId, async () => {
 		const account = requireActiveAccount('You must be logged in to remove a member');
 		const group = await assertGroupCanPerformOutboundOperation(input.groupId, 'commit');
-		assertCanAdministerGroup({
-			groupId: group.id,
-			metadata: group.metadata,
-			stablePubkey: account.pubkey
-		});
+		if (!input.proof) {
+			assertCanAdministerGroup({
+				groupId: group.id,
+				metadata: group.metadata,
+				stablePubkey: account.pubkey
+			});
+		}
 
 		if (normalizePubKey(input.targetStablePubkey) === normalizePubKey(account.pubkey)) {
 			throw new SelfRemovalNotSupportedError(group.id);
@@ -2168,7 +2174,14 @@ export async function removeChatGroupMember(input: {
 			throw new Error('Member not found in group');
 		}
 
-		const commitResult = await removeMemberFromGroup({ state, removedLeafIndex });
+		const commitResult = await removeMemberFromGroup({
+			state,
+			removedLeafIndex,
+			// Throws rather than post a removal other members would skip.
+			...(input.proof
+				? memberRemovalCommit(state, removedLeafIndex, input.proof, normalizePubKey(account.pubkey))
+				: {})
+		});
 
 		const sealedRemoveCommit = await sealForPosting({
 			state,

@@ -17,7 +17,6 @@
 	import { projectChannels, projectForGroup } from '$lib/torii/projectChannels.svelte';
 	import { toriiRedirect } from '$lib/torii/ui/routes';
 	import { activeGroupId } from '$lib/utils/groupShareLink';
-	import { defineCustomElements } from '@ionic/pwa-elements/loader';
 	import { captureInvite } from '$lib/torii/inviteLink';
 
 	let { children } = $props();
@@ -63,7 +62,8 @@
 		// web `takePhoto` looks up `pwa-camera-modal` via customElements.get(); without this registration it
 		// logs a warning and falls back to a plain file input (which made 'Take Photo' duplicate 'Image' on
 		// web). Harmless no-op on native, where takePhoto uses the real camera intent.
-		defineCustomElements(window);
+		// Imported here, not at the top, so the loader stays out of the first paint.
+		void import('@ionic/pwa-elements/loader').then((m) => m.defineCustomElements(window));
 		void initNativeShell();
 		// Re-apply the stored theme post-hydration (the app.html inline script has
 		// already painted it) and run the one-time default migration.
