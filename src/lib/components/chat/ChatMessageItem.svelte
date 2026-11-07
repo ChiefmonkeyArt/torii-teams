@@ -19,6 +19,7 @@
 		TooltipTrigger
 	} from '$lib/components/ui/tooltip';
 	import ProfileCard from '$lib/components/ProfileCard.svelte';
+	import QuickLike from '$lib/torii/ui/QuickLike.svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import { useProfile } from '$lib/services/useProfile.svelte';
 	import { ensureProfileLoaded } from '$lib/queries/chatProfileQueries';
@@ -251,15 +252,17 @@
 		interactionControlsActive = true;
 	}
 
-	// Torii (ADR 0010): double-click a message to react, so reactions are
-	// found without hunting for the hover button.
-	function openReactionsByDoubleClick(event: MouseEvent) {
-		if (message.deleted || !isStoredEvent || isSystemMessage) return;
-		if (
-			(event.target as Element | null)?.closest?.('a, button, input, textarea, [contenteditable]')
-		)
+	// Torii (ADR 0010): one tap 👍 beside others' messages; press and hold
+	// opens the emoji row (the sheet on touch, the reaction menu with a mouse).
+	const canQuickLike = $derived(!isOwn && !message.deleted && isStoredEvent && !isSystemMessage);
+	const likedByMe = $derived(
+		Boolean(message.reactions?.some((entry) => entry.emoji === '👍' && entry.reactedByMe))
+	);
+	function openReactionRow(touch: boolean) {
+		if (touch) {
+			mobileSheetOpen = true;
 			return;
-		window.getSelection?.()?.removeAllRanges();
+		}
 		interactionControlsActive = true;
 		reactionMenuOpen = true;
 	}
@@ -706,7 +709,6 @@
 				onpointerenter={activateInteractionControls}
 				onfocusin={activateInteractionControls}
 				onpointerleave={maybeDeactivateInteractionControls}
-				ondblclick={openReactionsByDoubleClick}
 			>
 				<div class="relative flex max-w-full min-w-0 flex-col gap-1.5" class:items-end={isOwn}>
 					{#if shouldMountInteractionControls}
@@ -1091,6 +1093,13 @@
 				<div
 					class="flex shrink-0 items-center gap-1 self-end px-1 text-[10px] text-muted-foreground/80 sm:text-[11px]"
 				>
+					{#if canQuickLike}
+						<QuickLike
+							active={likedByMe}
+							onLike={() => toggleReaction('👍')}
+							onHold={openReactionRow}
+						/>
+					{/if}
 					<p>{message.timeLabel}</p>
 					{#if message.actionBadge && !message.deleted}
 						<button

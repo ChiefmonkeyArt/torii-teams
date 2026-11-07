@@ -129,6 +129,13 @@ outside request) and the motion stops for `prefers-reduced-motion`. The
   waiting (network only; 3 a minute, far under Continuum's 20-a-minute
   limit). The account menu's waiting count also refreshes when the tab
   comes back into view.
+- Owner, 2026-11-07 (after the team test), reactions: "1 tap thumbs up
+  long hold emoji row". Replaces the double-click in section 5. Each
+  message from someone else shows a small thumbs up beside its time: one
+  tap or click adds a thumbs up, a second removes it. Press and hold (or
+  right-click) opens the full emoji row; on a phone that is Cordn's action
+  sheet. Your own messages don't show it. Shipped in `0.6.1-torii.11`.
+  Zaps ("1 tap zap") come later under their own ADR.
 
 ## Consequences
 
