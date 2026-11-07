@@ -54,6 +54,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | One sign-in, one Allow: consent card, lasting member session, owner handoff, ADR 0008     | `0.6.1-torii.8`                                             |
 | Invite links: opaque `/chat/join/<id>#<secret>`, named and open invites, ADR 0009         | `0.6.1-torii.9`                                             |
 | Joining that works: straight-in links, one Teams frame, shisa welcome, ADR 0010           | `0.6.1-torii.10`                                            |
+| One-tap thumbs up beside each message, press and hold for the emoji row (ADR 0010)        | `0.6.1-torii.11`                                            |
 
 ### Using actions (J1 slice 2)
 
