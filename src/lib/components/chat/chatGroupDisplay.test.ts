@@ -82,6 +82,14 @@ describe('getChatMessagePreviewText', () => {
 		expect(formatChatMessagePreviewText(preview, hints)).toBe('@alice added @bob to the group');
 	});
 
+	it('a self-join with no committer reads as joined (ADR 0011)', () => {
+		const content = JSON.stringify({ systemKind: 'member-added', target: BOB });
+		const preview = getChatMessagePreviewText(message({ kind: SYSTEM_MESSAGE_KIND, content }));
+		expect(formatChatMessagePreviewText(preview, { [BOB]: { name: 'bob' } })).toBe(
+			'@bob joined the group'
+		);
+	});
+
 	it('handles metadata-changed and unknown/corrupt system payloads', () => {
 		const base = (payload: string) =>
 			getChatMessagePreviewText(message({ kind: SYSTEM_MESSAGE_KIND, content: payload }));

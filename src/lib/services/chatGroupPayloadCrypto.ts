@@ -82,6 +82,18 @@ export async function deriveGroupPayloadKeyBase64(state: ClientState): Promise<s
 	return bytesToBase64(await deriveGroupPayloadKey(state));
 }
 
+/** Seal under an explicit key (ADR 0011 join seal: the joiner has no epoch key). */
+export function encryptGroupPayloadWithKeyBase64(
+	key: Uint8Array,
+	opaqueMessageBase64: string
+): string {
+	const nonce = randomBytes(GROUP_PAYLOAD_NONCE_BYTES);
+	const ciphertext = chacha20poly1305(key, nonce, new Uint8Array(0)).encrypt(
+		base64ToBytes(opaqueMessageBase64)
+	);
+	return bytesToBase64(concatBytes(nonce, ciphertext));
+}
+
 /** Unseal with a retained former-epoch key. Null on verification failure. */
 export function decryptGroupPayloadWithKeyBase64(
 	keyBase64: string,

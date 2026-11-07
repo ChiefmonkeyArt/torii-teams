@@ -85,6 +85,9 @@ function getSystemMessagePreviewText(content: string): string {
 		return '';
 	}
 	const committer = nameToken(data.committer);
+	if (data.systemKind === 'member-added' && !data.committer) {
+		return `${nameToken(data.target)} joined the group`;
+	}
 	if (data.systemKind === 'member-added') {
 		return `${committer} added ${nameToken(data.target)} to the group`;
 	}

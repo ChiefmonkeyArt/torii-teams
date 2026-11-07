@@ -142,6 +142,46 @@ const cleanName = (v: unknown) =>
  * Read a link from the address bar: the id from the path, the secret from the
  * fragment (never sent to any server). Null when it is not an invite link.
  */
+export interface JoinCard {
+	groupId: string;
+	epoch: bigint;
+	groupInfo: string;
+	/** epoch -> confirmed transcript hash (hex), first one the node saw. */
+	history: Record<string, string>;
+	proof: NostrEvent | null;
+}
+
+const MAX_JOIN_CARD_BODY = 160 * 1024;
+
+export function parseJoinCard(raw: unknown): JoinCard | null {
+	const r = raw as {
+		group_id?: unknown;
+		epoch?: unknown;
+		group_info?: unknown;
+		history?: unknown;
+		proof?: unknown;
+	} | null;
+	if (!r || typeof r.group_id !== 'string' || !GROUP_ID_RE.test(r.group_id)) return null;
+	if (typeof r.epoch !== 'string' || !/^(0|[1-9][0-9]{0,18})$/.test(r.epoch)) return null;
+	if (typeof r.group_info !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(r.group_info)) return null;
+	const history: Record<string, string> = {};
+	if (r.history && typeof r.history === 'object') {
+		for (const [k, v] of Object.entries(r.history as Record<string, unknown>)) {
+			if (
+				/^(0|[1-9][0-9]{0,18})$/.test(k) &&
+				typeof v === 'string' &&
+				/^[0-9a-f]{32,128}$/.test(v)
+			) {
+				history[k] = v;
+			}
+		}
+	}
+	const p = r.proof as NostrEvent | null | undefined;
+	const proof =
+		p && typeof p === 'object' && typeof p.id === 'string' && typeof p.sig === 'string' ? p : null;
+	return { groupId: r.group_id, epoch: BigInt(r.epoch), groupInfo: r.group_info, history, proof };
+}
+
 export function parseInviteLink(pathname: string, hash: string): InviteLink | null {
 	const m = pathname.match(/^\/chat\/join\/([A-Za-z0-9_-]{16})\/?$/);
 	const secret = hash.replace(/^#/, '');
@@ -244,6 +284,8 @@ export interface ProjectRoster {
 	members: string[] | null;
 	/** Null when this Continuum predates the membership signals. */
 	teams: RosterTeams | null;
+	/** `created_at` of the owner-signed roster event (ADR 0011 floor); 0 if none. */
+	signedAt?: number;
 }
 
 const hexList = (v: unknown, max = MAX_ROSTER) =>
@@ -279,13 +321,16 @@ export function parseRoster(raw: unknown): ProjectRoster | null {
 	if (!owner) return null;
 	const list = (raw as { roster: { members?: unknown } }).roster.members;
 	const teams = parseRosterTeams((raw as { teams?: unknown }).teams);
-	if (!Array.isArray(list)) return { owner, members: null, teams };
+	const ev = (raw as { event?: { pubkey?: unknown; created_at?: unknown } | null }).event;
+	const signedAt =
+		ev?.pubkey === owner && Number.isSafeInteger(ev.created_at) ? (ev.created_at as number) : 0;
+	if (!Array.isArray(list)) return { owner, members: null, teams, signedAt };
 	const members = new Set<string>([owner]);
 	for (const m of list.slice(0, MAX_ROSTER)) {
 		const pk = (m as { pubkey?: unknown } | null)?.pubkey;
 		if (typeof pk === 'string' && HEX64.test(pk)) members.add(pk);
 	}
-	return { owner, members: [...members], teams };
+	return { owner, members: [...members], teams, signedAt };
 }
 
 /** The source and origin checks for a `torii:session` message (pubkey: adopt). */
@@ -659,6 +704,43 @@ export class ContinuumClient {
 			method: 'POST',
 			body: { added: hexList(added), removed: hexList(removed) }
 		});
+	}
+
+	/**
+	 * The chat's join card (ADR 0011): GroupInfo, per-epoch transcript hashes
+	 * and the owner-signed proof that lets us in. Null when there is none yet,
+	 * or the reply is malformed.
+	 */
+	async joinCard(slug: string): Promise<JoinCard | null> {
+		if (!SLUG_RE.test(slug)) return null;
+		let raw: unknown;
+		try {
+			raw = await this.authed(`/api/projects/${slug}/teams/groupinfo`, {
+				maxBody: MAX_JOIN_CARD_BODY
+			});
+		} catch (error) {
+			if (error instanceof ContinuumError && error.status === 404) return null;
+			throw error;
+		}
+		return parseJoinCard(raw);
+	}
+
+	/** Member: upload the chat's GroupInfo after an epoch change (ADR 0011). */
+	async putJoinCard(
+		slug: string,
+		card: { groupId: string; epoch: bigint; groupInfo: string; transcriptHash: string }
+	): Promise<boolean> {
+		if (!SLUG_RE.test(slug) || !GROUP_ID_RE.test(card.groupId)) return false;
+		const r = (await this.authed(`/api/projects/${slug}/teams/groupinfo`, {
+			method: 'PUT',
+			body: {
+				group_id: card.groupId,
+				epoch: card.epoch.toString(),
+				group_info: card.groupInfo,
+				transcript_hash: card.transcriptHash
+			}
+		})) as { stored?: unknown } | null;
+		return r?.stored === true;
 	}
 
 	/** Signed kind-0 events for up to 50 pubkeys, unmodified (the EventStore verifies them). */

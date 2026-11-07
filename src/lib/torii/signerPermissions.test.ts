@@ -15,6 +15,7 @@ const SIGNING_SITES: Record<string, number> = {
 	'src/lib/torii/continuumApi.ts': 22242,
 	'src/lib/services/coordinatorClient.ts': CTXVM_MESSAGES_KIND,
 	'src/lib/services/multiDevice.svelte.ts': 30078,
+	'src/lib/services/chatGroups.svelte.ts': 27099,
 	// Upstream Cordn routes and helpers the Torii build never reaches or that
 	// sign with a local key, not the user's signer.
 	'src/routes/p/[identifier]/+page.svelte': -1,
@@ -34,7 +35,7 @@ function walk(dir: string, out: string[] = []): string[] {
 
 describe('signer permissions (ADR 0008)', () => {
 	it('asks for every kind the Torii build signs, plus key and NIP-44', () => {
-		expect([...TEAM_SIGNED_KINDS].sort()).toEqual([22242, 25910, 30078]);
+		expect([...TEAM_SIGNED_KINDS].sort()).toEqual([22242, 25910, 27099, 30078]);
 		expect(TEAM_SIGNED_KINDS).toContain(CTXVM_MESSAGES_KIND);
 		for (const k of Object.values(SIGNING_SITES).filter((k) => k > 0)) {
 			expect(TEAM_SIGNER_PERMISSIONS).toContain(`sign_event:${k}`);

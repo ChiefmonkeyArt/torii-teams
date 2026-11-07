@@ -9,6 +9,7 @@ import {
 	parseInvitePeek,
 	matchProjectGroup,
 	parseRosterOwner,
+	parseJoinCard,
 	parseRoster,
 	parseTeamMe,
 	parseRosterTeams,
@@ -303,13 +304,42 @@ describe('parsers', () => {
 					members: [{ pubkey: A }, { pubkey: A }, { pubkey: 'npub1x' }, null, { pubkey: OWNER }]
 				}
 			})
-		).toEqual({ owner: OWNER, members: [OWNER, A], teams: null });
+		).toEqual({ owner: OWNER, members: [OWNER, A], teams: null, signedAt: 0 });
 		expect(parseRoster({ roster: { owner: OWNER } })).toEqual({
 			owner: OWNER,
 			members: null,
-			teams: null
+			teams: null,
+			signedAt: 0
 		});
 		expect(parseRoster({ roster: null })).toBeNull();
+	});
+
+	it('takes signedAt only from the owner-signed roster event (ADR 0011 floor)', () => {
+		const roster = { owner: OWNER, members: [] };
+		expect(parseRoster({ roster, event: { pubkey: OWNER, created_at: 1700 } })?.signedAt).toBe(
+			1700
+		);
+		expect(
+			parseRoster({ roster, event: { pubkey: 'c'.repeat(64), created_at: 1700 } })?.signedAt
+		).toBe(0);
+		expect(parseRoster({ roster, event: { pubkey: OWNER, created_at: '1700' } })?.signedAt).toBe(0);
+	});
+
+	it('parses a join card and drops junk', () => {
+		const ok = parseJoinCard({
+			group_id: 'g-1',
+			epoch: '7',
+			group_info: 'AAAA',
+			history: { '7': 'ab'.repeat(32), x: 'ab'.repeat(32), '8': 'nothex' },
+			proof: { id: 'i', sig: 's' }
+		});
+		expect(ok).toMatchObject({ groupId: 'g-1', epoch: 7n, history: { '7': 'ab'.repeat(32) } });
+		expect(ok?.proof).toEqual({ id: 'i', sig: 's' });
+		expect(parseJoinCard({ group_id: 'g', epoch: '-1', group_info: 'AAAA' })).toBeNull();
+		expect(parseJoinCard({ group_id: 'g', epoch: '1', group_info: '<x>' })).toBeNull();
+		expect(
+			parseJoinCard({ group_id: 'g', epoch: '1', group_info: 'AAAA', proof: 1 })?.proof
+		).toBeNull();
 	});
 });
 
