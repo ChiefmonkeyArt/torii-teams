@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { browser } from '$app/environment';
-	import QrScanner from 'qr-scanner';
+	import type QrScanner from 'qr-scanner';
 	import { Button } from '$lib/components/ui/button';
 	import { Spinner } from '$lib/components/ui/spinner';
 	import CameraOff from '@lucide/svelte/icons/camera-off';
@@ -16,6 +16,7 @@
 
 	let video: HTMLVideoElement;
 	let scanner: QrScanner | null = null;
+	let gone = false;
 
 	type Status = 'starting' | 'scanning' | 'denied' | 'no-camera' | 'error';
 	let status = $state<Status>('starting');
@@ -27,6 +28,9 @@
 		status = 'starting';
 		errorText = '';
 		try {
+			// Loaded on first scan only: keeps the scanner out of the start-up bundle.
+			const { default: QrScanner } = await import('qr-scanner');
+			if (gone) return;
 			if (!scanner) {
 				scanner = new QrScanner(video, (result) => onResult(result.data), {
 					preferredCamera: 'environment',
@@ -63,6 +67,7 @@
 		if (!browser) return;
 		void start();
 		return () => {
+			gone = true;
 			scanner?.destroy();
 			scanner = null;
 		};

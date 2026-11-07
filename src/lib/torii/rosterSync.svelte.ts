@@ -20,6 +20,7 @@ import {
 } from '$lib/services/chatGroups.svelte';
 import { readFloor, withFloor } from './externalJoin';
 import { JoinWhileAway, type SavedPending } from './joinWhileAway';
+import { planMemberRemoval } from './memberRemoval';
 import {
 	listWelcomeNotifications,
 	clearWelcomeSubmitting,
@@ -146,6 +147,56 @@ async function keepJoinCards(me: string): Promise<void> {
 		} catch (error) {
 			// Best effort: the owner's Welcome remains the fallback.
 			console.warn('[torii/join] join card', slug, message(error));
+		}
+	}
+}
+
+/** ADR 0012: last removal attempt by this member's client, per pubkey (ms). */
+const removeAttemptedAt: Record<string, number> = {};
+
+/**
+ * Member (not owner): remove people the owner took off the list while the
+ * owner's client is away (ADR 0012 §2). Reads the roster again only when
+ * someone in the chat is missing from the node's list; the plan staggers
+ * members so the owner's client, then one member, usually acts.
+ */
+async function removeLeavers(me: string): Promise<void> {
+	for (const p of projectChannels.projects) {
+		const slug = p.slug;
+		const owner = projectChannels.owners[slug];
+		const listed = projectChannels.rosters[slug];
+		if (!owner || owner === me || !listed?.includes(me)) continue;
+		const group = projectGroup(slug);
+		if (!group || joins.isPending(slug)) continue;
+		const missing = group.memberPubkeys.some(
+			(pk) => pk !== owner && pk !== me && !listed.includes(pk)
+		);
+		if (!missing) continue;
+		try {
+			const fresh = await continuumClient()?.roster(slug);
+			if (!fresh?.event || !fresh.members || fresh.owner !== owner) continue;
+			const remove = planMemberRemoval({
+				me,
+				owner,
+				nodeMembers: fresh.members,
+				roster: fresh.event,
+				groupMembers: group.memberPubkeys,
+				description: getChatGroup(group.id)?.metadata?.description,
+				attemptedAt: removeAttemptedAt,
+				now: Date.now()
+			});
+			for (const pk of remove) {
+				removeAttemptedAt[pk] = Date.now();
+				await removeChatGroupMember({
+					groupId: group.id,
+					targetStablePubkey: pk,
+					proof: fresh.event
+				});
+				progressed = true;
+			}
+		} catch (error) {
+			// Someone else (often the owner) got there first, or the coordinator is away.
+			console.warn('[torii/remove] member removal', slug, message(error));
 		}
 	}
 }
@@ -439,7 +490,10 @@ async function syncOnce(force: boolean): Promise<void> {
 			rosterSync.busy[p.slug] = false;
 		}
 	}
-	if (signals) await keepJoinCards(me);
+	if (signals) {
+		await keepJoinCards(me);
+		await removeLeavers(me);
+	}
 	if (!signals && (touched || failed)) {
 		lastCoordinatorAt = Date.now();
 		pace = nextPace(pace, progressed && !failed);

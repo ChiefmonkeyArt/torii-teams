@@ -29,12 +29,13 @@ import {
 	type PrivateKeyPackage,
 	type Welcome,
 	type NodeLeaf,
-	type CredentialBasic
+	type CredentialBasic,
+	type Proposal
 } from 'ts-mls';
 import { verifyEvent, type NostrEvent } from 'nostr-tools';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
-const CORDN_GROUP_METADATA_EXTENSION_TYPE = 0xc04d;
+export const CORDN_GROUP_METADATA_EXTENSION_TYPE = 0xc04d;
 const APP_DATA_DICTIONARY_EXTENSION_TYPE = 0x0006;
 const LAST_RESORT_KEY_PACKAGE_COMPONENT_ID = 0x0004;
 export const CLI_CIPHERSUITE = 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519';
@@ -521,6 +522,10 @@ export class SelfRemovalNotSupportedError extends Error {
 export async function removeMemberFromGroup(params: {
 	state: ClientState;
 	removedLeafIndex: number;
+	/** Torii ADR 0012: a member's removal brings its own proposals (the
+	 *  Remove, maybe a floor change) and proof. */
+	proposals?: Proposal[];
+	authenticatedData?: Uint8Array;
 }): Promise<{
 	newState: ClientState;
 	commitMessageBase64: string;
@@ -530,14 +535,15 @@ export async function removeMemberFromGroup(params: {
 		context: { cipherSuite, authService: unsafeTestingAuthenticationService },
 		state: params.state,
 		ratchetTreeExtension: true,
-		extraProposals: [
+		extraProposals: params.proposals ?? [
 			{
 				proposalType: defaultProposalTypes.remove,
 				remove: {
 					removed: params.removedLeafIndex
 				}
 			}
-		]
+		],
+		...(params.authenticatedData ? { authenticatedData: params.authenticatedData } : {})
 	});
 
 	return {

@@ -325,6 +325,29 @@ describe('parsers', () => {
 		expect(parseRoster({ roster, event: { pubkey: OWNER, created_at: '1700' } })?.signedAt).toBe(0);
 	});
 
+	it('keeps the owner-signed roster event whole for the removal proof (ADR 0012)', () => {
+		const A = 'a'.repeat(64);
+		const roster = { owner: OWNER, members: [{ pubkey: A }] };
+		const event = {
+			id: 'e'.repeat(64),
+			pubkey: OWNER,
+			created_at: 1700,
+			kind: 30098,
+			tags: [
+				['d', 'website'],
+				['p', A, 'contributor']
+			],
+			content: '',
+			sig: 'f'.repeat(128),
+			extra: 'dropped'
+		};
+		const { extra: _extra, ...clean } = event;
+		expect(parseRoster({ roster, event })?.event).toEqual(clean);
+		expect(parseRoster({ roster, event: { ...event, pubkey: A } })?.event).toBeUndefined();
+		expect(parseRoster({ roster, event: { ...event, tags: [['d', 1]] } })?.event).toBeUndefined();
+		expect(parseRoster({ roster, event: { ...event, sig: undefined } })?.event).toBeUndefined();
+	});
+
 	it('parses a join card and drops junk', () => {
 		const ok = parseJoinCard({
 			group_id: 'g-1',
