@@ -1,12 +1,17 @@
 <script lang="ts">
-	// The invite welcome (ADR 0010): the shisa pair, AI on the left (closed
-	// mouth), the human on the right (open-mouthed laugh, waving). Bundled
-	// (no outside request), 40 KB, CSS-only motion that stops for
-	// prefers-reduced-motion. `lively` adds the pop-in, the bob and the
+	// The welcome art (ADR 0010, look from ADR 0013): the painted shisa pair at
+	// a laptop. AI on the left with its mouth closed, the human on the right
+	// laughing. Bundled (no outside request), 44 KB, CSS-only motion that stops
+	// for prefers-reduced-motion. `lively` adds the pop-in, the bob and the
 	// twinkles (a personal invite or a fresh join); otherwise it sits still.
+	// A theme with a real colour washes the pair in its primary (ADR 0013 §3).
 	import shisaPair from './shisa-pair.webp';
+	import { activeTheme } from '$lib/themes/appearance.svelte';
+	import { shisaTint } from './shisaTint';
 
 	let { lively = false, size = 200 }: { lively?: boolean; size?: number } = $props();
+
+	const tint = $derived(shisaTint(activeTheme().light.primary));
 </script>
 
 <div
@@ -17,7 +22,17 @@
 	aria-hidden="true"
 >
 	<span class="glow"></span>
-	<img src={shisaPair} alt="" width="480" height="333" decoding="async" />
+	<span class="art">
+		<img src={shisaPair} alt="" width="480" height="319" decoding="async" />
+		{#if tint > 0}
+			<span
+				class="tint"
+				data-testid="shisa-tint"
+				style:--shisa-tint={tint}
+				style:--shisa-mask="url({shisaPair})"
+			></span>
+		{/if}
+	</span>
 	{#if lively}
 		<span class="spark s1"></span>
 		<span class="spark s2"></span>
@@ -29,8 +44,23 @@
 	.shisa-welcome {
 		position: relative;
 		width: var(--shisa-w);
-		aspect-ratio: 480 / 333;
+		aspect-ratio: 480 / 319;
+		isolation: isolate;
 		margin: 0 auto 0.75rem;
+	}
+	.art {
+		position: relative;
+		display: block;
+	}
+	.tint {
+		position: absolute;
+		inset: 0;
+		background: var(--primary);
+		opacity: var(--shisa-tint);
+		mix-blend-mode: color;
+		-webkit-mask: var(--shisa-mask) center / 100% 100% no-repeat;
+		mask: var(--shisa-mask) center / 100% 100% no-repeat;
+		pointer-events: none;
 	}
 	img {
 		position: relative;
@@ -74,7 +104,7 @@
 	}
 
 	@media (prefers-reduced-motion: no-preference) {
-		.lively img {
+		.lively .art {
 			animation:
 				shisa-pop 700ms cubic-bezier(0.2, 0.9, 0.3, 1.3) both,
 				shisa-bob 3.6s ease-in-out 700ms infinite;
