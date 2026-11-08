@@ -7,6 +7,8 @@
 	// decides this card waits without any button that could prompt the signer.
 	// ADR 0010: an invite shows the shisa pair (animated for a personal link)
 	// and says plainly whether you go straight in or wait to be let in.
+	// ADR 0014: the plain sign-in (no invite, not inside Continuum) shows the
+	// painted logo above the name; inside Continuum the frame has its own.
 	import { onMount } from 'svelte';
 	import AccountLoginDialog from '$lib/components/AccountLoginDialog.svelte';
 	import { activeAccount } from '$lib/services/accountManager.svelte';
@@ -14,6 +16,7 @@
 	import { projectChannels, signInToContinuum } from '../projectChannels.svelte';
 	import { detectSigner, signerHint, type SignerKind } from '../signerPermissions';
 	import ShisaWelcome from './ShisaWelcome.svelte';
+	import shisaLogo from './shisa-logo.webp';
 
 	let { embedded = false }: { embedded?: boolean } = $props();
 
@@ -34,7 +37,20 @@
 	<div class="w-full max-w-xs space-y-4 text-center" data-testid="team-consent">
 		{#if invite && projectChannels.status !== 'error'}
 			<ShisaWelcome lively={Boolean(invite.personal) || projectChannels.status === 'waiting'} />
-		{:else if !embedded}<h1 class="text-xl font-semibold">Teams</h1>{/if}
+		{:else if !embedded}
+			<img
+				src={shisaLogo}
+				alt=""
+				aria-hidden="true"
+				width="256"
+				height="256"
+				decoding="async"
+				class="mx-auto size-32 select-none"
+				draggable="false"
+				data-testid="teams-logo"
+			/>
+			<h1 class="text-xl font-semibold">Teams</h1>
+		{/if}
 		{#if projectChannels.status === 'waiting'}
 			<div class="space-y-1" data-testid="invite-waiting">
 				<p class="font-medium">Asked {asked} to let you in to {project}.</p>

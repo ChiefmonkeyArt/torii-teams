@@ -39,7 +39,7 @@ app feel like several products. The owner chose one direction instead:
 5. **Logo and favicon: separate decision.** The flat neon heads (and heads
    under a torii) are drafts. They replace Cordn's mark only after the owner
    picks one, in the same release or a later one; 16 px reads as two
-   coloured shapes.
+   coloured shapes. Decided in ADR 0014 (torii.15).
 6. **Not in this release.** Other poses (hoodies, hover-skate, the plain
    pair) and new screens (offline, chat-list avatars).
 

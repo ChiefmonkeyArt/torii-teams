@@ -8,3 +8,8 @@ export const RELEASE_DROPPED_PREFIXES = [
 	'/cordn-logo',
 	'/get-it-on-'
 ];
+
+// Kept in the release but not precached (ADR 0014): the browser fetches the
+// install icons itself when someone adds Teams to a home screen, so a first
+// visit need not download them.
+export const RELEASE_NOT_PRECACHED = ['/pwa/'];

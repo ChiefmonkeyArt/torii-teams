@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
 import { build, files, version } from '$service-worker';
-import { RELEASE_DROPPED_PREFIXES } from '$lib/torii/releaseDropped.js';
+import { RELEASE_DROPPED_PREFIXES, RELEASE_NOT_PRECACHED } from '$lib/torii/releaseDropped.js';
 
 const CACHE_PREFIX = 'cordn-app';
 const CACHE_NAME = `${CACHE_PREFIX}-${version}`;
@@ -10,7 +10,9 @@ const LEGACY_APP_SHELL = '/200.html';
 const ASSETS = [
 	...build,
 	...(import.meta.env.VITE_TORII_NODE_BUILD === '1'
-		? files.filter((f) => !RELEASE_DROPPED_PREFIXES.some((d) => f.startsWith(d)))
+		? files.filter(
+				(f) => ![...RELEASE_DROPPED_PREFIXES, ...RELEASE_NOT_PRECACHED].some((d) => f.startsWith(d))
+			)
 		: files)
 ];
 

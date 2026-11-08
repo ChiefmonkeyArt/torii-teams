@@ -43,10 +43,10 @@ afterEach(() => {
 	h.signIn.mockClear();
 });
 
-function show() {
+function show(props: { embedded?: boolean } = {}) {
 	const target = document.createElement('div');
 	document.body.append(target);
-	app = mount(TeamSignIn, { target, props: {} });
+	app = mount(TeamSignIn, { target, props });
 	flushSync();
 	return target;
 }
@@ -171,4 +171,31 @@ test('no invite: no shisa', () => {
 	Object.assign(h.channels, { status: 'signed-out', invite: null });
 	const el = show();
 	expect(el.querySelector('[data-testid="shisa-welcome"]')).toBeNull();
+});
+
+test('plain sign-in (ADR 0014): the painted logo above the name, decorative', () => {
+	h.account = null;
+	Object.assign(h.channels, { status: 'signed-out', invite: null });
+	const el = show();
+	const logo = el.querySelector('[data-testid="teams-logo"]') as HTMLImageElement;
+	expect(logo.getAttribute('src')).toMatch(/shisa-logo.*\.webp/);
+	expect(logo.getAttribute('alt')).toBe('');
+	expect(logo.getAttribute('aria-hidden')).toBe('true');
+	expect(el.querySelector('h1')!.textContent).toBe('Teams');
+});
+
+test('inside Continuum or with an invite: no logo', () => {
+	h.account = null;
+	Object.assign(h.channels, { status: 'signed-out', invite: null });
+	let el = show({ embedded: true });
+	expect(el.querySelector('[data-testid="teams-logo"]')).toBeNull();
+	unmount(app!);
+	app = null;
+	Object.assign(h.channels, {
+		invite: { ownerName: 'Olive', projectName: 'Studio', personal: true, straightIn: true }
+	});
+	el = show();
+	expect(el.querySelector('[data-testid="teams-logo"]')).toBeNull();
+	expect(el.querySelector('[data-testid="shisa-welcome"]')).not.toBeNull();
+	Object.assign(h.channels, { invite: null });
 });
