@@ -57,6 +57,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | One-tap thumbs up beside each message, press and hold for the emoji row (ADR 0010)        | `0.6.1-torii.11`                                            |
 | Join while the owner is away: node join card, self-join with owner-signed proof, ADR 0011 | `0.6.1-torii.12` (needs Continuum v0.2.200-alpha)           |
 | Remove while the owner is away, lighter start-up, gzip on the node, ADR 0012              | `0.6.1-torii.13` (Suite v0.9.43-alpha for gzip)             |
+| One shisa look: the painted pair at a laptop, washed in the theme colour, ADR 0013        | `0.6.1-torii.14`                                            |
 
 ### Using actions (J1 slice 2)
 
@@ -135,6 +136,11 @@ and raises the floor, and every member checks it the same way
 when used, and the Suite serves the build gzipped (about 1.8 MB to about
 565 KB on first open):
 [`docs/torii/adr-0012-remove-while-owner-away.md`](docs/torii/adr-0012-remove-while-owner-away.md).
+Since torii.14 the welcome art is one painted shisa pair at a laptop (AI on
+the left with its mouth closed, the human on the right laughing), 44 KB and
+bundled. Themes with a coloured primary wash it at 35%; grey ones (Classic,
+Soft) show its own colours (`shisaTint.ts`):
+[`docs/torii/adr-0013-shisa-visual-pass.md`](docs/torii/adr-0013-shisa-visual-pass.md).
 High priority after the MVP: FIPS on by default across Plebeian, Quest,
 Continuum and the marketplace (an ADR per app).
 
