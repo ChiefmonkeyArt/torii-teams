@@ -191,7 +191,18 @@
 				: 'hidden'} min-h-0 flex-col border-border pt-safe md:flex md:w-64 md:shrink-0 md:border-r"
 		>
 			{#if !embedded}
-				<div class="px-5 pt-4 pb-2 text-base font-semibold">Teams</div>
+				<div class="flex items-center gap-2 px-5 pt-4 pb-2 text-base font-semibold">
+					<!-- ADR 0014: the tab's own icon, already loaded, so no extra bytes. -->
+					<img
+						src="/favicon.svg"
+						alt=""
+						aria-hidden="true"
+						width="20"
+						height="20"
+						class="size-5 rounded"
+						data-testid="teams-mark"
+					/>Teams
+				</div>
 			{/if}
 			<div class="min-h-0 flex-1 overflow-y-auto">
 				<TeamProjectList />
