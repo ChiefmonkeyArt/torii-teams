@@ -26,8 +26,13 @@
 		signInToContinuum,
 		signOutOfContinuum
 	} from '../projectChannels.svelte';
-	import { SYNC_INTERVAL_MS, WAIT_CHECK_MS, syncRosters } from '../rosterSync.svelte';
-	import { isEmbedded, navigateTarget } from './embed';
+	import {
+		SYNC_INTERVAL_MS,
+		WAIT_CHECK_MS,
+		rosterSyncedReport,
+		syncRosters
+	} from '../rosterSync.svelte';
+	import { isEmbedded, navigateTarget, rosterChangedSlug } from './embed';
 	import { maintainReachability, reachabilityStore } from '$lib/services/chatKeyPackages.svelte';
 	import { safeNormalizePubKey } from '$lib/utils';
 	import { teamReachability } from '../teamReachability';
@@ -103,7 +108,17 @@
 			const origin = continuumClient()?.origin;
 			if (!origin || e.origin !== origin) return;
 			const data = e.data as { type?: unknown } | null;
-			if (data?.type === 'torii:roster-changed') void refreshThenSync();
+			if (data?.type === 'torii:roster-changed') {
+				// ADR 0015: answer the parent with counts once the pass is done.
+				const slug = rosterChangedSlug(e, window.parent, origin);
+				const reply = (failed: boolean) => {
+					if (slug) window.parent.postMessage(rosterSyncedReport(slug, failed), origin);
+				};
+				void refreshThenSync().then(
+					() => reply(false),
+					() => reply(true)
+				);
+			}
 			// Continuum's one frame (ADR 0010): show the project it asks for.
 			const to = navigateTarget(e, window.parent, origin);
 			if (to !== null) {
