@@ -21,6 +21,7 @@ import {
 import { readFloor, withFloor } from './externalJoin';
 import { JoinWhileAway, type SavedPending } from './joinWhileAway';
 import { planMemberRemoval } from './memberRemoval';
+import { rosterSyncedAnswer } from './ui/embed';
 import {
 	listWelcomeNotifications,
 	clearWelcomeSubmitting,
@@ -521,4 +522,17 @@ export function syncRosters(opts: { now?: boolean } = {}): Promise<void> {
 		running = null;
 	});
 	return running;
+}
+
+/** ADR 0015: the answer to Continuum after a roster-changed pass. */
+export function rosterSyncedReport(slug: string, failed = false) {
+	const account = manager.getActive();
+	return rosterSyncedAnswer({
+		slug,
+		me: account ? normalizePubKey(account.pubkey) : '',
+		owner: projectChannels.owners[slug],
+		roster: projectChannels.rosters[slug],
+		groupMembers: projectGroup(slug)?.memberPubkeys,
+		failed: failed || Boolean(rosterSync.error[slug])
+	});
 }

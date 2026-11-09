@@ -59,6 +59,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | Remove while the owner is away, lighter start-up, gzip on the node, ADR 0012              | `0.6.1-torii.13` (Suite v0.9.43-alpha for gzip)             |
 | One shisa look: the painted pair at a laptop, washed in the theme colour, ADR 0013        | `0.6.1-torii.14`                                            |
 | Shisa favicon and install icons, painted logo on the sign-in card, ADR 0014               | `0.6.1-torii.15`                                            |
+| Removal finishes before you leave: Teams answers Continuum's save, ADR 0015               | `0.6.1-torii.16` (needs Continuum v0.2.202-alpha)           |
 
 ### Using actions (J1 slice 2)
 
@@ -147,6 +148,11 @@ dark tile (replacing the plain "T"), and the plain sign-in card shows the
 painted logo, the pair in front of a torii. The release step copies the icons
 from `scripts/torii-brand/`; the service worker skips the install icons:
 [`docs/torii/adr-0014-logo-and-favicon.md`](docs/torii/adr-0014-logo-and-favicon.md).
+Since torii.16, after Continuum's `torii:roster-changed` the embedded Teams
+answers its parent, exact origin only, with `torii:roster-synced`
+`{slug, left, error}` (counts only, no keys), so Continuum can say when a
+removed person is out of the chat:
+[`docs/torii/adr-0015-remove-confirmed.md`](docs/torii/adr-0015-remove-confirmed.md).
 High priority after the MVP: FIPS on by default across Plebeian, Quest,
 Continuum and the marketplace (an ADR per app).
 
