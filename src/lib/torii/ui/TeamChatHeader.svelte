@@ -3,6 +3,8 @@
 	import { resolve } from '$app/paths';
 	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import MemberName from './MemberName.svelte';
+	import DevicePanel from './DevicePanel.svelte';
+	import { embedState } from './embedState.svelte';
 
 	let {
 		slug,
@@ -15,13 +17,13 @@
 	const MAX_FACES = 5;
 </script>
 
-<header class="border-b border-border px-3 py-2 md:px-5">
+<header class="relative border-b border-border px-3 py-2 md:px-5">
 	<div class="flex items-center gap-2">
-		<a
-			href={resolve('/chat')}
-			class="-ml-1 rounded-md p-1 text-muted-foreground hover:bg-muted md:hidden"
-			aria-label="Projects"><ChevronLeft class="size-5" /></a
-		>
+		{#if !embedState.on}<a
+				href={resolve('/chat')}
+				class="-ml-1 rounded-md p-1 text-muted-foreground hover:bg-muted md:hidden"
+				aria-label="Projects"><ChevronLeft class="size-5" /></a
+			>{/if}
 		<h1 class="min-w-0 flex-1 truncate text-base font-semibold">{slug}</h1>
 		<button
 			type="button"
@@ -37,6 +39,8 @@
 			</span>
 			<span class="text-xs text-muted-foreground">{members.length}</span>
 		</button>
+		<!-- ADR 0017 §3: inside Continuum, Your computers lives here. -->
+		{#if embedState.on}<DevicePanel variant="header" />{/if}
 	</div>
 	{#if note}<p class="mt-1 text-xs text-muted-foreground">{note}</p>{/if}
 	{#if open}

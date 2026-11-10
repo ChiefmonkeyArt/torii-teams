@@ -34,6 +34,7 @@
 		syncRosters
 	} from '../rosterSync.svelte';
 	import { isEmbedded, navigateTarget, rosterChangedSlug } from './embed';
+	import { embedState, shellLayout } from './embedState.svelte';
 	import { maintainReachability, reachabilityStore } from '$lib/services/chatKeyPackages.svelte';
 	import { safeNormalizePubKey } from '$lib/utils';
 	import { teamReachability } from '../teamReachability';
@@ -43,6 +44,7 @@
 	let embedded = $state(false);
 	onMount(() => {
 		embedded = isEmbedded(window, page.url);
+		embedState.on = embedded;
 	});
 
 	// Nostr sign-in leads straight into Continuum's challenge, once per account
@@ -187,6 +189,7 @@
 	const onHome = $derived(page.url.pathname === resolve('/chat'));
 	// Only the team routes render here; the root layout redirects the rest.
 	const teamRoute = $derived(onHome || page.url.pathname.startsWith(resolve('/chat/p')));
+	const layout = $derived(shellLayout(embedded, onHome));
 
 	function signOut() {
 		signOutOfContinuum();
@@ -200,58 +203,61 @@
 			<TeamSignIn {embedded} />
 		</main>
 	{:else}
-		<!-- Phones: the list is the home page; desktop: always beside the chat. -->
-		<aside
-			class="{onHome
-				? 'flex w-full'
-				: 'hidden'} min-h-0 flex-col border-border pt-safe md:flex md:w-64 md:shrink-0 md:border-r"
-		>
-			{#if !embedded}
-				<div class="flex items-center gap-2 px-5 pt-4 pb-2 text-base font-semibold">
-					<!-- ADR 0014: the tab's own icon, already loaded, so no extra bytes. -->
-					<img
-						src="/favicon.svg"
-						alt=""
-						aria-hidden="true"
-						width="20"
-						height="20"
-						class="size-5 rounded"
-						data-testid="teams-mark"
-					/>Teams
+		<!-- Phones: the list is the home page; desktop: always beside the chat.
+			Inside Continuum, no list: one project at a time (ADR 0017). -->
+		{#if layout.list}
+			<aside
+				class="{onHome
+					? 'flex w-full'
+					: 'hidden'} min-h-0 flex-col border-border pt-safe md:flex md:w-64 md:shrink-0 md:border-r"
+			>
+				{#if !embedded}
+					<div class="flex items-center gap-2 px-5 pt-4 pb-2 text-base font-semibold">
+						<!-- ADR 0014: the tab's own icon, already loaded, so no extra bytes. -->
+						<img
+							src="/favicon.svg"
+							alt=""
+							aria-hidden="true"
+							width="20"
+							height="20"
+							class="size-5 rounded"
+							data-testid="teams-mark"
+						/>Teams
+					</div>
+				{/if}
+				<div class="min-h-0 flex-1 overflow-y-auto">
+					<TeamProjectList />
 				</div>
-			{/if}
-			<div class="min-h-0 flex-1 overflow-y-auto">
-				<TeamProjectList />
-			</div>
-			<!-- ADR 0016: computers that may reach the team's private git. -->
-			<DevicePanel />
-			{#if reach === 'missing'}
-				<div class="border-t border-border px-3 py-2 text-sm">
-					<p>Your team can't add you yet.</p>
-					{#if fixError}<p class="text-xs text-muted-foreground">{fixError}</p>{/if}
-					<button
-						type="button"
-						class="mt-1 rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-60"
-						disabled={fixing}
-						onclick={fixReachability}>{fixing ? 'Fixing…' : 'Fix it'}</button
-					>
-				</div>
-			{/if}
-			<!-- Embedded, Continuum's account menu is the one identity (ADR 0010). -->
-			{#if !embedded}
-				<div class="flex items-center gap-2 border-t border-border px-3 py-2 text-sm">
-					<span class="min-w-0 flex-1">
-						<MemberName pubkey={$activeAccount!.pubkey} />
-					</span>
-					<button
-						type="button"
-						class="rounded-md px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-						onclick={signOut}>Sign out</button
-					>
-				</div>
-			{/if}
-		</aside>
-		<main class="{onHome ? 'hidden md:flex' : 'flex'} relative min-w-0 flex-1 flex-col pt-safe">
+				<!-- ADR 0016: computers that may reach the team's private git. -->
+				<DevicePanel />
+				{#if reach === 'missing'}
+					<div class="border-t border-border px-3 py-2 text-sm">
+						<p>Your team can't add you yet.</p>
+						{#if fixError}<p class="text-xs text-muted-foreground">{fixError}</p>{/if}
+						<button
+							type="button"
+							class="mt-1 rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-60"
+							disabled={fixing}
+							onclick={fixReachability}>{fixing ? 'Fixing…' : 'Fix it'}</button
+						>
+					</div>
+				{/if}
+				<!-- Embedded, Continuum's account menu is the one identity (ADR 0010). -->
+				{#if !embedded}
+					<div class="flex items-center gap-2 border-t border-border px-3 py-2 text-sm">
+						<span class="min-w-0 flex-1">
+							<MemberName pubkey={$activeAccount!.pubkey} />
+						</span>
+						<button
+							type="button"
+							class="rounded-md px-2 py-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+							onclick={signOut}>Sign out</button
+						>
+					</div>
+				{/if}
+			</aside>
+		{/if}
+		<main class="{layout.main} relative min-w-0 flex-1 flex-col pt-safe">
 			{#if signerReadinessStore.waiting}
 				<div class="border-b border-border bg-muted/60 px-3 py-1 text-sm text-muted-foreground">
 					Waiting for your Nostr signer…
@@ -259,6 +265,20 @@
 			{:else if chatReconnectStatusStore.active}
 				<div class="border-b border-border bg-muted/60 px-3 py-1 text-sm text-muted-foreground">
 					{chatReconnectStatusStore.message}
+				</div>
+			{/if}
+			{#if !layout.list && reach === 'missing'}
+				<div class="flex items-center gap-2 border-b border-border px-3 py-1 text-sm">
+					<p class="min-w-0 flex-1">
+						Your team can't add you yet.{#if fixError}
+							<span class="text-xs text-muted-foreground">{fixError}</span>{/if}
+					</p>
+					<button
+						type="button"
+						class="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-60"
+						disabled={fixing}
+						onclick={fixReachability}>{fixing ? 'Fixing…' : 'Fix it'}</button
+					>
 				</div>
 			{/if}
 			<div class="min-h-0 flex-1">

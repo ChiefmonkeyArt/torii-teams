@@ -5,6 +5,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { projectChannels } from '../projectChannels.svelte';
+	import { embedState } from './embedState.svelte';
 
 	let wide = $state(false);
 	onMount(() => {
@@ -14,12 +15,14 @@
 		mq.addEventListener('change', on);
 		return () => mq.removeEventListener('change', on);
 	});
+	// Inside Continuum, Continuum picks the project (ADR 0017 §2).
 	$effect(() => {
+		if (embedState.on) return;
 		const only = projectChannels.projects.length === 1 ? projectChannels.projects[0].slug : '';
 		if (wide && only) void goto(resolve('/chat/p/[slug]', { slug: only }), { replaceState: true });
 	});
 </script>
 
 <div class="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
-	{projectChannels.projects.length ? 'Pick a project.' : ''}
+	{!embedState.on && projectChannels.projects.length ? 'Pick a project.' : ''}
 </div>
