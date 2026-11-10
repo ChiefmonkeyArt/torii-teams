@@ -1,7 +1,7 @@
 # ADR 0016: Your computers, for private git
 
-Date: 2026-11-10. Status: **Proposed** (owner, 2026-11-10: "Do all the
-things for stage c… adr and coding"). Target: Teams `0.6.1-torii.17` with
+Date: 2026-11-10. Status: **Accepted** (owner, 2026-11-10: "Accept and
+ship all"). Target: Teams `0.6.1-torii.17` with
 Continuum `v0.2.204-alpha` and Suite `v0.9.53-alpha`. Builds torii-continuum
 `docs/adr-fips-default.md` §2, §3 and §5 (Accepted 2026-11-10). Keeps ADR
 0003 (no upstream services) and ADR 0008 (one sign-in).
