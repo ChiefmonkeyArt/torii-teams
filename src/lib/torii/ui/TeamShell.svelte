@@ -12,6 +12,7 @@
 	import { chatReconnectStatusStore } from '$lib/services/chatReconnectStatus.svelte';
 	import MemberName from './MemberName.svelte';
 	import TeamProjectList from './TeamProjectList.svelte';
+	import DevicePanel from './DevicePanel.svelte';
 	import TeamSignIn from './TeamSignIn.svelte';
 	import {
 		checkInvite,
@@ -222,6 +223,8 @@
 			<div class="min-h-0 flex-1 overflow-y-auto">
 				<TeamProjectList />
 			</div>
+			<!-- ADR 0016: computers that may reach the team's private git. -->
+			<DevicePanel />
 			{#if reach === 'missing'}
 				<div class="border-t border-border px-3 py-2 text-sm">
 					<p>Your team can't add you yet.</p>

@@ -10,6 +10,7 @@ import { eventStore } from '$lib/services/eventStore';
 import { setProfileSource } from './toriiProfiles.svelte';
 import { safeNormalizePubKey as normalizePubKey } from '$lib/utils';
 import type { ToriiNodeConfig } from './nodeConfig';
+import type { Device, MyDevices } from './devices';
 import {
 	ContinuumClient,
 	ContinuumError,
@@ -385,6 +386,18 @@ export async function reportReady(): Promise<void> {
 	} catch {
 		readySentFor = ''; // try again on a later tick
 	}
+}
+
+/** Your computers (ADR 0016): read, or sign and save the full list. */
+export async function loadMyDevices(): Promise<MyDevices | null> {
+	if (!client) return null;
+	return client.devices();
+}
+
+export async function saveMyDevices(devices: Device[]): Promise<void> {
+	const account = manager.getActive();
+	if (!client || !account) throw new ContinuumError(401, null, 'not signed in');
+	await client.putDevices(account.signer, normalizePubKey(account.pubkey), devices);
 }
 
 /** Owner: Continuum's chat record and membership signals. */

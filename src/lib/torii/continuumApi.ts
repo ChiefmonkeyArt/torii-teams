@@ -19,6 +19,9 @@
 //   POST /api/team/auth/refresh (Bearer j1)         -> m2 once let in; 409 pending, 403 refused
 //   POST /api/team/ready (Bearer j1)                -> allowed while waiting
 //   Every link failure is the same 404 {code: 'invite_unavailable'}.
+// Your computers (ADR 0016), see ./devices.ts:
+//   GET /api/team/devices (Bearer)         -> {devices, listed, max, node: {npub, git}}
+//   PUT /api/team/devices {event}          -> {ok, devices}; 403 not on a project, 409 stale
 // Bearer only, no cookies. One sign-in (ADR 0008): the token lives in this
 // origin's localStorage and renews without the signer until Continuum's
 // absolute cap (7 days by default); only then is a new challenge signed.
@@ -27,6 +30,7 @@
 // owner's admin token never lives on this origin (ADR 0002).
 
 import type { EventTemplate, NostrEvent } from 'nostr-tools';
+import { deviceNoteTemplate, parseMyDevices, type Device, type MyDevices } from './devices';
 
 export interface TeamProject {
 	slug: string;
@@ -709,6 +713,23 @@ export class ContinuumClient {
 			throw new ContinuumError(401, null, 'session belongs to another key');
 		}
 		return me;
+	}
+
+	/** The caller's own computers and this node's git address (ADR 0016). */
+	async devices(): Promise<MyDevices> {
+		const d = parseMyDevices(await this.authed('/api/team/devices'));
+		if (!d) throw new ContinuumError(0, null, 'bad /api/team/devices reply');
+		return d;
+	}
+
+	/** Sign and save the caller's full list of computers (ADR 0016). */
+	async putDevices(signer: SignerLike, pubkey: string, devices: Device[]): Promise<void> {
+		if (!this.session || this.session.pubkey !== pubkey) {
+			throw new ContinuumError(401, null, 'not signed in');
+		}
+		const event = await signer.signEvent(deviceNoteTemplate(devices, this.now()));
+		if (event.pubkey !== pubkey) throw new ContinuumError(0, null, 'signer returned another key');
+		await this.authed('/api/team/devices', { method: 'PUT', body: { event } });
 	}
 
 	/** Project owner pubkey; null when the roster is unreadable (fail closed). */
