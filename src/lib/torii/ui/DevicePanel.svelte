@@ -5,6 +5,10 @@
 	import { checkNewDevice, hostsLine, saveError, type Device, type MyDevices } from '../devices';
 	import { loadMyDevices, saveMyDevices } from '../projectChannels.svelte';
 
+	// ADR 0017 §3: `header` is a small button with the panel as a dropdown.
+	let { variant = 'list' }: { variant?: 'list' | 'header' } = $props();
+	const inHeader = $derived(variant === 'header');
+
 	let open = $state(false);
 	let mine = $state<MyDevices | null>(null);
 	let loadError = $state('');
@@ -72,15 +76,22 @@
 	const short = (n: string) => `${n.slice(0, 12)}…${n.slice(-6)}`;
 </script>
 
-<div class="border-t border-border px-3 py-2 text-sm">
+<div class={inHeader ? 'text-sm' : 'border-t border-border px-3 py-2 text-sm'}>
 	<button
 		type="button"
-		class="w-full rounded-md px-2 py-1 text-left text-muted-foreground hover:bg-muted hover:text-foreground"
+		class="{inHeader
+			? 'px-1.5 text-xs'
+			: 'w-full px-2 text-left'} rounded-md py-1 text-muted-foreground hover:bg-muted hover:text-foreground"
 		aria-expanded={open}
 		onclick={toggle}>Your computers</button
 	>
 	{#if open}
-		<div class="mt-2 flex flex-col gap-2" data-testid="device-panel">
+		<div
+			class="{inHeader
+				? 'absolute top-full right-0 z-20 mt-1 w-80 max-w-[calc(100vw-1rem)] rounded-md border border-border bg-background p-3 shadow'
+				: 'mt-2'} flex flex-col gap-2"
+			data-testid="device-panel"
+		>
 			{#if loadError}
 				<p class="text-xs text-muted-foreground">{loadError}</p>
 			{:else if !mine}

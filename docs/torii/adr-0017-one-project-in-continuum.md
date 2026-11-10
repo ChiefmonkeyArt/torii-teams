@@ -52,3 +52,16 @@ second list inside the frame repeats it. The frame already accepts
   shows the empty state; "Your computers" opens from the header.
 - Not framed: the list and "Your computers" under it, as in torii.17.
 - `torii:navigate` from a wrong origin or with a bad path is still ignored.
+
+## Implementation (torii.18, on review)
+
+- `src/lib/torii/ui/embedState.svelte.ts`: shared `embedState.on` (set by
+  TeamShell from `isEmbedded`) and `shellLayout(embedded, onHome)`.
+- `TeamShell.svelte`: no `<aside>` when framed; the "Your team can't add
+  you yet / Fix it" line moves to the top of the chat pane.
+- `TeamHome.svelte`: framed, no jump to the only project and no "Pick a
+  project."
+- `TeamChatHeader.svelte`: framed, no back link; `<DevicePanel
+  variant="header" />` (small button, dropdown panel).
+- Tests: `embedState.test.ts` (2), `TeamChatHeader.svelte.test.ts` (2),
+  `TeamHome.svelte.test.ts` (2); `embed.test.ts` keeps the navigate checks.
