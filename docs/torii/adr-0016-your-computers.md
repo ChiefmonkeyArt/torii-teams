@@ -56,6 +56,8 @@ where they should add their own computer. Phones have no FIPS client.
   everything root acts on is signed by the owner or the member.
 - Hand edits to the two files are replaced once Continuum writes its file.
   Until then the files stay as they are.
+- A member change reloads the firewall rules in one step and leaves the
+  FIPS node running, so other mesh sessions don't drop.
 - New surface: one member route (`GET`/`PUT /api/team/devices`), one root
   path unit (`torii-teams-sync.path`), and this panel.
 
