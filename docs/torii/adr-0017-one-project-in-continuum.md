@@ -62,6 +62,6 @@ second list inside the frame repeats it. The frame already accepts
 - `TeamHome.svelte`: framed, no jump to the only project and no "Pick a
   project."
 - `TeamChatHeader.svelte`: framed, no back link; `<DevicePanel
-  variant="header" />` (small button, dropdown panel).
+variant="header" />` (small button, dropdown panel).
 - Tests: `embedState.test.ts` (2), `TeamChatHeader.svelte.test.ts` (2),
   `TeamHome.svelte.test.ts` (2); `embed.test.ts` keeps the navigate checks.
