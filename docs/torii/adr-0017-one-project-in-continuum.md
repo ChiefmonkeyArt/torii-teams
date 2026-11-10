@@ -1,10 +1,10 @@
 # ADR 0017: One project at a time inside Continuum
 
-Date: 2026-11-10. Status: **Proposed** (owner, 2026-11-10: "the Teams screen
+Date: 2026-11-10. Status: **Accepted** 2026-11-10 after a local review of the build (owner chose the full-width Team tab over the right-hand panel). Proposed (owner, 2026-11-10: "the Teams screen
 is confusing... I don't think we need the chat panel there"; "the group chat
 should than appear in the tab on the project page"). Target:
 `0.6.1-torii.18` with Continuum `v0.2.205-alpha` (its
-`docs/adr-project-team-chat.md`) and Suite `v0.9.54-alpha`. Amends ADR 0010
+`docs/adr-project-team-chat.md`) and Suite `v0.9.56-alpha`. Amends ADR 0010
 §2 (where the frame is docked). Keeps ADR 0005 (member list = chat
 membership), ADR 0008 (one sign-in) and ADR 0016 (Your computers).
 
@@ -53,7 +53,7 @@ second list inside the frame repeats it. The frame already accepts
 - Not framed: the list and "Your computers" under it, as in torii.17.
 - `torii:navigate` from a wrong origin or with a bad path is still ignored.
 
-## Implementation (torii.18, on review)
+## Implementation (torii.18)
 
 - `src/lib/torii/ui/embedState.svelte.ts`: shared `embedState.on` (set by
   TeamShell from `isEmbedded`) and `shellLayout(embedded, onHome)`.
