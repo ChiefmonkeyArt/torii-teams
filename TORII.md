@@ -62,7 +62,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | Removal finishes before you leave: Teams answers Continuum's save, ADR 0015                                      | `0.6.1-torii.16` (needs Continuum v0.2.202-alpha)                |
 | Your computers: add up to 3 FIPS computers for the private git, ADR 0016                                         | `0.6.1-torii.17` (Continuum v0.2.204-alpha, Suite v0.9.53-alpha) |
 | One project at a time inside Continuum: no project list when framed, Your computers in the chat header, ADR 0017 | `0.6.1-torii.18` (Continuum v0.2.205-alpha, Suite v0.9.56-alpha) |
-| Lighter, quieter load: no News chunk, no welcome poll on reload, by-kind index for action history, ADR 0018      | `0.6.1-torii.19` (Suite v0.9.59-alpha)                           |
+| Lighter, quieter load: no News chunk, no welcome poll on reload, by-kind index for action history, ADR 0018      | `0.6.1-torii.19` (Suite v0.9.60-alpha)                           |
 
 ### Using actions (J1 slice 2)
 

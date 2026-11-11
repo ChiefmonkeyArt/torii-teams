@@ -2,7 +2,7 @@
 
 Date: 2026-11-11. Status: **Proposed** (owner, 2026-11-10: "Do the routstr
 issue then 1, 2, and 3" from the improvements list). Target:
-`0.6.1-torii.19` with Suite `v0.9.59-alpha`. Keeps ADR 0003 (no upstream
+`0.6.1-torii.19` with Suite `v0.9.60-alpha`. Keeps ADR 0003 (no upstream
 services by default), ADR 0008 (one sign-in), ADR 0011 (self-join) and
 ADR 0012 (lighter start-up).
 
