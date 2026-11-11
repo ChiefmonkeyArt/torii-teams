@@ -1,6 +1,6 @@
 # ADR 0019: Added in seconds, and no session key needed
 
-Date: 2026-11-11. Status: **Proposed** (owner, 2026-11-11: "can you finish
+Date: 2026-11-11. Status: **Accepted** (owner, 2026-11-11: "Accept, ship and deploy"; asked by owner, 2026-11-11: "can you finish
 these off", about "adding a member takes about 60 seconds" and "Teams still
 needs a signature when a welcome check is due or a key package is
 published"). Target: `0.6.1-torii.20` with Suite `v0.9.63-alpha`. Amends
