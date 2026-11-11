@@ -64,6 +64,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | One project at a time inside Continuum: no project list when framed, Your computers in the chat header, ADR 0017 | `0.6.1-torii.18` (Continuum v0.2.205-alpha, Suite v0.9.56-alpha) |
 | Lighter, quieter load: no News chunk, no welcome poll on reload, by-kind index for action history, ADR 0018      | `0.6.1-torii.19` (Suite v0.9.60-alpha)                           |
 | Added in seconds: the owner checks every 15 s while a teammate waits; no session key needed, ADR 0019            | `0.6.1-torii.20` (Suite v0.9.63-alpha)                           |
+| Chat server is down: a banner instead of messages that only look sent; no Fix it while down, ADR 0020            | `0.6.1-torii.21` (Suite v0.9.69-alpha)                           |
 
 ### Using actions (J1 slice 2)
 
@@ -183,6 +184,11 @@ yet, your client checks Continuum every 15 s for 15 minutes (then every
 60 s), so they are added within seconds of signing in. Only first sign-in
 and real membership changes ask the signer:
 [`docs/torii/adr-0019-quick-add.md`](docs/torii/adr-0019-quick-add.md).
+
+Since torii.21, when a request to the node's chat server gets no answer, the
+chat shows "Chat server is down. Messages won't send until it's back." until
+the next request succeeds, and hides "Your team can't add you yet":
+[`docs/torii/adr-0020-chat-server-down.md`](docs/torii/adr-0020-chat-server-down.md).
 
 ## Versions
 

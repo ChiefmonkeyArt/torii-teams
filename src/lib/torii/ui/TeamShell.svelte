@@ -40,6 +40,8 @@
 	import { maintainReachability, reachabilityStore } from '$lib/services/chatKeyPackages.svelte';
 	import { safeNormalizePubKey } from '$lib/utils';
 	import { teamReachability } from '../teamReachability';
+	import { getCoordinatorHealthTone } from '$lib/services/coordinatorHealth.svelte';
+	import { chatServerDown, showReachabilityFix, SERVER_DOWN_TEXT } from '../serverDown';
 
 	let { children }: { children: Snippet } = $props();
 
@@ -176,6 +178,9 @@
 	const me = $derived(safeNormalizePubKey($activeAccount?.pubkey ?? ''));
 	const node = $derived(safeNormalizePubKey(projectChannels.coordinator));
 	const reach = $derived(teamReachability(node, me, reachabilityStore));
+	// ADR 0020: a failed request since the last success = say so.
+	const serverDown = $derived(chatServerDown(node, getCoordinatorHealthTone(node)));
+	const fixShown = $derived(showReachabilityFix(reach, serverDown));
 	let recheckedFor = '';
 	$effect(() => {
 		if (!node || !me || recheckedFor === me) return;
@@ -262,7 +267,7 @@
 				</div>
 				<!-- ADR 0016: computers that may reach the team's private git. -->
 				<DevicePanel />
-				{#if reach === 'missing'}
+				{#if fixShown}
 					<div class="border-t border-border px-3 py-2 text-sm">
 						<p>Your team can't add you yet.</p>
 						{#if fixError}<p class="text-xs text-muted-foreground">{fixError}</p>{/if}
@@ -294,12 +299,20 @@
 				<div class="border-b border-border bg-muted/60 px-3 py-1 text-sm text-muted-foreground">
 					Waiting for your Nostr signer…
 				</div>
+			{:else if serverDown}
+				<div
+					class="border-b border-border bg-destructive/10 px-3 py-1 text-sm text-destructive"
+					role="status"
+					data-testid="server-down"
+				>
+					{SERVER_DOWN_TEXT}
+				</div>
 			{:else if chatReconnectStatusStore.active}
 				<div class="border-b border-border bg-muted/60 px-3 py-1 text-sm text-muted-foreground">
 					{chatReconnectStatusStore.message}
 				</div>
 			{/if}
-			{#if !layout.list && reach === 'missing'}
+			{#if !layout.list && fixShown}
 				<div class="flex items-center gap-2 border-b border-border px-3 py-1 text-sm">
 					<p class="min-w-0 flex-1">
 						Your team can't add you yet.{#if fixError}
