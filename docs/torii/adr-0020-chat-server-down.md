@@ -1,6 +1,6 @@
 # ADR 0020: Say when the chat server is down
 
-Date: 2026-11-11. Status: **Proposed** (asked by owner, 2026-11-11: "do all
+Date: 2026-11-11. Status: **Accepted** (owner, 2026-11-11: "Accept, ship and deploy"; asked by owner, 2026-11-11: "do all
 the things", after a live test with Bekka where typed messages never reached
 the other screen). Target: `0.6.1-torii.21` with Suite `v0.9.69-alpha`
 (Suite ADR 0005, which keeps the server up). Keeps ADR 0004 and ADR 0018.
