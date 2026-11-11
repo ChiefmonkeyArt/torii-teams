@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ChatKinds } from '$lib/chat/kinds';
 import { foldActions } from '$lib/chat/actions';
 import type { StoredChatMessage } from '$lib/services/chatGroupMessages.svelte';
-import { mergeActionOps, scanActionHistory } from './actionHistory.svelte';
+import { mergeActionOps, readActionHistory, scanActionHistory } from './actionHistory.svelte';
 import { addSourceToDraft, createOutgoing, resolveGroupRoles, statusOutgoing } from './actionsView';
 
 const ME = 'a'.repeat(64);
@@ -113,5 +113,57 @@ describe('ensureActionHistory + rememberActionOps', () => {
 		const state = foldActions(mod.getActionHistory('g-hist')!.ops, resolveGroupRoles([], [ME]));
 		expect(state.byId.get(created.id)?.status).toBe('done');
 		mod.forgetActionHistory();
+	});
+});
+
+describe('readActionHistory (indexed, ADR 0018 §3)', () => {
+	const rows: StoredChatMessage[] = [];
+	for (let c = 1; c <= 2000; c += 1) rows.push(row(c));
+	rows[1499] = row(
+		1500,
+		createOutgoing({
+			...addSourceToDraft(null, { eventId: idFor(3), text: 'old talk' }),
+			sources: [
+				{ id: idFor(3), preview: 'old' },
+				{ id: idFor(1499), preview: 'recent' }
+			]
+		})
+	);
+	rows[1989] = row(1990, statusOutgoing(idFor(1500), 'done'));
+
+	it('matches the full scan while reading only action rows and cited ids', async () => {
+		let kindReads = 0;
+		const asked: string[][] = [];
+		const reader = {
+			async getGroupMessagesOfKind(_group: string, kind: number) {
+				kindReads += 1;
+				return rows.filter((r) => r.kind === kind);
+			},
+			async getGroupMessageCursorsById(_group: string, ids: string[]) {
+				asked.push(ids);
+				return new Map(rows.filter((r) => ids.includes(r.id)).map((r) => [r.id, r.cursor]));
+			}
+		};
+		const indexed = await readActionHistory(reader, 'g');
+		const scanned = (await scanActionHistory(pager(rows, 500).getPage))!;
+		expect(indexed.ops.map((m) => m.cursor)).toEqual(scanned.ops.map((m) => m.cursor));
+		expect([...indexed.sourceCursors.entries()].sort()).toEqual(
+			[...scanned.sourceCursors.entries()].sort()
+		);
+		expect(kindReads).toBe(1);
+		expect(asked).toEqual([[idFor(3), idFor(1499)]]);
+	});
+
+	it('an empty chat costs one kind read and no id lookups of note', async () => {
+		const reader = {
+			getGroupMessagesOfKind: async () => [],
+			getGroupMessageCursorsById: async (_g: string, ids: string[]) => {
+				expect(ids).toEqual([]);
+				return new Map<string, number>();
+			}
+		};
+		const history = await readActionHistory(reader, 'g');
+		expect(history.ops).toEqual([]);
+		expect(history.sourceCursors.size).toBe(0);
 	});
 });

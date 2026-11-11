@@ -41,6 +41,7 @@
 	import { isSignerUnavailableError } from '$lib/services/chatRuntime';
 	import { normalizePubKey } from '$lib/utils';
 	import { metadataRelays } from '$lib/services/relay-pool';
+	import { POLL_WELCOMES } from '$lib/torii/build';
 
 	let { open = $bindable(false) }: { open?: boolean } = $props();
 
@@ -81,8 +82,11 @@
 			const results = await Promise.allSettled(
 				coordinatorKeys.map(async (key) => {
 					// Shared cache, staleTime dedupes; per-key failures surface below.
+					// Torii: no welcome poll; roster sync checks when needed (ADR 0018 §2).
 					await Promise.all([
-						queryClient.fetchQuery(welcomeNotificationsQueryOptions(account.pubkey, key)),
+						POLL_WELCOMES
+							? queryClient.fetchQuery(welcomeNotificationsQueryOptions(account.pubkey, key))
+							: null,
 						queryClient.fetchQuery(joinRequestsQueryOptions(account.pubkey, key))
 					]);
 				})

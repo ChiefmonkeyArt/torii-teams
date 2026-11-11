@@ -7,8 +7,9 @@
  * of the messages they cite, so "show source" can jump below the window).
  * New ops keep arriving through the live window and are merged on top.
  *
- * Cost: one read pass over local storage per group per session; only action
- * ops are retained in memory.
+ * Cost: two index reads per group per session (action rows by kind, then the
+ * cited sources by id; ADR 0018 §3). Storage without those reads falls back to
+ * one pass over the whole history. Only action ops are retained in memory.
  */
 import { untrack } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
@@ -63,6 +64,30 @@ export async function scanActionHistory(
 	return { ops, sourceCursors };
 }
 
+/** The subset of storage the indexed read needs (ChatStorage provides it). */
+export interface ActionIndexReader {
+	getGroupMessagesOfKind(groupId: string, kind: number): Promise<StoredChatMessage[]>;
+	getGroupMessageCursorsById(groupId: string, ids: string[]): Promise<Map<string, number>>;
+}
+
+/**
+ * Same result as {@link scanActionHistory}, read through the by-kind and by-id
+ * indexes, so a long chat costs its action rows rather than every message.
+ */
+export async function readActionHistory(
+	storage: ActionIndexReader,
+	groupId: string
+): Promise<ActionHistory> {
+	const ops = await storage.getGroupMessagesOfKind(groupId, ChatKinds.Action);
+	const wanted = new Set<string>();
+	for (const message of ops) {
+		const op = parseActionOp(message.kind, message.content, message.tags);
+		if (op?.op === 'create') for (const id of op.sources) wanted.add(id);
+	}
+	const sourceCursors = await storage.getGroupMessageCursorsById(groupId, [...wanted]);
+	return { ops, sourceCursors };
+}
+
 /** Union of history ops and the live window's ops, deduped by cursor. */
 export function mergeActionOps(
 	history: StoredChatMessage[],
@@ -91,9 +116,15 @@ export function ensureActionHistory(groupId: string): Promise<void> {
 	const task = (async () => {
 		try {
 			const storage = await getChatStorage();
-			const history = await scanActionHistory((before) =>
-				storage.getGroupMessagesPage(groupId, { before, limit: ACTION_SCAN_PAGE_ROWS })
-			);
+			let history: ActionHistory | null;
+			try {
+				history = await readActionHistory(storage, groupId);
+			} catch {
+				// Index unavailable (older database mid-upgrade): read everything.
+				history = await scanActionHistory((before) =>
+					storage.getGroupMessagesPage(groupId, { before, limit: ACTION_SCAN_PAGE_ROWS })
+				);
+			}
 			if (history) histories.set(groupId, history);
 		} catch (error) {
 			// Not fatal: the panel still folds the live window.

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import ChatSidebar from '$lib/components/chat/ChatSidebar.svelte';
 	import TeamShell from '$lib/torii/ui/TeamShell.svelte';
-	import { TORII_NODE_BUILD } from '$lib/torii/build';
+	import { POLL_WELCOMES, TORII_NODE_BUILD } from '$lib/torii/build';
 	import ChatTabBar from '$lib/components/chat/ChatTabBar.svelte';
 	import MediaLightbox from '$lib/components/chat/MediaLightbox.svelte';
 	import LastResortConflictDialog from '$lib/components/chat/LastResortConflictDialog.svelte';
@@ -78,6 +78,8 @@
 
 	$effect(() => {
 		const pubkey = $activeAccount?.pubkey;
+		// Torii: roster sync looks for welcomes only when needed (ADR 0018 §2).
+		if (!POLL_WELCOMES) return;
 		if (!pubkey || startupWelcomesSyncedFor === pubkey || startupWelcomesLoadingFor === pubkey)
 			return;
 

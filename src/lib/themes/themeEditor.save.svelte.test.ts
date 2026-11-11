@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mount, unmount } from 'svelte';
 import EditorHost from './editorHost.svelte';
 import { initAppearance, appearance, getThemeById } from './appearance.svelte';
@@ -12,7 +12,11 @@ describe('ThemeEditor save flow', () => {
 	it('saving applies and persists the fork; cancel restores the active theme', async () => {
 		localStorage.clear();
 		document.getElementById('cordn-theme')?.remove();
+		// A new user: other browser tests may already have created the chat
+		// database, which would make the one-time migration pick 'classic'.
+		const databases = vi.spyOn(indexedDB, 'databases').mockResolvedValue([]);
 		await initAppearance();
+		databases.mockRestore();
 		expect(appearance.activeThemeId).toBe('soft');
 
 		const target = document.createElement('div');

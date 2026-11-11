@@ -5,7 +5,11 @@
  */
 import { describe, expect, test } from 'vitest';
 
-import { getChatStorage, type StoredChatGroupData } from '$lib/storage/chatStorage';
+import {
+	getChatStorage,
+	upgradeChatSchema,
+	type StoredChatGroupData
+} from '$lib/storage/chatStorage';
 import type { StoredChatMessage } from '$lib/services/chatGroupMessages.svelte';
 
 function makeMessage(cursor: number): StoredChatMessage {
@@ -109,5 +113,79 @@ describe('getGroupMessagesPage (indexeddb)', () => {
 		expect(cursorsOf(group?.messages ?? [])).toEqual([3, 8]);
 
 		await storage.deleteGroup(id);
+	});
+});
+
+describe('by-kind and by-id indexes (indexeddb, ADR 0018 §3)', () => {
+	test('reads one kind and finds cursors by id without the full history', async () => {
+		const storage = await getChatStorage();
+		const id = `kind-${crypto.randomUUID()}`;
+		const other = `kind-other-${crypto.randomUUID()}`;
+		const group = makeGroup(id, [1, 2, 3, 4, 5, 6]);
+		group.messages[1] = { ...group.messages[1], kind: 1012 };
+		group.messages[4] = { ...group.messages[4], kind: 1012 };
+		await storage.putGroup(group);
+		await storage.putGroup({
+			...makeGroup(other, [2]),
+			messages: [{ ...makeMessage(2), kind: 1012 }]
+		});
+
+		expect(cursorsOf(await storage.getGroupMessagesOfKind(id, 1012))).toEqual([2, 5]);
+		expect(cursorsOf(await storage.getGroupMessagesOfKind(id, 1))).toEqual([1, 3, 4, 6]);
+		expect(await storage.getGroupMessagesOfKind(id, 7)).toEqual([]);
+		const found = await storage.getGroupMessageCursorsById(id, ['ev-3', 'ev-6', 'missing', 'ev-3']);
+		expect([...found.entries()].sort()).toEqual([
+			['ev-3', 3],
+			['ev-6', 6]
+		]);
+		expect((await storage.getGroupMessageCursorsById(id, [])).size).toBe(0);
+
+		await storage.deleteGroup(id);
+		await storage.deleteGroup(other);
+	});
+
+	test('a version 6 database gains the indexes over rows it already holds', async () => {
+		const name = `upgrade-${crypto.randomUUID()}`;
+		const open = (version: number, upgrade: (req: IDBOpenDBRequest) => void) =>
+			new Promise<IDBDatabase>((resolve, reject) => {
+				const req = indexedDB.open(name, version);
+				req.onupgradeneeded = () => upgrade(req);
+				req.onsuccess = () => resolve(req.result);
+				req.onerror = () => reject(req.error);
+			});
+		const done = (tx: IDBTransaction) =>
+			new Promise<void>((resolve, reject) => {
+				tx.oncomplete = () => resolve();
+				tx.onerror = () => reject(tx.error);
+			});
+		// The v6 message store: compound key plus the groupId index, nothing else.
+		const v6 = await open(1, (req) => {
+			const store = req.result.createObjectStore('messages', { keyPath: ['groupId', 'cursor'] });
+			store.createIndex('groupId', 'groupId', { unique: false });
+		});
+		const write = v6.transaction(['messages'], 'readwrite');
+		for (const cursor of [1, 2, 3]) {
+			write
+				.objectStore('messages')
+				.put({ ...makeMessage(cursor), kind: cursor === 2 ? 1012 : 1, groupId: 'g' });
+		}
+		await done(write);
+		v6.close();
+
+		const v7 = await open(2, (req) => upgradeChatSchema(req.result, req.transaction));
+		const read = v7.transaction(['messages'], 'readonly');
+		const store = read.objectStore('messages');
+		const byKind = store
+			.index('groupKindCursor')
+			.getAll(IDBKeyRange.bound(['g', 1012, -Infinity], ['g', 1012, Infinity]));
+		const byId = store.index('groupMessageId').getKey(['g', 'ev-3']);
+		await done(read);
+		expect(byKind.result.map((row: StoredChatMessage) => row.cursor)).toEqual([2]);
+		expect(byId.result).toEqual(['g', 3]);
+		v7.close();
+		await new Promise((resolve) => {
+			const del = indexedDB.deleteDatabase(name);
+			del.onsuccess = del.onerror = () => resolve(null);
+		});
 	});
 });
