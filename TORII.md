@@ -62,6 +62,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | Removal finishes before you leave: Teams answers Continuum's save, ADR 0015                                      | `0.6.1-torii.16` (needs Continuum v0.2.202-alpha)                |
 | Your computers: add up to 3 FIPS computers for the private git, ADR 0016                                         | `0.6.1-torii.17` (Continuum v0.2.204-alpha, Suite v0.9.53-alpha) |
 | One project at a time inside Continuum: no project list when framed, Your computers in the chat header, ADR 0017 | `0.6.1-torii.18` (Continuum v0.2.205-alpha, Suite v0.9.56-alpha) |
+| Lighter, quieter load: no News chunk, no welcome poll on reload, by-kind index for action history, ADR 0018      | `0.6.1-torii.19` (Suite v0.9.59-alpha)                           |
 
 ### Using actions (J1 slice 2)
 
@@ -169,6 +170,12 @@ project at a time: no project list, the chat at full width, and "Your
 computers" as a button in the chat header. Continuum picks the project with
 `torii:navigate`. Standalone is unchanged:
 [`docs/torii/adr-0017-one-project-in-continuum.md`](docs/torii/adr-0017-one-project-in-continuum.md).
+
+Since torii.19, Torii builds leave out the Cordn News feed (about 26 KB
+gzip), a reload makes no welcome signature (roster sync checks only when a
+project has no chat yet), and action history reads through a by-kind index
+(IndexedDB version 7):
+[`docs/torii/adr-0018-lighter-quieter-load.md`](docs/torii/adr-0018-lighter-quieter-load.md).
 
 ## Versions
 

@@ -1,5 +1,6 @@
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vitest/config';
+import { toriiNoNews } from './src/lib/torii/viteNoNews';
 import { playwright } from '@vitest/browser-playwright';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { execSync } from 'node:child_process';
@@ -53,7 +54,7 @@ export default defineConfig({
 		__APP_VERSION__: JSON.stringify(appSha),
 		__APP_SEMVER__: JSON.stringify(appSemver)
 	},
-	plugins: [tailwindcss(), sveltekit()],
+	plugins: [toriiNoNews(), tailwindcss(), sveltekit()],
 	test: {
 		expect: { requireAssertions: true },
 		projects: [

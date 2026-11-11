@@ -72,3 +72,35 @@ describe('getGroupMessagesPage', () => {
 		await storage.deleteGroup('page-modes');
 	});
 });
+
+describe('by-kind and by-id reads (memory, ADR 0018 §3)', () => {
+	it('returns one kind ascending and cursors for stored ids', async () => {
+		const storage = await getChatStorage();
+		const id = `kind-${crypto.randomUUID()}`;
+		const base = {
+			createdAt: 1,
+			direction: 'inbound' as const,
+			sender: 'ab'.repeat(32),
+			tags: [],
+			content: 'x'
+		};
+		await storage.putGroup({
+			id,
+			coordinatorKey: 'wss://relay.test',
+			createdAt: 1,
+			lastCursor: 3,
+			fetchCursor: 3,
+			stateBytes: new Uint8Array([1]),
+			messages: [
+				{ ...base, cursor: 3, id: 'c', kind: 1012 },
+				{ ...base, cursor: 1, id: 'a', kind: 1012 },
+				{ ...base, cursor: 2, id: 'b', kind: 1 }
+			],
+			syncIssues: []
+		});
+		expect((await storage.getGroupMessagesOfKind(id, 1012)).map((m) => m.cursor)).toEqual([1, 3]);
+		const found = await storage.getGroupMessageCursorsById(id, ['b', 'zz']);
+		expect([...found]).toEqual([['b', 2]]);
+		await storage.deleteGroup(id);
+	});
+});

@@ -201,6 +201,11 @@ export interface ChatStorage {
 	/** Which of these cursors already have durable message rows — windowed
 	 *  ingest dedupe (docs/long-history.md decision 7). */
 	getPersistedMessageCursors(groupId: string, cursors: number[]): Promise<Set<number>>;
+	/** Torii (ADR 0018 §3): every stored message of one kind, ascending by
+	 *  cursor, read through an index instead of the whole history. */
+	getGroupMessagesOfKind(groupId: string, kind: number): Promise<StoredChatMessage[]>;
+	/** Torii (ADR 0018 §3): cursors of the given message ids that are stored. */
+	getGroupMessageCursorsById(groupId: string, ids: string[]): Promise<Map<string, number>>;
 	/** Unread-ledger rows (see StoredMessageLedgerRow), ascending by cursor,
 	 *  including the backfill sentinel row. */
 	listMessageLedgerRows(groupId: string): Promise<StoredMessageLedgerRow[]>;
@@ -219,7 +224,12 @@ export interface ChatStorage {
 }
 
 const DATABASE_NAME = 'cordn-web';
-const DATABASE_VERSION = 6;
+// 7: Torii Teams adds the by-kind and by-id message indexes (ADR 0018 §3).
+// The upgrade only adds what is missing, so a later upstream bump rebases as
+// max(ours, theirs) + 1.
+const DATABASE_VERSION = 7;
+const MESSAGE_KIND_INDEX = 'groupKindCursor';
+const MESSAGE_ID_INDEX = 'groupMessageId';
 const GROUP_STORE = 'groups';
 const GROUP_STATE_STORE = 'groupStates';
 const MESSAGE_STORE = 'messages';
@@ -384,6 +394,22 @@ class MemoryChatStorage implements ChatStorage {
 		return new Set(cursors.filter((cursor) => stored.has(cursor)));
 	}
 
+	async getGroupMessagesOfKind(groupId: string, kind: number): Promise<StoredChatMessage[]> {
+		return (this.groups.get(groupId)?.messages ?? [])
+			.filter((message) => message.kind === kind)
+			.sort((a, b) => a.cursor - b.cursor)
+			.map(cloneMessage);
+	}
+
+	async getGroupMessageCursorsById(groupId: string, ids: string[]): Promise<Map<string, number>> {
+		const wanted = new Set(ids);
+		const found = new Map<string, number>();
+		for (const message of this.groups.get(groupId)?.messages ?? []) {
+			if (wanted.has(message.id)) found.set(message.id, message.cursor);
+		}
+		return found;
+	}
+
 	async getGroupMessagesPage(
 		groupId: string,
 		{ after, before, limit }: { after?: number; before?: number; limit: number }
@@ -507,6 +533,57 @@ class MemoryChatStorage implements ChatStorage {
 	}
 }
 
+/** Create or complete the schema; only adds what is missing (exported for tests). */
+export function upgradeChatSchema(db: IDBDatabase, transaction: IDBTransaction | null): void {
+	if (!db.objectStoreNames.contains(GROUP_STORE)) {
+		const store = db.createObjectStore(GROUP_STORE, { keyPath: 'id' });
+		store.createIndex('ownerPubkey', 'ownerPubkey', { unique: false });
+	} else {
+		const store = transaction?.objectStore(GROUP_STORE);
+		if (store && !store.indexNames.contains('ownerPubkey')) {
+			store.createIndex('ownerPubkey', 'ownerPubkey', { unique: false });
+		}
+	}
+	if (!db.objectStoreNames.contains(GROUP_STATE_STORE)) {
+		db.createObjectStore(GROUP_STATE_STORE, { keyPath: 'groupId' });
+	}
+	const messages = db.objectStoreNames.contains(MESSAGE_STORE)
+		? transaction?.objectStore(MESSAGE_STORE)
+		: db.createObjectStore(MESSAGE_STORE, { keyPath: ['groupId', 'cursor'] });
+	if (messages && !messages.indexNames.contains('groupId')) {
+		messages.createIndex('groupId', 'groupId', { unique: false });
+	}
+	if (messages && !messages.indexNames.contains(MESSAGE_KIND_INDEX)) {
+		messages.createIndex(MESSAGE_KIND_INDEX, ['groupId', 'kind', 'cursor'], { unique: false });
+	}
+	if (messages && !messages.indexNames.contains(MESSAGE_ID_INDEX)) {
+		messages.createIndex(MESSAGE_ID_INDEX, ['groupId', 'id'], { unique: false });
+	}
+	if (!db.objectStoreNames.contains(SYNC_ISSUE_STORE)) {
+		const store = db.createObjectStore(SYNC_ISSUE_STORE, {
+			keyPath: ['groupId', 'cursor', 'detail']
+		});
+		store.createIndex('groupId', 'groupId', { unique: false });
+	}
+	if (!db.objectStoreNames.contains(KEY_PACKAGE_STORE)) {
+		db.createObjectStore(KEY_PACKAGE_STORE, { keyPath: 'keyPackageRef' });
+	}
+	if (!db.objectStoreNames.contains(SNAPSHOT_STORE)) {
+		db.createObjectStore(SNAPSHOT_STORE, { keyPath: 'groupId' });
+	}
+	if (!db.objectStoreNames.contains(OUTBOX_STORE)) {
+		const store = db.createObjectStore(OUTBOX_STORE, { keyPath: 'seq' });
+		store.createIndex('groupId', 'groupId', { unique: false });
+		store.createIndex('ownerPubkey', 'ownerPubkey', { unique: false });
+	}
+	if (!db.objectStoreNames.contains(MESSAGE_LEDGER_STORE)) {
+		const store = db.createObjectStore(MESSAGE_LEDGER_STORE, {
+			keyPath: ['groupId', 'cursor']
+		});
+		store.createIndex('groupId', 'groupId', { unique: false });
+	}
+}
+
 class IndexedDbChatStorage implements ChatStorage {
 	readonly capabilities: ChatStorageCapabilities = {
 		backend: 'indexeddb',
@@ -531,48 +608,7 @@ class IndexedDbChatStorage implements ChatStorage {
 		this.database = await new Promise<IDBDatabase>((resolve, reject) => {
 			const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
 			request.onerror = () => reject(request.error ?? new Error('Failed to open IndexedDB'));
-			request.onupgradeneeded = () => {
-				const db = request.result;
-				if (!db.objectStoreNames.contains(GROUP_STORE)) {
-					const store = db.createObjectStore(GROUP_STORE, { keyPath: 'id' });
-					store.createIndex('ownerPubkey', 'ownerPubkey', { unique: false });
-				} else {
-					const store = request.transaction?.objectStore(GROUP_STORE);
-					if (store && !store.indexNames.contains('ownerPubkey')) {
-						store.createIndex('ownerPubkey', 'ownerPubkey', { unique: false });
-					}
-				}
-				if (!db.objectStoreNames.contains(GROUP_STATE_STORE)) {
-					db.createObjectStore(GROUP_STATE_STORE, { keyPath: 'groupId' });
-				}
-				if (!db.objectStoreNames.contains(MESSAGE_STORE)) {
-					const store = db.createObjectStore(MESSAGE_STORE, { keyPath: ['groupId', 'cursor'] });
-					store.createIndex('groupId', 'groupId', { unique: false });
-				}
-				if (!db.objectStoreNames.contains(SYNC_ISSUE_STORE)) {
-					const store = db.createObjectStore(SYNC_ISSUE_STORE, {
-						keyPath: ['groupId', 'cursor', 'detail']
-					});
-					store.createIndex('groupId', 'groupId', { unique: false });
-				}
-				if (!db.objectStoreNames.contains(KEY_PACKAGE_STORE)) {
-					db.createObjectStore(KEY_PACKAGE_STORE, { keyPath: 'keyPackageRef' });
-				}
-				if (!db.objectStoreNames.contains(SNAPSHOT_STORE)) {
-					db.createObjectStore(SNAPSHOT_STORE, { keyPath: 'groupId' });
-				}
-				if (!db.objectStoreNames.contains(OUTBOX_STORE)) {
-					const store = db.createObjectStore(OUTBOX_STORE, { keyPath: 'seq' });
-					store.createIndex('groupId', 'groupId', { unique: false });
-					store.createIndex('ownerPubkey', 'ownerPubkey', { unique: false });
-				}
-				if (!db.objectStoreNames.contains(MESSAGE_LEDGER_STORE)) {
-					const store = db.createObjectStore(MESSAGE_LEDGER_STORE, {
-						keyPath: ['groupId', 'cursor']
-					});
-					store.createIndex('groupId', 'groupId', { unique: false });
-				}
-			};
+			request.onupgradeneeded = () => upgradeChatSchema(request.result, request.transaction);
 			request.onsuccess = () => resolve(request.result);
 		});
 	}
@@ -697,6 +733,45 @@ class IndexedDbChatStorage implements ChatStorage {
 				);
 			};
 		});
+	}
+
+	async getGroupMessagesOfKind(groupId: string, kind: number): Promise<StoredChatMessage[]> {
+		const rows = await this.runTransaction<StoredChatMessageRecord[]>(
+			MESSAGE_STORE,
+			'readonly',
+			(store) =>
+				store
+					.index(MESSAGE_KIND_INDEX)
+					.getAll(
+						IDBKeyRange.bound([groupId, kind, -Infinity], [groupId, kind, Infinity])
+					) as IDBRequest<StoredChatMessageRecord[]>
+		);
+		return (rows ?? []).map(({ groupId: storedGroupId, ...message }) => {
+			void storedGroupId;
+			return cloneMessage(message);
+		});
+	}
+
+	async getGroupMessageCursorsById(groupId: string, ids: string[]): Promise<Map<string, number>> {
+		const found = new Map<string, number>();
+		const wanted = [...new Set(ids)];
+		if (wanted.length === 0) return found;
+		const db = this.requireDatabase();
+		await new Promise<void>((resolve, reject) => {
+			const transaction = db.transaction([MESSAGE_STORE], 'readonly');
+			const index = transaction.objectStore(MESSAGE_STORE).index(MESSAGE_ID_INDEX);
+			transaction.onerror = () =>
+				reject(transaction.error ?? new Error('IndexedDB transaction failed'));
+			transaction.oncomplete = () => resolve();
+			for (const id of wanted) {
+				const request = index.getKey([groupId, id]);
+				request.onsuccess = () => {
+					const key = request.result as [string, number] | undefined;
+					if (key) found.set(id, key[1]);
+				};
+			}
+		});
+		return found;
 	}
 
 	async getGroupMessagesPage(
