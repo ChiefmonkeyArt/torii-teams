@@ -3,7 +3,7 @@
 Date: 2026-11-11. Status: **Proposed** (owner, 2026-11-11: "can you finish
 these off", about "adding a member takes about 60 seconds" and "Teams still
 needs a signature when a welcome check is due or a key package is
-published"). Target: `0.6.1-torii.20` with Suite `v0.9.61-alpha`. Amends
+published"). Target: `0.6.1-torii.20` with Suite `v0.9.63-alpha`. Amends
 ADR 0006 (quiet 60 s roster poll). Keeps ADR 0005, ADR 0008 and ADR 0018.
 
 ## Context
