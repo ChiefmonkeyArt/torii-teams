@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+	OWNER_QUICK_FOR_MS,
+	OWNER_QUICK_MS,
+	ownerQuickCheckDue,
+	waitingKey,
 	INVITE_RETRY_MS,
 	PACE_MAX_MS,
 	PACE_MIN_MS,
@@ -262,5 +266,24 @@ describe('planOwnerSignals (ADR 0006)', () => {
 		for (let i = 0; i < 8; i++) seen.push((pace = nextWelcomePace(pace)));
 		expect(seen.slice(0, 5)).toEqual([60_000, 120_000, 240_000, 480_000, 960_000]);
 		expect(seen.at(-1)).toBe(WELCOME_MAX_MS);
+	});
+});
+
+describe('owner quick check (ADR 0019)', () => {
+	it('keys the waiting list stably and skips empty projects', () => {
+		expect(waitingKey({ b: ['y'], a: ['x', 'z'], c: [] })).toBe('a:x,a:z,b:y');
+		expect(waitingKey({ a: [], b: undefined })).toBe('');
+	});
+
+	it('is due every 15 s while someone waits, for 15 minutes', () => {
+		const base = { key: 'a:x', since: 0, lastAt: 0 };
+		expect(ownerQuickCheckDue({ ...base, now: OWNER_QUICK_MS - 1 })).toBe(false);
+		expect(ownerQuickCheckDue({ ...base, now: OWNER_QUICK_MS })).toBe(true);
+		expect(ownerQuickCheckDue({ ...base, lastAt: 600_000, now: 615_000 })).toBe(true);
+		expect(ownerQuickCheckDue({ ...base, lastAt: 885_000, now: OWNER_QUICK_FOR_MS })).toBe(false);
+	});
+
+	it('never runs with nobody waiting', () => {
+		expect(ownerQuickCheckDue({ key: '', since: 0, lastAt: 0, now: 20_000 })).toBe(false);
 	});
 });

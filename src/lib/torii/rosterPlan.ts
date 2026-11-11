@@ -239,3 +239,35 @@ export function welcomeDue(
 		.filter((p) => p.added && owners[p.slug] !== me && !hasChat(p.slug))
 		.map((p) => p.slug);
 }
+
+/** Owner, while a teammate is not in the chat yet (ADR 0019): check this often. */
+export const OWNER_QUICK_MS = 15 * 1000;
+/** ...for this long after the waiting list last changed or the page opened. */
+export const OWNER_QUICK_FOR_MS = 15 * 60 * 1000;
+
+/** Everyone still waiting across owned projects, as one stable key. */
+export function waitingKey(
+	waiting: Readonly<Record<string, readonly string[] | undefined>>
+): string {
+	return Object.keys(waiting)
+		.sort()
+		.flatMap((slug) => (waiting[slug] ?? []).map((pk) => `${slug}:${pk}`))
+		.join(',');
+}
+
+/**
+ * The owner's quick check (Continuum reads only, no signer): due when someone
+ * is waiting, the waiting list changed (or the page opened) within
+ * {@link OWNER_QUICK_FOR_MS}, and the last check was {@link OWNER_QUICK_MS} ago.
+ * After that the regular 60 s pass carries on.
+ */
+export function ownerQuickCheckDue(input: {
+	now: number;
+	key: string;
+	since: number;
+	lastAt: number;
+}): boolean {
+	if (!input.key) return false;
+	if (input.now - input.since >= OWNER_QUICK_FOR_MS) return false;
+	return input.now - input.lastAt >= OWNER_QUICK_MS;
+}

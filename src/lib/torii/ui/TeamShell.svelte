@@ -30,9 +30,11 @@
 	import {
 		SYNC_INTERVAL_MS,
 		WAIT_CHECK_MS,
+		rosterSync,
 		rosterSyncedReport,
 		syncRosters
 	} from '../rosterSync.svelte';
+	import { OWNER_QUICK_MS, ownerQuickCheckDue, waitingKey } from '../rosterPlan';
 	import { isEmbedded, navigateTarget, rosterChangedSlug } from './embed';
 	import { embedState, shellLayout } from './embedState.svelte';
 	import { maintainReachability, reachabilityStore } from '$lib/services/chatKeyPackages.svelte';
@@ -85,6 +87,24 @@
 		await refreshProjectChannels({ force: true, quiet: true });
 		await syncRosters();
 	};
+	// ADR 0019: while a teammate on a project you own is not in its chat yet,
+	// check every 15 s for up to 15 minutes after the list changed (or the
+	// page opened), so someone who signs in is added in seconds. Continuum
+	// reads only; the coordinator is asked only once they reported ready.
+	const ownedWaiting = $derived.by(() => {
+		const me = safeNormalizePubKey($activeAccount?.pubkey ?? '');
+		const mine: Record<string, string[]> = {};
+		for (const [slug, list] of Object.entries(rosterSync.waiting)) {
+			if (me && projectChannels.owners[slug] === me) mine[slug] = list;
+		}
+		return waitingKey(mine);
+	});
+	let quickSince = Date.now();
+	let quickAt = Date.now();
+	$effect(() => {
+		void ownedWaiting;
+		quickSince = Date.now();
+	});
 	onMount(() => {
 		const tick = () => {
 			if (document.visibilityState !== 'visible') return;
@@ -100,7 +120,18 @@
 		};
 		window.addEventListener('focus', renew);
 		document.addEventListener('visibilitychange', renew);
-		const id = setInterval(tick, SYNC_INTERVAL_MS);
+		const id = setInterval(() => {
+			quickAt = Date.now();
+			tick();
+		}, SYNC_INTERVAL_MS);
+		const quickId = setInterval(() => {
+			if (document.visibilityState !== 'visible' || projectChannels.status !== 'ready') return;
+			const now = Date.now();
+			if (!ownerQuickCheckDue({ now, key: ownedWaiting, since: quickSince, lastAt: quickAt }))
+				return;
+			quickAt = now;
+			void refreshThenSync();
+		}, OWNER_QUICK_MS / 3);
 		// Waiting to be let in (ADR 0010): ask more often so the chat opens soon
 		// after the owner presses Let in. Network only; stops once in or refused.
 		const waitId = setInterval(() => {
@@ -132,6 +163,7 @@
 		window.addEventListener('message', onMessage);
 		return () => {
 			clearInterval(id);
+			clearInterval(quickId);
 			clearInterval(waitId);
 			window.removeEventListener('message', onMessage);
 			window.removeEventListener('focus', renew);
