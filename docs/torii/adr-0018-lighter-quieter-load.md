@@ -1,6 +1,6 @@
 # ADR 0018: A lighter, quieter load
 
-Date: 2026-11-11. Status: **Proposed** (owner, 2026-11-10: "Do the routstr
+Date: 2026-11-11. Status: **Accepted** 2026-11-11 ("Accept and ship"). Proposed (owner, 2026-11-10: "Do the routstr
 issue then 1, 2, and 3" from the improvements list). Target:
 `0.6.1-torii.19` with Suite `v0.9.60-alpha`. Keeps ADR 0003 (no upstream
 services by default), ADR 0008 (one sign-in), ADR 0011 (self-join) and
