@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { chatServerDown, showReachabilityFix } from '$lib/torii/serverDown';
+	import { getCoordinatorHealthTone } from '$lib/services/coordinatorHealth.svelte';
 	import AccountLoginDialog from '$lib/components/AccountLoginDialog.svelte';
 	import ChatGroupListItem from '$lib/components/chat/ChatGroupListItem.svelte';
 	import ChatMobileSidebarButton from '$lib/components/chat/ChatMobileSidebarButton.svelte';
@@ -151,6 +153,13 @@
 	const teamState = $derived(
 		teamReachability(nodeCoordinatorKey, activePubkeyHex, reachabilityStore)
 	);
+	// ADR 0020: the shell says the server is down; Fix it cannot help then.
+	const teamFixShown = $derived(
+		showReachabilityFix(
+			teamState,
+			chatServerDown(nodeCoordinatorKey, getCoordinatorHealthTone(nodeCoordinatorKey))
+		)
+	);
 	let teamReadyAcked = $state<Record<string, boolean>>({});
 	const teamReadyDismissed = $derived(
 		Boolean(activePubkeyHex) &&
@@ -270,7 +279,7 @@
 		>
 			{#if hasAccount}
 				<div class="mx-auto flex max-w-6xl flex-col gap-6">
-					{#if nodeCoordinatorKey && teamState === 'missing'}
+					{#if nodeCoordinatorKey && teamFixShown}
 						<Card.Root class="border-amber-500/40 bg-amber-500/5" data-torii-team="missing">
 							<Card.Header class="space-y-1.5">
 								<Card.Title>Your team can't add you yet</Card.Title>
