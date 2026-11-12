@@ -16,6 +16,7 @@
 		messages,
 		groupId = '',
 		initialFocusCursor = 0,
+		markerCursor = 0,
 		ensureMessage,
 		onLoadOlder,
 		onReply = () => {},
@@ -45,6 +46,9 @@
 		 *  open (0 = open at the bottom). Cursor-based so a gap start below the
 		 *  loaded window can be loaded before landing (docs/long-history.md). */
 		initialFocusCursor?: number;
+		/** Torii ADR 0023 §1: where the "New messages" line goes when the open
+		 *  lands elsewhere (0 = on the focus row, as before). */
+		markerCursor?: number;
 		/** Load the history page around `cursor` (windowed history: jump and focus
 		 *  targets may not be loaded yet). */
 		ensureMessage?: (cursor: number) => Promise<void>;
@@ -162,8 +166,9 @@
 	// The "New messages" line rides the row the focus flight lands on (the first
 	// row at/after the focus cursor — the gap start may fall between cursors).
 	const focusMarkerId = $derived.by(() => {
-		if (initialFocusCursor <= 0) return '';
-		return messages.find((message) => (message.cursor ?? 0) >= initialFocusCursor)?.id ?? '';
+		const at = markerCursor > 0 ? markerCursor : initialFocusCursor;
+		if (at <= 0) return '';
+		return messages.find((message) => (message.cursor ?? 0) >= at)?.id ?? '';
 	});
 
 	async function scrollToLatestMessage() {

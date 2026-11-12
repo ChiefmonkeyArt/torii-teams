@@ -41,7 +41,7 @@
 				type="button"
 				variant="ghost"
 				size="icon"
-				class="h-11 w-11 shrink-0 rounded-xl"
+				class="chat-composer-plus h-11 w-11 shrink-0 rounded-xl"
 				aria-label="Add attachment"
 				title="Add attachment"
 			>

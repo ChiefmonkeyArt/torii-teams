@@ -146,12 +146,28 @@ function softOwnCss(sel: string, set: ThemeTokenSet): string {
 	);
 }
 
+/**
+ * Continuum's assistant bar (Teams ADR 0023 §7): `[+] [box] [Send]`, 40px
+ * tall, 10px corners, a "Send" label, no expand chevron (the box still grows).
+ */
+const ASSISTANT_BAR_CSS =
+	':root:root .chat-composer-expand{display:none}' +
+	':root:root .chat-composer-input{min-height:40px!important;border-radius:10px}' +
+	':root:root .chat-composer-plus{height:40px;width:40px;border-radius:10px}' +
+	':root:root .chat-composer-send{height:40px;width:auto;min-width:40px;padding-inline:16px;border-radius:10px;font-weight:600;font-size:13px}' +
+	':root:root .chat-composer-send-icon{display:none}' +
+	':root:root .chat-composer-send-label{display:inline}';
+
 export function themeCss(theme: ThemeDefinition): string {
 	const vars = (set: ThemeTokenSet) =>
 		THEME_TOKEN_KEYS.map((key) => `--${key}:${set[key]};`).join('');
-	const base = `:root:root{${vars(theme.light)}}:root:root.dark{${vars(theme.dark)}}`;
-	if (!theme.softOwnBubbles) return base;
-	return base + softOwnCss(':root:root', theme.light) + softOwnCss(':root:root.dark', theme.dark);
+	let css = `:root:root{${vars(theme.light)}}:root:root.dark{${vars(theme.dark)}}`;
+	if (theme.softOwnBubbles)
+		css += softOwnCss(':root:root', theme.light) + softOwnCss(':root:root.dark', theme.dark);
+	if (theme.fontFamily && !/[{};<]/.test(theme.fontFamily))
+		css += `:root:root{font-family:${theme.fontFamily}}`;
+	if (theme.assistantBar) css += ASSISTANT_BAR_CSS;
+	return css;
 }
 
 function applyThemeStyle(theme: ThemeDefinition, persist: boolean) {

@@ -7,6 +7,13 @@ vi.mock('./MemberName.svelte', async () => ({
 }));
 const ensureProfileLoaded = vi.hoisted(() => vi.fn());
 vi.mock('$lib/queries/chatProfileQueries', () => ({ ensureProfileLoaded }));
+vi.mock('$lib/components/chat/ChatSearchBar.svelte', async () => ({
+	default: (await import('./__stubs__/SearchStub.svelte')).default
+}));
+vi.mock('$lib/components/chat/ChatGroupAvatar.svelte', async () => ({
+	default: (await import('./__stubs__/AvatarStub.svelte')).default
+}));
+vi.mock('$lib/services/chatGroups.svelte', () => ({ listChatGroups: () => [{ id: 'g1' }] }));
 vi.mock('../projectChannels.svelte', () => ({
 	loadMyDevices: vi.fn(async () => null),
 	saveMyDevices: vi.fn()
@@ -20,16 +27,17 @@ afterEach(() => {
 	if (app) unmount(app);
 	app = null;
 	embedState.on = false;
+	embedState.search = false;
 	document.body.innerHTML = '';
 	ensureProfileLoaded.mockClear();
 });
 
-function show(note = '') {
+function show(note = '', group: { id: string } | null = null) {
 	const target = document.createElement('div');
 	document.body.append(target);
 	app = mount(TeamChatHeader, {
 		target,
-		props: { slug: 'studio', members: ['a'.repeat(64), 'b'.repeat(64)], waiting: [], note }
+		props: { slug: 'studio', group, members: ['a'.repeat(64), 'b'.repeat(64)], waiting: [], note }
 	});
 	flushSync();
 	return target;
@@ -66,4 +74,33 @@ test('torii.23: framed, the header still loads every member profile so names sho
 test('torii.23: standalone, MemberName loads profiles; the header does not', () => {
 	show();
 	expect(ensureProfileLoaded).not.toHaveBeenCalled();
+});
+
+test('ADR 0023: framed, Continuum opens the chat search; no button in the frame', () => {
+	embedState.on = true;
+	const el = show('', { id: 'g1' });
+	const stub = el.querySelector('[data-testid="search-stub"]') as HTMLElement;
+	expect(stub.dataset.group).toBe('g1');
+	expect(stub.dataset.trigger).toBe('false');
+	expect(stub.dataset.open).toBe('false');
+	embedState.search = true;
+	flushSync();
+	expect(stub.dataset.open).toBe('true');
+	expect(el.querySelector('[data-testid="group-avatar-stub"]')).toBeNull();
+});
+
+test('ADR 0023: standalone, the group icon and a search button', () => {
+	const el = show('', { id: 'g1' });
+	expect((el.querySelector('[data-testid="group-avatar-stub"]') as HTMLElement).dataset.group).toBe(
+		'g1'
+	);
+	expect((el.querySelector('[data-testid="search-stub"]') as HTMLElement).dataset.trigger).toBe(
+		'true'
+	);
+});
+
+test('ADR 0023: no chat yet, no search or icon', () => {
+	const el = show();
+	expect(el.querySelector('[data-testid="search-stub"]')).toBeNull();
+	expect(el.querySelector('[data-testid="group-avatar-stub"]')).toBeNull();
 });

@@ -406,6 +406,9 @@ export const CONTINUUM_THEME: ThemeDefinition = {
 	id: 'continuum',
 	name: 'Continuum',
 	softOwnBubbles: true,
+	// ADR 0023: Continuum's font (src/styles/theme.css `--font-sans`) and bar.
+	fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+	assistantBar: true,
 	light: {
 		background: '#ffffff', // 0 0% 100%
 		foreground: '#26221d', // 36 14% 13%

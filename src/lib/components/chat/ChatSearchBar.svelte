@@ -29,12 +29,17 @@
 	import { untrack } from 'svelte';
 
 	let {
-		groupId
+		groupId,
+		open = $bindable(false),
+		trigger = true
 	}: {
 		/** When set, the search is scoped to this chat (its people and messages only). */
 		groupId?: string;
+		/** Torii ADR 0023 §8: Continuum's strip can open it. */
+		open?: boolean;
+		/** Show the search button (false: opened from outside only). */
+		trigger?: boolean;
 	} = $props();
-	let open = $state(false);
 	let searchQuery = $state('');
 	let debouncedSearchQuery = $state('');
 
@@ -128,17 +133,17 @@
 </script>
 
 <Dialog.Root bind:open>
-	<Dialog.Trigger class="inline-flex">
-		<Button
-			type="button"
-			variant="outline"
-			class="h-10 w-10 rounded-xl"
-			aria-label={groupId ? 'Search this chat' : 'Search messages, groups and people'}
-			title="Search"
-		>
-			<Search class="size-4" />
-		</Button>
-	</Dialog.Trigger>
+	{#if trigger}<Dialog.Trigger class="inline-flex">
+			<Button
+				type="button"
+				variant="outline"
+				class="h-10 w-10 rounded-xl"
+				aria-label={groupId ? 'Search this chat' : 'Search messages, groups and people'}
+				title="Search"
+			>
+				<Search class="size-4" />
+			</Button>
+		</Dialog.Trigger>{/if}
 	<Dialog.Content class="sm:max-w-2xl">
 		<Dialog.Header>
 			<Dialog.Title>Search</Dialog.Title>

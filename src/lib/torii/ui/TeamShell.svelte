@@ -19,6 +19,7 @@
 		continuumClient,
 		hasContinuumSession,
 		projectChannels,
+		projectGroup,
 		refreshProjectChannels,
 		renewContinuumSession,
 		reportReady,
@@ -37,12 +38,19 @@
 	import { OWNER_QUICK_MS, ownerQuickCheckDue, waitingKey } from '../rosterPlan';
 	import {
 		applyEmbedMode,
+		initialShown,
 		isEmbedded,
 		navigateTarget,
 		openComputersMessage,
 		rosterChangedSlug,
-		themeModeMessage
+		searchMessage,
+		themeModeMessage,
+		unreadReport,
+		visibleMessage
 	} from './embed';
+	import { settled } from './settled.svelte';
+	import { listChatGroups } from '$lib/services/chatGroups.svelte';
+	import { getUnreadChatGroupMessageCount } from '$lib/services/chatGroupPresence.svelte';
 	import { embedState, shellLayout } from './embedState.svelte';
 	import { maintainReachability, reachabilityStore } from '$lib/services/chatKeyPackages.svelte';
 	import { safeNormalizePubKey } from '$lib/utils';
@@ -53,6 +61,12 @@
 	let { children }: { children: Snippet } = $props();
 
 	let embedded = $state(false);
+	// Before any child renders (ADR 0023 §2): a hidden frame must never mark
+	// the first visible rows read.
+	if (typeof window !== 'undefined') {
+		embedState.on = isEmbedded(window, page.url);
+		embedState.shown = initialShown(page.url);
+	}
 	onMount(() => {
 		embedded = isEmbedded(window, page.url);
 		embedState.on = embedded;
@@ -166,6 +180,10 @@
 			const mode = themeModeMessage(e, window.parent, origin);
 			if (mode) applyEmbedMode(document.documentElement, mode);
 			if (openComputersMessage(e, window.parent, origin)) embedState.computers = true;
+			// ADR 0023: shown/hidden (read-marking) and the strip's Search button.
+			const shown = visibleMessage(e, window.parent, origin);
+			if (shown !== null) embedState.shown = shown;
+			if (searchMessage(e, window.parent, origin)) embedState.search = true;
 			// Continuum's one frame (ADR 0010): show the project it asks for.
 			const to = navigateTarget(e, window.parent, origin);
 			if (to !== null) {
@@ -190,8 +208,32 @@
 	const node = $derived(safeNormalizePubKey(projectChannels.coordinator));
 	const reach = $derived(teamReachability(node, me, reachabilityStore));
 	// ADR 0020: a failed request since the last success = say so.
-	const serverDown = $derived(chatServerDown(node, getCoordinatorHealthTone(node)));
-	const fixShown = $derived(showReachabilityFix(reach, serverDown));
+	// No server key yet: nothing to ask (the health lookup throws on '').
+	const serverDown = $derived(node ? chatServerDown(node, getCoordinatorHealthTone(node)) : false);
+	// ADR 0023 §6: only once it has held, so a check still settling never flashes.
+	const fixSettled = settled(() => showReachabilityFix(reach, serverDown), false);
+	const fixShown = $derived(fixSettled.current);
+
+	// ADR 0023 §4: unread counts per project for Continuum's tab and sidebar.
+	let lastUnread = '';
+	$effect(() => {
+		if (!embedded) return;
+		// Reactive reads first: continuumClient() is a plain value, so an early
+		// return on it would leave this effect with nothing to re-run on.
+		void listChatGroups().length; // re-count when chats change
+		const counts: Record<string, number> = {};
+		for (const p of projectChannels.projects) {
+			const group = projectGroup(p.slug);
+			counts[p.slug] = group ? getUnreadChatGroupMessageCount(group.id) : 0;
+		}
+		const origin = continuumClient()?.origin;
+		if (!origin) return;
+		const report = unreadReport(counts);
+		const key = JSON.stringify(report.counts);
+		if (key === lastUnread) return;
+		lastUnread = key;
+		window.parent.postMessage(report, origin);
+	});
 	let recheckedFor = '';
 	$effect(() => {
 		if (!node || !me || recheckedFor === me) return;

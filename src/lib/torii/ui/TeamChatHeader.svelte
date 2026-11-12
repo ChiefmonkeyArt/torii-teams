@@ -5,13 +5,25 @@
 	import MemberName from './MemberName.svelte';
 	import { embedState } from './embedState.svelte';
 	import { ensureProfileLoaded } from '$lib/queries/chatProfileQueries';
+	import ChatSearchBar from '$lib/components/chat/ChatSearchBar.svelte';
+	import ChatGroupAvatar from '$lib/components/chat/ChatGroupAvatar.svelte';
+	import { listChatGroups } from '$lib/services/chatGroups.svelte';
 
 	let {
 		slug,
+		group = null,
 		members,
 		waiting,
 		note = ''
-	}: { slug: string; members: string[]; waiting: string[]; note?: string } = $props();
+	}: {
+		slug: string;
+		/** The project's chat, once it exists (search and group icon, ADR 0023). */
+		group?: { id: string } | null;
+		members: string[];
+		waiting: string[];
+		note?: string;
+	} = $props();
+	const stored = $derived(group ? (listChatGroups().find((g) => g.id === group.id) ?? null) : null);
 
 	let open = $state(false);
 	const MAX_FACES = 5;
@@ -26,6 +38,8 @@
 
 <!-- ADR 0021 §3: inside Continuum its strip is the header; only a note shows. -->
 {#if embedState.on}
+	<!-- ADR 0023 §8: Continuum's Search button opens this. -->
+	{#if group}<ChatSearchBar groupId={group.id} bind:open={embedState.search} trigger={false} />{/if}
 	{#if note}<p
 			class="border-b border-border px-3 py-1 text-xs text-muted-foreground md:px-5"
 			data-testid="chat-note"
@@ -40,7 +54,9 @@
 					class="-ml-1 rounded-md p-1 text-muted-foreground hover:bg-muted md:hidden"
 					aria-label="Projects"><ChevronLeft class="size-5" /></a
 				>{/if}
+			{#if stored}<ChatGroupAvatar group={stored} class="h-8 w-8" />{/if}
 			<h1 class="min-w-0 flex-1 truncate text-base font-semibold">{slug}</h1>
+			{#if group}<ChatSearchBar groupId={group.id} />{/if}
 			<button
 				type="button"
 				class="flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-muted"

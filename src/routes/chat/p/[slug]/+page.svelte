@@ -12,7 +12,9 @@
 		projectChannels,
 		projectGroup
 	} from '$lib/torii/projectChannels.svelte';
-	import { membersReport } from '$lib/torii/ui/embed';
+	import { membersReport, projectPageState, readyReport } from '$lib/torii/ui/embed';
+	import { settled } from '$lib/torii/ui/settled.svelte';
+	import TeamLoading from '$lib/torii/ui/TeamLoading.svelte';
 	import { embedState } from '$lib/torii/ui/embedState.svelte';
 	import { rosterSync, startProjectChat } from '$lib/torii/rosterSync.svelte';
 	import { waitingMembers } from '$lib/torii/rosterPlan';
@@ -27,6 +29,8 @@
 	});
 
 	const onProject = $derived(projectChannels.projects.some((p) => p.slug === slug));
+	// ADR 0023 §6: "not on this project" only once the list has loaded.
+	const pageState = $derived(projectPageState(projectChannels.status, onProject));
 	const group = $derived.by(() => {
 		void listChatGroups().length; // re-match when chats change
 		return onProject ? projectGroup(slug) : null;
@@ -49,21 +53,41 @@
 				: ''
 	);
 
-	// ADR 0021 §4: tell Continuum's strip who is really in (counts only).
+	// ADR 0023 §6: warnings show only once they have held (they hide at once).
+	const shownNote = settled(() => note, '');
+	const shownWaiting = $derived(shownNote.current ? waiting : []);
+
+	// ADR 0021 §4: tell Continuum's strip who is really in (counts only);
+	// ADR 0023 §6: the same settled count, so the strip never shows a guess.
+	const reportKey = settled(() => {
+		const r = group ? membersReport(slug, group.memberPubkeys, waiting) : null;
+		return r ? JSON.stringify(r) : '';
+	}, '');
 	let lastReport = '';
 	$effect(() => {
-		if (!embedState.on || !group) return;
+		const key = reportKey.current;
+		if (!embedState.on || !key || key === lastReport) return;
 		const origin = continuumClient()?.origin;
-		const report = membersReport(slug, group.memberPubkeys, waiting);
-		if (!origin || !report) return;
-		const key = JSON.stringify(report);
-		if (key === lastReport) return;
+		if (!origin) return;
 		lastReport = key;
+		window.parent.postMessage(JSON.parse(key), origin);
+	});
+
+	// ADR 0023 §5: Continuum holds its loading animation until this.
+	let readyFor = '';
+	$effect(() => {
+		if (!embedState.on || pageState === 'loading' || readyFor === slug) return;
+		const origin = continuumClient()?.origin;
+		const report = readyReport(slug);
+		if (!origin || !report) return;
+		readyFor = slug;
 		window.parent.postMessage(report, origin);
 	});
 </script>
 
-{#if !onProject}
+{#if pageState === 'loading'}
+	<TeamLoading label="Loading project" />
+{:else if pageState === 'missing'}
 	<div class="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
 		You're not on this project.
 	</div>
@@ -71,7 +95,13 @@
 	{#key group.id}
 		<ChatShell groupId={group.id} title={slug} minimal>
 			{#snippet header()}
-				<TeamChatHeader {slug} members={group.memberPubkeys} {waiting} {note} />
+				<TeamChatHeader
+					{slug}
+					{group}
+					members={group.memberPubkeys}
+					waiting={shownWaiting}
+					note={shownNote.current}
+				/>
 			{/snippet}
 		</ChatShell>
 	{/key}

@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { embedState } from '$lib/torii/ui/embedState.svelte';
+	import { canMarkRead } from '$lib/torii/ui/embed';
 	import { untrack } from 'svelte';
 	import ChatComposer from './ChatComposer.svelte';
 	import ChatHeader from './ChatHeader.svelte';
@@ -137,7 +139,7 @@
 	}: {
 		groupId?: string;
 		title?: string;
-		/** Torii team chat (ADR 0005): no voice notes, polls, GIFs or Actions. */
+		/** Torii team chat (ADR 0005): no polls, GIFs or Actions (voice notes: ADR 0023). */
 		minimal?: boolean;
 		/** Replaces Cordn's ChatHeader when set. */
 		header?: Snippet;
@@ -1322,6 +1324,27 @@
 		}
 		return snapshotFocusCursor;
 	});
+	// Torii ADR 0023 §1: the project chat (minimal) opens at the latest
+	// message; the "New messages" line still marks the first unread.
+	const openFocusCursor = $derived(minimal ? 0 : initialFocusCursor);
+	// Back from another Continuum tab: the line moves to the first message that
+	// arrived while the chat was hidden.
+	let returnMarker = $state({ groupId: '', cursor: 0 });
+	const unreadMarkerCursor = $derived(
+		!minimal
+			? 0
+			: returnMarker.groupId === groupId && returnMarker.cursor
+				? returnMarker.cursor
+				: initialFocusCursor
+	);
+	function firstUnreadCursor(): number {
+		const lastRead = getChatGroupLastReadCursor(groupId);
+		if (!group || group.lastCursor <= lastRead) return 0;
+		const first = storedMessages.find(
+			(m) => m.cursor > lastRead && m.kind !== SYSTEM_MESSAGE_KIND && !isStreamHiddenKind(m.kind)
+		);
+		return first?.cursor ?? 0;
+	}
 
 	// Read-marking follows visibility (Signal-Desktop-style): the message list
 	// reports the highest cursor actually on screen, so a backlog survives a
@@ -1329,11 +1352,49 @@
 	// left it. At the bottom the report means mark-everything instead: rows
 	// can't see annotations folded into other rows, and everything above has
 	// been scrolled past anyway.
-	function handleVisibleRead({ cursor, atBottom }: { cursor: number; atBottom: boolean }) {
+	// Torii ADR 0023 §2: read only while seen (page visible and, inside
+	// Continuum, the frame shown); the last report applies when it shows again.
+	let heldRead: { cursor: number; atBottom: boolean } | null = null;
+	let seenAtBottom = true;
+	let wasShown = true;
+	let pageVisible = $state(
+		typeof document === 'undefined' || document.visibilityState === 'visible'
+	);
+	function handleVisibleRead(report: { cursor: number; atBottom: boolean }) {
 		if (!groupId) return;
-		if (atBottom) markChatGroupRead(groupId);
-		else markChatGroupRead(groupId, cursor);
+		if (!canMarkRead(pageVisible, embedState.on, embedState.shown)) {
+			heldRead = report;
+			return;
+		}
+		heldRead = null;
+		seenAtBottom = report.atBottom;
+		if (report.atBottom) markChatGroupRead(groupId);
+		else markChatGroupRead(groupId, report.cursor);
 	}
+	$effect(() => {
+		const onVis = () => (pageVisible = document.visibilityState === 'visible');
+		document.addEventListener('visibilitychange', onVis);
+		return () => document.removeEventListener('visibilitychange', onVis);
+	});
+	// Torii ADR 0023 §1: a hidden frame doesn't paint, so its follow-the-bottom
+	// scroll stalls while messages arrive. Shown again after being left at the
+	// bottom: back to the latest message. The "New messages" line moves to the
+	// first message that arrived while hidden (before the held read applies).
+	$effect(() => {
+		const shown = embedState.on && embedState.shown;
+		if (shown && !wasShown && minimal) {
+			untrack(() => {
+				const cursor = firstUnreadCursor();
+				if (cursor) returnMarker = { groupId, cursor };
+				if (seenAtBottom) void messageListRef?.scrollToBottom();
+			});
+		}
+		wasShown = shown;
+	});
+	$effect(() => {
+		if (!canMarkRead(pageVisible, embedState.on, embedState.shown) || !heldRead) return;
+		handleVisibleRead(heldRead);
+	});
 
 	$effect(() => {
 		const targetMessage = page.url.searchParams.get('message') ?? '';
@@ -1411,7 +1472,8 @@
 					bind:this={messageListRef}
 					{messages}
 					{groupId}
-					{initialFocusCursor}
+					initialFocusCursor={openFocusCursor}
+					markerCursor={unreadMarkerCursor}
 					ensureMessage={(cursor) => loadChatGroupMessagesAround(groupId, cursor)}
 					onLoadOlder={() => loadOlderChatGroupMessages(groupId)}
 					unreadReferenceCount={unreadReferenceTargets.length}
