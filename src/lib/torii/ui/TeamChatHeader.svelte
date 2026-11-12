@@ -4,6 +4,7 @@
 	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import MemberName from './MemberName.svelte';
 	import { embedState } from './embedState.svelte';
+	import { ensureProfileLoaded } from '$lib/queries/chatProfileQueries';
 
 	let {
 		slug,
@@ -14,6 +15,13 @@
 
 	let open = $state(false);
 	const MAX_FACES = 5;
+
+	// Framed, no MemberName renders here, and messages only read profiles that
+	// are already loaded: load the team's profiles so names show (torii.23).
+	$effect(() => {
+		if (!embedState.on) return;
+		for (const pk of [...members, ...waiting]) ensureProfileLoaded(pk);
+	});
 </script>
 
 <!-- ADR 0021 §3: inside Continuum its strip is the header; only a note shows. -->

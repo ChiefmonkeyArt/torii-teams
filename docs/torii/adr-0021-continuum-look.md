@@ -92,3 +92,11 @@ ADR 0013 and ADR 0017; amends ADR 0017 §3 (where Your computers lives).
   toggling the theme changes the frame without a reload; the count changes
   from "1 not joined yet" to "2 people" when the member joins; Your computers
   opens from Continuum's strip.
+
+## Fix (torii.23, 2026-11-12)
+
+Hiding the header also removed its member faces, which were what loaded the
+team's profiles; messages only read profiles already loaded, so the owner's
+own messages showed a short key. Framed, `TeamChatHeader` now calls
+`ensureProfileLoaded` for every member and invitee (deduplicated, no UI).
+Test: `TeamChatHeader.svelte.test.ts`.

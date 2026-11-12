@@ -5,6 +5,8 @@ vi.mock('$app/paths', () => ({ resolve: (p: string) => p }));
 vi.mock('./MemberName.svelte', async () => ({
 	default: (await import('./__stubs__/NameStub.svelte')).default
 }));
+const ensureProfileLoaded = vi.hoisted(() => vi.fn());
+vi.mock('$lib/queries/chatProfileQueries', () => ({ ensureProfileLoaded }));
 vi.mock('../projectChannels.svelte', () => ({
 	loadMyDevices: vi.fn(async () => null),
 	saveMyDevices: vi.fn()
@@ -19,6 +21,7 @@ afterEach(() => {
 	app = null;
 	embedState.on = false;
 	document.body.innerHTML = '';
+	ensureProfileLoaded.mockClear();
 });
 
 function show(note = '') {
@@ -52,4 +55,15 @@ test('standalone: name, members and the back link; Your computers is not in the 
 	expect([...el.querySelectorAll('button')].some((b) => b.textContent === 'Your computers')).toBe(
 		false
 	);
+});
+
+test('torii.23: framed, the header still loads every member profile so names show', () => {
+	embedState.on = true;
+	show();
+	expect(ensureProfileLoaded.mock.calls.map((c) => c[0])).toEqual(['a'.repeat(64), 'b'.repeat(64)]);
+});
+
+test('torii.23: standalone, MemberName loads profiles; the header does not', () => {
+	show();
+	expect(ensureProfileLoaded).not.toHaveBeenCalled();
 });
