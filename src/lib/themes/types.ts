@@ -34,6 +34,11 @@ export interface ThemeDefinition {
 	name: string;
 	light: ThemeTokenSet;
 	dark: ThemeTokenSet;
+	/**
+	 * Own messages as a soft tint of `primary` (with a thin primary border and
+	 * normal text) instead of solid primary. Teams ADR 0022; Continuum only.
+	 */
+	softOwnBubbles?: boolean;
 }
 
 export interface ThemeTokenMeta {

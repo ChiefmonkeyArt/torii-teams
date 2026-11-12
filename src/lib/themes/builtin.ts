@@ -405,6 +405,7 @@ export const OSTRICH_THEME: ThemeDefinition = {
 export const CONTINUUM_THEME: ThemeDefinition = {
 	id: 'continuum',
 	name: 'Continuum',
+	softOwnBubbles: true,
 	light: {
 		background: '#ffffff', // 0 0% 100%
 		foreground: '#26221d', // 36 14% 13%

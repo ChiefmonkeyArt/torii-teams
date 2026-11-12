@@ -67,6 +67,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | Chat server is down: a banner instead of messages that only look sent; no Fix it while down, ADR 0020            | `0.6.1-torii.21` (Suite v0.9.69-alpha)                           |
 | Looks like Continuum when framed: Continuum's theme and mode, one header, computers from Continuum's strip, ADR 0021 | `0.6.1-torii.22` (Continuum v0.2.211-alpha, Suite v0.9.70-alpha) |
 | Names show inside Continuum: the hidden header still loads the team's profiles, ADR 0021 fix                      | `0.6.1-torii.23` (Suite v0.9.71-alpha)                           |
+| Softer own messages inside Continuum: a pale amber tint with a thin border, like Continuum's own chat, ADR 0022 | `0.6.1-torii.24` (Suite v0.9.72-alpha)                           |
 
 ### Using actions (J1 slice 2)
 
@@ -201,6 +202,10 @@ strip is the only header: it shows the member counts Teams reports
 
 Since torii.23, framed, the header still loads every member's profile, so
 messages show names and avatars instead of short keys.
+
+Since torii.24, inside Continuum your own messages are a soft amber tint with a
+thin amber border and normal text, like Continuum's own chat, instead of solid
+amber: [`docs/torii/adr-0022-soft-own-messages.md`](docs/torii/adr-0022-soft-own-messages.md).
 
 ## Versions
 
