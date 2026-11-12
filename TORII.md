@@ -38,36 +38,37 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 
 ## Status
 
-| Step                                                                                                             | State                                                            |
-| ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| J1 slice 1: action kind, role-checked fold, panel views, `/action` parser                                        | Merged (PR #1)                                                   |
-| J1 slice 2: chat wiring (see below)                                                                              | Merged (PR #2)                                                   |
-| J1 slice 3: whole-history fold, edit form, Assign to me                                                          | Merged (PR #3)                                                   |
-| Continuum mount (TEAMS-2c a): node settings, release workflow, ADR 0001                                          | Merged (PRs #4, #5); released `0.6.1-torii.1`; not deployed      |
-| Teams in Continuum: per-project sidebar, Continuum sign-in, ADR 0002                                             | `0.6.1-torii.2`                                                  |
-| No upstream services by default, project-only main pane, ADR 0003                                                | `0.6.1-torii.3`; live on chiefmonkey.art                         |
-| Sign in to be addable, "Your team can now add you", ADR 0004                                                     | Merged (PR #9); ships in `0.6.1-torii.4`                         |
-| Own white-labelled team UI, roster = membership, ADR 0005                                                        | `0.6.1-torii.4`                                                  |
-| No signer popup loop: no pass on focus, paced coordinator checks (ADR 0005)                                      | `0.6.1-torii.5`                                                  |
-| Membership signals: ready/added, quiet 60 s roster poll, profiles via Continuum, ADR 0006                        | `0.6.1-torii.6`                                                  |
-| Files on the node's own server (`/files/`), Continuum-session uploads, ADR 0007                                  | `0.6.1-torii.7`                                                  |
-| One sign-in, one Allow: consent card, lasting member session, owner handoff, ADR 0008                            | `0.6.1-torii.8`                                                  |
-| Invite links: opaque `/chat/join/<id>#<secret>`, named and open invites, ADR 0009                                | `0.6.1-torii.9`                                                  |
-| Joining that works: straight-in links, one Teams frame, shisa welcome, ADR 0010                                  | `0.6.1-torii.10`                                                 |
-| One-tap thumbs up beside each message, press and hold for the emoji row (ADR 0010)                               | `0.6.1-torii.11`                                                 |
-| Join while the owner is away: node join card, self-join with owner-signed proof, ADR 0011                        | `0.6.1-torii.12` (needs Continuum v0.2.200-alpha)                |
-| Remove while the owner is away, lighter start-up, gzip on the node, ADR 0012                                     | `0.6.1-torii.13` (Suite v0.9.43-alpha for gzip)                  |
-| One shisa look: the painted pair at a laptop, washed in the theme colour, ADR 0013                               | `0.6.1-torii.14`                                                 |
-| Shisa favicon and install icons, painted logo on the sign-in card, ADR 0014                                      | `0.6.1-torii.15`                                                 |
-| Removal finishes before you leave: Teams answers Continuum's save, ADR 0015                                      | `0.6.1-torii.16` (needs Continuum v0.2.202-alpha)                |
-| Your computers: add up to 3 FIPS computers for the private git, ADR 0016                                         | `0.6.1-torii.17` (Continuum v0.2.204-alpha, Suite v0.9.53-alpha) |
-| One project at a time inside Continuum: no project list when framed, Your computers in the chat header, ADR 0017 | `0.6.1-torii.18` (Continuum v0.2.205-alpha, Suite v0.9.56-alpha) |
-| Lighter, quieter load: no News chunk, no welcome poll on reload, by-kind index for action history, ADR 0018      | `0.6.1-torii.19` (Suite v0.9.60-alpha)                           |
-| Added in seconds: the owner checks every 15 s while a teammate waits; no session key needed, ADR 0019            | `0.6.1-torii.20` (Suite v0.9.63-alpha)                           |
-| Chat server is down: a banner instead of messages that only look sent; no Fix it while down, ADR 0020            | `0.6.1-torii.21` (Suite v0.9.69-alpha)                           |
-| Looks like Continuum when framed: Continuum's theme and mode, one header, computers from Continuum's strip, ADR 0021 | `0.6.1-torii.22` (Continuum v0.2.211-alpha, Suite v0.9.70-alpha) |
-| Names show inside Continuum: the hidden header still loads the team's profiles, ADR 0021 fix                      | `0.6.1-torii.23` (Suite v0.9.71-alpha)                           |
-| Softer own messages inside Continuum: a pale amber tint with a thin border, like Continuum's own chat, ADR 0022 | `0.6.1-torii.24` (Suite v0.9.72-alpha)                           |
+| Step                                                                                                                     | State                                                            |
+| ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| J1 slice 1: action kind, role-checked fold, panel views, `/action` parser                                                | Merged (PR #1)                                                   |
+| J1 slice 2: chat wiring (see below)                                                                                      | Merged (PR #2)                                                   |
+| J1 slice 3: whole-history fold, edit form, Assign to me                                                                  | Merged (PR #3)                                                   |
+| Continuum mount (TEAMS-2c a): node settings, release workflow, ADR 0001                                                  | Merged (PRs #4, #5); released `0.6.1-torii.1`; not deployed      |
+| Teams in Continuum: per-project sidebar, Continuum sign-in, ADR 0002                                                     | `0.6.1-torii.2`                                                  |
+| No upstream services by default, project-only main pane, ADR 0003                                                        | `0.6.1-torii.3`; live on chiefmonkey.art                         |
+| Sign in to be addable, "Your team can now add you", ADR 0004                                                             | Merged (PR #9); ships in `0.6.1-torii.4`                         |
+| Own white-labelled team UI, roster = membership, ADR 0005                                                                | `0.6.1-torii.4`                                                  |
+| No signer popup loop: no pass on focus, paced coordinator checks (ADR 0005)                                              | `0.6.1-torii.5`                                                  |
+| Membership signals: ready/added, quiet 60 s roster poll, profiles via Continuum, ADR 0006                                | `0.6.1-torii.6`                                                  |
+| Files on the node's own server (`/files/`), Continuum-session uploads, ADR 0007                                          | `0.6.1-torii.7`                                                  |
+| One sign-in, one Allow: consent card, lasting member session, owner handoff, ADR 0008                                    | `0.6.1-torii.8`                                                  |
+| Invite links: opaque `/chat/join/<id>#<secret>`, named and open invites, ADR 0009                                        | `0.6.1-torii.9`                                                  |
+| Joining that works: straight-in links, one Teams frame, shisa welcome, ADR 0010                                          | `0.6.1-torii.10`                                                 |
+| One-tap thumbs up beside each message, press and hold for the emoji row (ADR 0010)                                       | `0.6.1-torii.11`                                                 |
+| Join while the owner is away: node join card, self-join with owner-signed proof, ADR 0011                                | `0.6.1-torii.12` (needs Continuum v0.2.200-alpha)                |
+| Remove while the owner is away, lighter start-up, gzip on the node, ADR 0012                                             | `0.6.1-torii.13` (Suite v0.9.43-alpha for gzip)                  |
+| One shisa look: the painted pair at a laptop, washed in the theme colour, ADR 0013                                       | `0.6.1-torii.14`                                                 |
+| Shisa favicon and install icons, painted logo on the sign-in card, ADR 0014                                              | `0.6.1-torii.15`                                                 |
+| Removal finishes before you leave: Teams answers Continuum's save, ADR 0015                                              | `0.6.1-torii.16` (needs Continuum v0.2.202-alpha)                |
+| Your computers: add up to 3 FIPS computers for the private git, ADR 0016                                                 | `0.6.1-torii.17` (Continuum v0.2.204-alpha, Suite v0.9.53-alpha) |
+| One project at a time inside Continuum: no project list when framed, Your computers in the chat header, ADR 0017         | `0.6.1-torii.18` (Continuum v0.2.205-alpha, Suite v0.9.56-alpha) |
+| Lighter, quieter load: no News chunk, no welcome poll on reload, by-kind index for action history, ADR 0018              | `0.6.1-torii.19` (Suite v0.9.60-alpha)                           |
+| Added in seconds: the owner checks every 15 s while a teammate waits; no session key needed, ADR 0019                    | `0.6.1-torii.20` (Suite v0.9.63-alpha)                           |
+| Chat server is down: a banner instead of messages that only look sent; no Fix it while down, ADR 0020                    | `0.6.1-torii.21` (Suite v0.9.69-alpha)                           |
+| Looks like Continuum when framed: Continuum's theme and mode, one header, computers from Continuum's strip, ADR 0021     | `0.6.1-torii.22` (Continuum v0.2.211-alpha, Suite v0.9.70-alpha) |
+| Names show inside Continuum: the hidden header still loads the team's profiles, ADR 0021 fix                             | `0.6.1-torii.23` (Suite v0.9.71-alpha)                           |
+| Softer own messages inside Continuum: a pale amber tint with a thin border, like Continuum's own chat, ADR 0022          | `0.6.1-torii.24` (Suite v0.9.72-alpha)                           |
+| Feels like part of Continuum: opens at the latest message, unread counts, Search, voice notes, Loading project, ADR 0023 | `0.6.1-torii.25` (Suite v0.9.73-alpha)                           |
 
 ### Using actions (J1 slice 2)
 
@@ -206,6 +207,14 @@ messages show names and avatars instead of short keys.
 Since torii.24, inside Continuum your own messages are a soft amber tint with a
 thin amber border and normal text, like Continuum's own chat, instead of solid
 amber: [`docs/torii/adr-0022-soft-own-messages.md`](docs/torii/adr-0022-soft-own-messages.md).
+
+Since torii.25, inside Continuum the project chat opens at the latest message
+(the "New messages" line still marks the first unread), counts as read only
+while shown, uses Continuum's font and a `[+] [box] [Send]` composer, posts
+unread counts (`torii:unread`) and a ready signal (`torii:ready`), opens its
+search on `torii:search`, shows "Loading project" instead of a false "not on
+this project", and has voice notes again:
+[`docs/torii/adr-0023-seamless-in-continuum.md`](docs/torii/adr-0023-seamless-in-continuum.md).
 
 ## Versions
 

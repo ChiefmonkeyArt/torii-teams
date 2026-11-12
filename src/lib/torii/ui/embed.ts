@@ -124,3 +124,73 @@ export function membersReport(
 	if (!SLUG_RE.test(slug)) return null;
 	return { type: 'torii:members', slug, joined: members.length, waiting: waiting.length };
 }
+
+/** ADR 0023 §2: Continuum shows or hides the frame (`torii:visible { on }`). */
+export function visibleMessage(
+	e: Pick<MessageEvent, 'origin' | 'source' | 'data'>,
+	parent: unknown,
+	continuumOrigin: string | undefined
+): boolean | null {
+	const data = fromContinuum(e, parent, continuumOrigin);
+	return data?.type === 'torii:visible' && typeof data.on === 'boolean' ? data.on : null;
+}
+
+/** ADR 0023 §2: Continuum starts a frame it has not shown yet with `&hidden=1`. */
+export function initialShown(url: URL): boolean {
+	return !(url.searchParams.get('embed') === '1' && url.searchParams.get('hidden') === '1');
+}
+
+/** ADR 0023 §8: Continuum's Search button opens this chat's search. */
+export function searchMessage(
+	e: Pick<MessageEvent, 'origin' | 'source' | 'data'>,
+	parent: unknown,
+	continuumOrigin: string | undefined
+): boolean {
+	return fromContinuum(e, parent, continuumOrigin)?.type === 'torii:search';
+}
+
+/** ADR 0023 §4: unread counts per project, numbers only. */
+export function unreadReport(counts: Record<string, number>): {
+	type: 'torii:unread';
+	counts: Record<string, number>;
+} {
+	const out: Record<string, number> = {};
+	for (const [slug, n] of Object.entries(counts)) {
+		if (SLUG_RE.test(slug) && Number.isFinite(n)) out[slug] = Math.max(0, Math.floor(n));
+	}
+	return { type: 'torii:unread', counts: out };
+}
+
+/** ADR 0023 §5: the project page shows its real state now. */
+export function readyReport(slug: string): { type: 'torii:ready'; slug: string } | null {
+	return SLUG_RE.test(slug) ? { type: 'torii:ready', slug } : null;
+}
+
+/**
+ * ADR 0023 §6: "not on this project" only once the list has loaded; until
+ * then, loading. Other statuses (signed out, waiting) are TeamShell's.
+ */
+export function projectPageState(
+	status: string,
+	onProject: boolean
+): 'chat' | 'loading' | 'missing' {
+	if (onProject) return 'chat';
+	return status === 'ready' || status === 'error' ? 'missing' : 'loading';
+}
+
+/** ADR 0023 §6: a warning must hold this long before it shows; it hides at once. */
+export const SETTLE_MS = 3000;
+
+/** How long to wait before showing `next` (0 = now): only a new warning waits. */
+export function settleDelay(
+	shown: string | boolean,
+	next: string | boolean,
+	ms = SETTLE_MS
+): number {
+	return next && !shown ? ms : 0;
+}
+
+/** ADR 0023 §2: may a visible-row report mark messages read? */
+export function canMarkRead(pageVisible: boolean, embedded: boolean, shown: boolean): boolean {
+	return pageVisible && (!embedded || shown);
+}

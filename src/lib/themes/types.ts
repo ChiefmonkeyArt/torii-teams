@@ -39,6 +39,10 @@ export interface ThemeDefinition {
 	 * normal text) instead of solid primary. Teams ADR 0022; Continuum only.
 	 */
 	softOwnBubbles?: boolean;
+	/** Page font stack (Teams ADR 0023: Continuum's, inside Continuum only). */
+	fontFamily?: string;
+	/** Composer shaped like Continuum's assistant bar (Teams ADR 0023). */
+	assistantBar?: boolean;
 }
 
 export interface ThemeTokenMeta {

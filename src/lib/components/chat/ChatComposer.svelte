@@ -87,7 +87,7 @@
 		onSendVoice?: (result: RecordingResult) => void;
 		/** Send a poll created in the poll composer dialog. */
 		onSendPoll?: (draft: PollDraft) => void;
-		/** Torii team chat (ADR 0005): no voice notes, polls or GIF search. */
+		/** Torii team chat (ADR 0005): no polls or GIF search (voice notes: ADR 0023). */
 		minimal?: boolean;
 	} = $props();
 
@@ -131,13 +131,9 @@
 	const isRecording = $derived(
 		recorder.state === 'recording' || recorder.state === 'locked' || recorder.state === 'requesting'
 	);
+	// Torii ADR 0023 §9: project chats have voice notes too (reverses ADR 0005).
 	const showMic = $derived(
-		!minimal &&
-			!disabled &&
-			voiceSupported &&
-			!value.trim() &&
-			pendingAttachments.length === 0 &&
-			!isRecording
+		!disabled && voiceSupported && !value.trim() && pendingAttachments.length === 0 && !isRecording
 	);
 
 	// Hold-to-record gesture tracking. Listeners attach to window on pointerdown
@@ -1027,7 +1023,7 @@
 							{/each}
 						</div>
 					{/if}
-					<div class="flex justify-center">
+					<div class="chat-composer-expand flex justify-center">
 						<Button
 							type="button"
 							variant="ghost"
@@ -1052,14 +1048,14 @@
 						onkeydown={handleKeyDown}
 						oninput={handleInput}
 						onpaste={handlePaste}
-						class={COMPOSER_INPUT_WRAP_CLASS}
+						class={`chat-composer-input ${COMPOSER_INPUT_WRAP_CLASS}`}
 						style={`max-height: ${expanded ? 320 : 128}px; min-height: ${expanded ? 144 : 44}px;`}
 					/>
 				</div>
 				{#if showMic}
 					<button
 						type="button"
-						class="flex size-11 shrink-0 touch-none items-center justify-center rounded-xl bg-primary text-primary-foreground transition-transform active:scale-95"
+						class="chat-composer-send flex size-11 shrink-0 touch-none items-center justify-center rounded-xl bg-primary text-primary-foreground transition-transform active:scale-95"
 						onpointerdown={startVoice}
 						aria-label="Hold to record voice note"
 						title="Hold to record voice note"
@@ -1069,12 +1065,15 @@
 				{:else}
 					<Button
 						type="submit"
-						class="h-11 shrink-0 rounded-xl px-4"
+						class="chat-composer-send h-11 shrink-0 rounded-xl px-4"
+						aria-label="Send"
 						disabled={disabled ||
 							attachmentsProcessing ||
 							(!value.trim() && pendingAttachments.length === 0)}
 					>
-						<SendHorizontal class="size-4" />
+						<SendHorizontal class="chat-composer-send-icon size-4" /><span
+							class="chat-composer-send-label hidden">Send</span
+						>
 					</Button>
 				{/if}
 			{/if}
