@@ -65,3 +65,62 @@ export function rosterSyncedAnswer(input: {
 	const left = groupMembers.filter((pk) => pk !== me && !roster.includes(pk)).length;
 	return { type: 'torii:roster-synced', slug, left, error: failed };
 }
+
+export type EmbedMode = 'dark' | 'light';
+const isMode = (v: unknown): v is EmbedMode => v === 'dark' || v === 'light';
+
+/** A message from the parent window at Continuum's exact origin, or null. */
+function fromContinuum(
+	e: Pick<MessageEvent, 'origin' | 'source' | 'data'>,
+	parent: unknown,
+	continuumOrigin: string | undefined
+): { type?: unknown; [k: string]: unknown } | null {
+	if (!continuumOrigin || e.origin !== continuumOrigin || e.source !== parent) return null;
+	if (parent === null || parent === undefined) return null;
+	const data = e.data as { type?: unknown } | null;
+	return data && typeof data === 'object' ? data : null;
+}
+
+/** ADR 0021 §2: Continuum's light or dark, from the frame address (`&mode=`). */
+export function embedModeFromUrl(url: URL): EmbedMode | null {
+	if (url.searchParams.get('embed') !== '1') return null;
+	const m = url.searchParams.get('mode');
+	return isMode(m) ? m : null;
+}
+
+/** ADR 0021 §2: `torii:theme { mode }` when the owner switches; only one word. */
+export function themeModeMessage(
+	e: Pick<MessageEvent, 'origin' | 'source' | 'data'>,
+	parent: unknown,
+	continuumOrigin: string | undefined
+): EmbedMode | null {
+	const data = fromContinuum(e, parent, continuumOrigin);
+	return data?.type === 'torii:theme' && isMode(data.mode) ? data.mode : null;
+}
+
+/** ADR 0021 §3: Continuum's Your computers button. */
+export function openComputersMessage(
+	e: Pick<MessageEvent, 'origin' | 'source' | 'data'>,
+	parent: unknown,
+	continuumOrigin: string | undefined
+): boolean {
+	return fromContinuum(e, parent, continuumOrigin)?.type === 'torii:open-computers';
+}
+
+/** ADR 0021 §2: the frame has no mode-watcher; Continuum's choice sets `.dark`. */
+export function applyEmbedMode(root: Pick<HTMLElement, 'classList'>, mode: EmbedMode) {
+	root.classList.toggle('dark', mode === 'dark');
+}
+
+/**
+ * ADR 0021 §4: who is really in the chat, for Continuum's strip. Two numbers;
+ * no keys or names leave the frame.
+ */
+export function membersReport(
+	slug: string,
+	members: readonly string[],
+	waiting: readonly string[]
+): { type: 'torii:members'; slug: string; joined: number; waiting: number } | null {
+	if (!SLUG_RE.test(slug)) return null;
+	return { type: 'torii:members', slug, joined: members.length, waiting: waiting.length };
+}

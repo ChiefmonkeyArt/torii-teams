@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { contrastRatio, CONTRAST_PAIRS } from './contrast';
 import { randomTheme } from './random';
-import { BUILTIN_THEMES } from './builtin';
+import { BUILTIN_THEMES, CONTINUUM_THEME } from './builtin';
+// ADR 0021: the Continuum theme meets the same bar, though not in the gallery.
+const CHECKED = [...BUILTIN_THEMES, CONTINUUM_THEME];
 import { themeCss, parseThemeJson } from './appearance.svelte';
 import { THEME_TOKEN_KEYS } from './types';
 
@@ -36,7 +38,7 @@ describe('contrastRatio', () => {
 
 describe('built-in themes', () => {
 	it('every token key is present and hex-formatted in both variants', () => {
-		for (const theme of BUILTIN_THEMES) {
+		for (const theme of CHECKED) {
 			for (const variant of [theme.light, theme.dark]) {
 				for (const key of THEME_TOKEN_KEYS) {
 					const expected = key === 'radius' ? /^[\d.]+(rem|px|em)$/ : /^#[0-9a-f]{3,8}$/i;
@@ -47,7 +49,7 @@ describe('built-in themes', () => {
 	});
 
 	it('every CONTRAST_PAIR meets WCAG AA (>= 4.5:1)', () => {
-		for (const theme of BUILTIN_THEMES) {
+		for (const theme of CHECKED) {
 			for (const variant of [theme.light, theme.dark]) {
 				for (const pair of CONTRAST_PAIRS) {
 					expect(

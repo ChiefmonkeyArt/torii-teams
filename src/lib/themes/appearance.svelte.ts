@@ -1,5 +1,5 @@
 import { browser } from '$app/environment';
-import { BUILTIN_THEMES, DEFAULT_THEME_ID, SOFT_THEME } from './builtin';
+import { BUILTIN_THEMES, CONTINUUM_THEME, DEFAULT_THEME_ID, SOFT_THEME } from './builtin';
 import type { ThemeDefinition, ThemeTokenSet } from './types';
 import { THEME_TOKEN_KEYS } from './types';
 
@@ -245,9 +245,11 @@ async function looksLikeExistingUser(): Promise<boolean> {
  * script in app.html has already painted the stored CSS, so this mainly
  * re-affirms state and runs the one-time default migration.
  */
-export async function initAppearance() {
+export async function initAppearance(opts: { embedded?: boolean } = {}) {
 	if (!browser || initialized) return;
 	initialized = true;
+	// ADR 0021: inside Continuum, its palette only; nothing stored changes.
+	if (opts.embedded) return applyThemeStyle(CONTINUUM_THEME, false);
 
 	let customs: ThemeDefinition[] = [];
 	try {

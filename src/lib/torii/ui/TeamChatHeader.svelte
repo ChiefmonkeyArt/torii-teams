@@ -3,7 +3,6 @@
 	import { resolve } from '$app/paths';
 	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import MemberName from './MemberName.svelte';
-	import DevicePanel from './DevicePanel.svelte';
 	import { embedState } from './embedState.svelte';
 
 	let {
@@ -17,43 +16,51 @@
 	const MAX_FACES = 5;
 </script>
 
-<header class="relative border-b border-border px-3 py-2 md:px-5">
-	<div class="flex items-center gap-2">
-		{#if !embedState.on}<a
-				href={resolve('/chat')}
-				class="-ml-1 rounded-md p-1 text-muted-foreground hover:bg-muted md:hidden"
-				aria-label="Projects"><ChevronLeft class="size-5" /></a
-			>{/if}
-		<h1 class="min-w-0 flex-1 truncate text-base font-semibold">{slug}</h1>
-		<button
-			type="button"
-			class="flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-muted"
-			aria-expanded={open}
-			aria-label="Members"
-			onclick={() => (open = !open)}
+<!-- ADR 0021 §3: inside Continuum its strip is the header; only a note shows. -->
+{#if embedState.on}
+	{#if note}<p
+			class="border-b border-border px-3 py-1 text-xs text-muted-foreground md:px-5"
+			data-testid="chat-note"
 		>
-			<span class="flex -space-x-1.5">
-				{#each members.slice(0, MAX_FACES) as pk (pk)}
-					<MemberName pubkey={pk} showName={false} size="h-6 w-6 ring-2 ring-background" />
-				{/each}
-			</span>
-			<span class="text-xs text-muted-foreground">{members.length}</span>
-		</button>
-		<!-- ADR 0017 §3: inside Continuum, Your computers lives here. -->
-		{#if embedState.on}<DevicePanel variant="header" />{/if}
-	</div>
-	{#if note}<p class="mt-1 text-xs text-muted-foreground">{note}</p>{/if}
-	{#if open}
-		<div class="mt-2 grid gap-1 text-sm">
-			{#each members as pk (pk)}
-				<MemberName pubkey={pk} />
-			{/each}
-			{#each waiting as pk (pk)}
-				<span class="flex items-center gap-2 text-muted-foreground">
-					<MemberName pubkey={pk} />
-					<span class="text-xs">hasn't signed in yet</span>
+			{note}
+		</p>{/if}
+{:else}
+	<header class="relative border-b border-border px-3 py-2 md:px-5">
+		<div class="flex items-center gap-2">
+			{#if !embedState.on}<a
+					href={resolve('/chat')}
+					class="-ml-1 rounded-md p-1 text-muted-foreground hover:bg-muted md:hidden"
+					aria-label="Projects"><ChevronLeft class="size-5" /></a
+				>{/if}
+			<h1 class="min-w-0 flex-1 truncate text-base font-semibold">{slug}</h1>
+			<button
+				type="button"
+				class="flex items-center gap-1 rounded-md px-1.5 py-1 hover:bg-muted"
+				aria-expanded={open}
+				aria-label="Members"
+				onclick={() => (open = !open)}
+			>
+				<span class="flex -space-x-1.5">
+					{#each members.slice(0, MAX_FACES) as pk (pk)}
+						<MemberName pubkey={pk} showName={false} size="h-6 w-6 ring-2 ring-background" />
+					{/each}
 				</span>
-			{/each}
+				<span class="text-xs text-muted-foreground">{members.length}</span>
+			</button>
 		</div>
-	{/if}
-</header>
+		{#if note}<p class="mt-1 text-xs text-muted-foreground">{note}</p>{/if}
+		{#if open}
+			<div class="mt-2 grid gap-1 text-sm">
+				{#each members as pk (pk)}
+					<MemberName pubkey={pk} />
+				{/each}
+				{#each waiting as pk (pk)}
+					<span class="flex items-center gap-2 text-muted-foreground">
+						<MemberName pubkey={pk} />
+						<span class="text-xs">hasn't signed in yet</span>
+					</span>
+				{/each}
+			</div>
+		{/if}
+	</header>
+{/if}

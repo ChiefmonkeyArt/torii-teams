@@ -27,7 +27,18 @@
 			   first paint. Persisted as `cordn.themeCss` by the theming service
 			   (appearance.svelte.ts); layout.css only holds the default (Soft). */
 			try {
-				var css = localStorage.getItem('cordn.themeCss');
+				var q = new URLSearchParams(location.search);
+				var css;
+				if (q.get('embed') === '1') {
+					/* ADR 0021: inside Continuum, its palette and its light or dark
+					   (`&mode=`), never the stored Teams theme. Same string as
+					   themeCss(CONTINUUM_THEME); embedLook.test.ts keeps them equal. */
+					css =
+						':root:root{--background:#ffffff;--card:#faf8f5;--popover:#ffffff;--secondary:#f1eee9;--accent:#f3f1ec;--muted:#f3f1ec;--foreground:#26221d;--card-foreground:#26221d;--popover-foreground:#26221d;--secondary-foreground:#312d25;--accent-foreground:#26221d;--muted-foreground:#716b60;--primary:#e18b09;--primary-foreground:#291f0f;--destructive:#bf2222;--border:#eae5dc;--input:#e4e0d7;--ring:#e18b09;--radius:0.75rem;}:root:root.dark{--background:#221f1c;--card:#322e2a;--popover:#221f1c;--secondary:#322e2a;--accent:#34312d;--muted:#34312d;--foreground:#f0eeea;--card-foreground:#eeece7;--popover-foreground:#f0eeea;--secondary-foreground:#eeece7;--accent-foreground:#f0eeea;--muted-foreground:#a6a096;--primary:#f6ae31;--primary-foreground:#211a12;--destructive:#e36363;--border:#38332e;--input:#48433d;--ring:#f6ae31;--radius:0.75rem;}';
+					var m = q.get('mode');
+					var dark = m ? m === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+					document.documentElement.classList.toggle('dark', dark);
+				} else css = localStorage.getItem('cordn.themeCss');
 				if (css) {
 					var s = document.createElement('style');
 					s.id = 'cordn-theme';

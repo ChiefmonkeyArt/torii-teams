@@ -393,6 +393,62 @@ export const OSTRICH_THEME: ThemeDefinition = {
 	}
 };
 
+/**
+ * ADR 0021: Continuum's own palette, used only inside Continuum's frame (never
+ * in the gallery, never saved). Copied from torii-continuum
+ * `src/styles/theme.css` (HSL in the comments); keep the two in step. The page
+ * is Continuum's `--card`, so the frame reads as one of its cards; `card`
+ * (other people's bubbles) is Continuum's `--secondary` / `--background`.
+ * `accent` is a hover surface here, so it takes `--muted`, not Continuum's
+ * orange. `app.html` carries the compiled CSS for the first paint.
+ */
+export const CONTINUUM_THEME: ThemeDefinition = {
+	id: 'continuum',
+	name: 'Continuum',
+	light: {
+		background: '#ffffff', // 0 0% 100%
+		foreground: '#26221d', // 36 14% 13%
+		card: '#faf8f5', // 40 33% 97%
+		'card-foreground': '#26221d', // 36 14% 13%
+		popover: '#ffffff', // 0 0% 100%
+		'popover-foreground': '#26221d', // 36 14% 13%
+		primary: '#e18b09', // 36 92% 46%
+		'primary-foreground': '#291f0f', // 36 45% 11%
+		secondary: '#f1eee9', // 40 22% 93%
+		'secondary-foreground': '#312d25', // 36 14% 17%
+		muted: '#f3f1ec', // 40 22% 94%
+		'muted-foreground': '#716b60', // 38 8% 41%
+		accent: '#f3f1ec', // 40 22% 94%
+		'accent-foreground': '#26221d', // 36 14% 13%
+		destructive: '#bf2222', // 0 70% 44%
+		border: '#eae5dc', // 38 26% 89%
+		input: '#e4e0d7', // 40 20% 87%
+		ring: '#e18b09', // 36 92% 46%
+		radius: '0.75rem'
+	},
+	dark: {
+		background: '#221f1c', // 32 10% 12%
+		foreground: '#f0eeea', // 40 16% 93%
+		card: '#322e2a', // 32 8% 18%
+		'card-foreground': '#eeece7', // 40 16% 92%
+		popover: '#221f1c', // 32 10% 12%
+		'popover-foreground': '#f0eeea', // 40 16% 93%
+		primary: '#f6ae31', // 38 92% 58%
+		'primary-foreground': '#211a12', // 30 30% 10%
+		secondary: '#322e2a', // 32 8% 18%
+		'secondary-foreground': '#eeece7', // 40 16% 92%
+		muted: '#34312d', // 32 8% 19%
+		'muted-foreground': '#a6a096', // 38 8% 62%
+		accent: '#34312d', // 32 8% 19%
+		'accent-foreground': '#f0eeea', // 40 16% 93%
+		destructive: '#e36363', // 0 70% 64% (Continuum's 52% is 3.5:1 here; AA needs 4.5)
+		border: '#38332e', // 32 10% 20% (Continuum --card-border)
+		input: '#48433d', // 32 8% 26%
+		ring: '#f6ae31', // 38 92% 58%
+		radius: '0.75rem'
+	}
+};
+
 export const BUILTIN_THEMES: ThemeDefinition[] = [
 	SOFT_THEME,
 	CLASSIC_THEME,

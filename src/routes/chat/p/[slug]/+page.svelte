@@ -7,7 +7,13 @@
 	import { listChatGroups } from '$lib/services/chatGroups.svelte';
 	import { safeNormalizePubKey as normalizePubKey } from '$lib/utils';
 	import { TORII_NODE_BUILD } from '$lib/torii/build';
-	import { projectChannels, projectGroup } from '$lib/torii/projectChannels.svelte';
+	import {
+		continuumClient,
+		projectChannels,
+		projectGroup
+	} from '$lib/torii/projectChannels.svelte';
+	import { membersReport } from '$lib/torii/ui/embed';
+	import { embedState } from '$lib/torii/ui/embedState.svelte';
 	import { rosterSync, startProjectChat } from '$lib/torii/rosterSync.svelte';
 	import { waitingMembers } from '$lib/torii/rosterPlan';
 	import TeamChatHeader from '$lib/torii/ui/TeamChatHeader.svelte';
@@ -42,6 +48,19 @@
 				? `${waiting.length} not joined yet`
 				: ''
 	);
+
+	// ADR 0021 §4: tell Continuum's strip who is really in (counts only).
+	let lastReport = '';
+	$effect(() => {
+		if (!embedState.on || !group) return;
+		const origin = continuumClient()?.origin;
+		const report = membersReport(slug, group.memberPubkeys, waiting);
+		if (!origin || !report) return;
+		const key = JSON.stringify(report);
+		if (key === lastReport) return;
+		lastReport = key;
+		window.parent.postMessage(report, origin);
+	});
 </script>
 
 {#if !onProject}
