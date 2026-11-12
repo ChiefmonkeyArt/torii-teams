@@ -113,10 +113,45 @@ function sanitizeTheme(input: unknown): ThemeDefinition | null {
 	};
 }
 
+/** `a` over `b` at `t` (0..1), both `#rrggbb`. */
+export function mixHex(a: string, b: string, t: number): string {
+	const ch = (h: string, i: number) => parseInt(h.slice(1 + i * 2, 3 + i * 2), 16);
+	return (
+		'#' +
+		[0, 1, 2]
+			.map((i) =>
+				Math.round(ch(a, i) * t + ch(b, i) * (1 - t))
+					.toString(16)
+					.padStart(2, '0')
+			)
+			.join('')
+	);
+}
+
+/** Tint and border shares of `primary` for soft own bubbles (ADR 0022). */
+export const OWN_TINT = 0.14;
+export const OWN_BORDER = 0.42;
+
+/**
+ * Inside `.chat-own` (an own message), `primary` becomes the tint and
+ * `primary-foreground` the normal text colour, so every primary utility in the
+ * bubble (links, ticks, quotes) follows; the border is set directly.
+ */
+function softOwnCss(sel: string, set: ThemeTokenSet): string {
+	const bg = set.background;
+	return (
+		`${sel} .chat-own{--primary:${mixHex(set.primary, bg, OWN_TINT)};` +
+		`--primary-foreground:${set.foreground};` +
+		`border-color:${mixHex(set.primary, bg, OWN_BORDER)};}`
+	);
+}
+
 export function themeCss(theme: ThemeDefinition): string {
 	const vars = (set: ThemeTokenSet) =>
 		THEME_TOKEN_KEYS.map((key) => `--${key}:${set[key]};`).join('');
-	return `:root:root{${vars(theme.light)}}:root:root.dark{${vars(theme.dark)}}`;
+	const base = `:root:root{${vars(theme.light)}}:root:root.dark{${vars(theme.dark)}}`;
+	if (!theme.softOwnBubbles) return base;
+	return base + softOwnCss(':root:root', theme.light) + softOwnCss(':root:root.dark', theme.dark);
 }
 
 function applyThemeStyle(theme: ThemeDefinition, persist: boolean) {

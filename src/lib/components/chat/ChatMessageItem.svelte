@@ -182,7 +182,7 @@
 				isOwn
 					? message.deliveryState === 'error'
 						? 'border-destructive/40 bg-primary text-primary-foreground'
-						: 'border-primary bg-primary text-primary-foreground'
+						: 'chat-own border-primary bg-primary text-primary-foreground'
 					: 'border-border bg-card'
 			} ${highlighted ? 'border-amber-400 bg-amber-50/70 ring-4 ring-amber-300/35 shadow-xl scale-[1.015] animate-pulse' : ''}`
 	);
