@@ -128,3 +128,24 @@ test('no FIPS on the node, or not on a project: one plain line, no form', async 
 	expect(el.querySelector('[data-testid="device-not-listed"]')).not.toBeNull();
 	expect(el.querySelector('form')).toBeNull();
 });
+
+test('ADR 0021: inside Continuum, no button; its strip opens it and Close shuts it', async () => {
+	const { embedState } = await import('./embedState.svelte');
+	h.load.mockResolvedValue(mineWith([{ npub: D1, label: 'laptop' }]));
+	const target = document.createElement('div');
+	document.body.append(target);
+	app = mount(DevicePanel, { target, props: { variant: 'embed' } });
+	flushSync();
+	expect(target.querySelector('button')).toBeNull();
+	expect(target.querySelector('[data-testid="device-panel"]')).toBeNull();
+	embedState.computers = true;
+	flushSync();
+	await vi.waitFor(() => expect(h.load).toHaveBeenCalled());
+	const panel = target.querySelector('[data-testid="device-panel"]') as HTMLElement;
+	expect(panel.className).toContain('absolute');
+	await vi.waitFor(() => expect(panel.textContent).toContain('laptop'));
+	[...target.querySelectorAll('button')].find((b) => b.textContent === 'Close')!.click();
+	flushSync();
+	expect(embedState.computers).toBe(false);
+	expect(target.querySelector('[data-testid="device-panel"]')).toBeNull();
+});

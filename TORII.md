@@ -65,6 +65,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | Lighter, quieter load: no News chunk, no welcome poll on reload, by-kind index for action history, ADR 0018      | `0.6.1-torii.19` (Suite v0.9.60-alpha)                           |
 | Added in seconds: the owner checks every 15 s while a teammate waits; no session key needed, ADR 0019            | `0.6.1-torii.20` (Suite v0.9.63-alpha)                           |
 | Chat server is down: a banner instead of messages that only look sent; no Fix it while down, ADR 0020            | `0.6.1-torii.21` (Suite v0.9.69-alpha)                           |
+| Looks like Continuum when framed: Continuum's theme and mode, one header, computers from Continuum's strip, ADR 0021 | `0.6.1-torii.22` (Continuum v0.2.211-alpha, Suite v0.9.70-alpha) |
 
 ### Using actions (J1 slice 2)
 
@@ -189,6 +190,13 @@ Since torii.21, when a request to the node's chat server gets no answer, the
 chat shows "Chat server is down. Messages won't send until it's back." until
 the next request succeeds, and hides "Your team can't add you yet":
 [`docs/torii/adr-0020-chat-server-down.md`](docs/torii/adr-0020-chat-server-down.md).
+
+Since torii.22, inside Continuum (`?embed=1`) the chat uses Continuum's own
+colours and follows its light or dark mode (`&mode=`, then `torii:theme`
+messages), without changing the theme saved for the full window. Continuum's
+strip is the only header: it shows the member counts Teams reports
+(`torii:members`) and opens Your computers (`torii:open-computers`):
+[`docs/torii/adr-0021-continuum-look.md`](docs/torii/adr-0021-continuum-look.md).
 
 ## Versions
 

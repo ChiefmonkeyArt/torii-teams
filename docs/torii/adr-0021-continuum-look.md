@@ -1,6 +1,6 @@
 # ADR 0021: The project chat looks like Continuum
 
-Date: 2026-11-12. Status: **Proposed** (asked by owner, 2026-11-12: "That
+Date: 2026-11-12. Status: **Accepted** 2026-11-12 ("Accept and ship", after the review screens). Proposed (asked by owner, 2026-11-12: "That
 looks nothing like our continuum theme", after a snapshot of the project chat
 on opening; "Write the ADR as Proposed for Continuum's embedded chat theme and
 header"). Target: `0.6.1-torii.22` with the next free Continuum version
@@ -50,7 +50,8 @@ ADR 0013 and ADR 0017; amends ADR 0017 §3 (where Your computers lives).
    becomes the only header: faces, count, Add people, Your computers and Open
    in full window. Your computers sends `torii:open-computers` to the frame,
    which opens the same panel as today. On a phone the strip stays one line:
-   faces and count, Add people, and a More menu for the other two.
+   faces and count, Add people, and a More menu for the other two. The menu is
+   a browser popover (top layer), since the docked frame sits above the page.
 4. **A count that is true.** The frame sends `torii:members { slug, joined,
    waiting }` to Continuum when its member list changes: two numbers, no keys.
    Continuum shows these in the strip in place of its own estimate, falling

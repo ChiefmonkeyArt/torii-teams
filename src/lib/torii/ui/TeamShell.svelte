@@ -35,7 +35,14 @@
 		syncRosters
 	} from '../rosterSync.svelte';
 	import { OWNER_QUICK_MS, ownerQuickCheckDue, waitingKey } from '../rosterPlan';
-	import { isEmbedded, navigateTarget, rosterChangedSlug } from './embed';
+	import {
+		applyEmbedMode,
+		isEmbedded,
+		navigateTarget,
+		openComputersMessage,
+		rosterChangedSlug,
+		themeModeMessage
+	} from './embed';
 	import { embedState, shellLayout } from './embedState.svelte';
 	import { maintainReachability, reachabilityStore } from '$lib/services/chatKeyPackages.svelte';
 	import { safeNormalizePubKey } from '$lib/utils';
@@ -155,6 +162,10 @@
 					() => reply(true)
 				);
 			}
+			// ADR 0021: Continuum's light or dark, and its Your computers button.
+			const mode = themeModeMessage(e, window.parent, origin);
+			if (mode) applyEmbedMode(document.documentElement, mode);
+			if (openComputersMessage(e, window.parent, origin)) embedState.computers = true;
 			// Continuum's one frame (ADR 0010): show the project it asks for.
 			const to = navigateTarget(e, window.parent, origin);
 			if (to !== null) {
@@ -295,6 +306,8 @@
 			</aside>
 		{/if}
 		<main class="{layout.main} relative min-w-0 flex-1 flex-col pt-safe">
+			<!-- ADR 0021 §3: inside Continuum, opened from its strip. -->
+			{#if embedded}<DevicePanel variant="embed" />{/if}
 			{#if signerReadinessStore.waiting}
 				<div class="border-b border-border bg-muted/60 px-3 py-1 text-sm text-muted-foreground">
 					Waiting for your Nostr signer…

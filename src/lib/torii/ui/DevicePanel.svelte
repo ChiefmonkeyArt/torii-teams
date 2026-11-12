@@ -4,12 +4,18 @@
 	import { ContinuumError } from '../continuumApi';
 	import { checkNewDevice, hostsLine, saveError, type Device, type MyDevices } from '../devices';
 	import { loadMyDevices, saveMyDevices } from '../projectChannels.svelte';
+	import { embedState } from './embedState.svelte';
 
-	// ADR 0017 §3: `header` is a small button with the panel as a dropdown.
-	let { variant = 'list' }: { variant?: 'list' | 'header' } = $props();
-	const inHeader = $derived(variant === 'header');
+	// ADR 0021 §3: `embed` has no button of its own; Continuum's strip opens it
+	// (`embedState.computers`) and it shows as a dropdown at the top right.
+	let { variant = 'list' }: { variant?: 'list' | 'embed' } = $props();
+	const inHeader = $derived(variant === 'embed');
 
-	let open = $state(false);
+	let listOpen = $state(false);
+	const open = $derived(inHeader ? embedState.computers : listOpen);
+	$effect(() => {
+		if (inHeader && embedState.computers) void load();
+	});
 	let mine = $state<MyDevices | null>(null);
 	let loadError = $state('');
 	let busy = $state(false);
@@ -29,8 +35,8 @@
 	}
 
 	function toggle() {
-		open = !open;
-		if (open) void load();
+		listOpen = !listOpen;
+		if (listOpen) void load();
 	}
 
 	async function save(next: Device[]) {
@@ -77,21 +83,27 @@
 </script>
 
 <div class={inHeader ? 'text-sm' : 'border-t border-border px-3 py-2 text-sm'}>
-	<button
-		type="button"
-		class="{inHeader
-			? 'px-1.5 text-xs'
-			: 'w-full px-2 text-left'} rounded-md py-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-		aria-expanded={open}
-		onclick={toggle}>Your computers</button
-	>
+	{#if !inHeader}<button
+			type="button"
+			class="w-full rounded-md px-2 py-1 text-left text-muted-foreground hover:bg-muted hover:text-foreground"
+			aria-expanded={open}
+			onclick={toggle}>Your computers</button
+		>{/if}
 	{#if open}
 		<div
 			class="{inHeader
-				? 'absolute top-full right-0 z-20 mt-1 w-80 max-w-[calc(100vw-1rem)] rounded-md border border-border bg-background p-3 shadow'
+				? 'absolute top-2 right-2 z-20 w-80 max-w-[calc(100vw-1rem)] rounded-md border border-border bg-popover p-3 shadow'
 				: 'mt-2'} flex flex-col gap-2"
 			data-testid="device-panel"
 		>
+			{#if inHeader}<div class="flex items-center justify-between">
+					<p class="font-medium">Your computers</p>
+					<button
+						type="button"
+						class="rounded-md px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+						onclick={() => (embedState.computers = false)}>Close</button
+					>
+				</div>{/if}
 			{#if loadError}
 				<p class="text-xs text-muted-foreground">{loadError}</p>
 			{:else if !mine}

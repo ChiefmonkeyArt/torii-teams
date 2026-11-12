@@ -18,8 +18,14 @@
 	import { toriiRedirect } from '$lib/torii/ui/routes';
 	import { activeGroupId } from '$lib/utils/groupShareLink';
 	import { captureInvite } from '$lib/torii/inviteLink';
+	import { isEmbedded } from '$lib/torii/ui/embed';
 
 	let { children } = $props();
+
+	// ADR 0021: inside Continuum, Continuum sets light or dark (app.html, then
+	// torii:theme in TeamShell). mode-watcher stays out, so it neither flips
+	// the frame to the system setting nor touches the stored Teams choice.
+	const embedded = typeof window !== 'undefined' && isEmbedded(window, new URL(location.href));
 
 	// Invite links (ADR 0009): take the secret out of the address bar before
 	// any request leaves the page (component init runs before every onMount).
@@ -67,7 +73,7 @@
 		void initNativeShell();
 		// Re-apply the stored theme post-hydration (the app.html inline script has
 		// already painted it) and run the one-time default migration.
-		void initAppearance();
+		void initAppearance({ embedded });
 		// Torii Teams: on a Torii node, add the node's coordinator (404 elsewhere).
 		// With a Continuum origin, the sidebar becomes one channel per project.
 		void initToriiNode().then(async (config) => {
@@ -80,7 +86,7 @@
 </script>
 
 <Toaster offset={toastInsets('24px')} mobileOffset={toastInsets('16px')} />
-<ModeWatcher />
+{#if !embedded}<ModeWatcher />{/if}
 <AppUpdateBanner />
 {#if !TORII_NODE_BUILD}<NativeAppUpdateBanner />{/if}
 
