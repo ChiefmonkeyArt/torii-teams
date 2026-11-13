@@ -1,5 +1,6 @@
 import { mount, unmount, flushSync } from 'svelte';
 import { afterEach, expect, test, vi } from 'vitest';
+import shisaLogoUrl from './shisa-logo.webp';
 
 const h = vi.hoisted(() => ({
 	channels: {
@@ -198,4 +199,23 @@ test('inside Continuum or with an invite: no logo', () => {
 	expect(el.querySelector('[data-testid="teams-logo"]')).toBeNull();
 	expect(el.querySelector('[data-testid="shisa-welcome"]')).not.toBeNull();
 	Object.assign(h.channels, { invite: null });
+});
+
+test('logo file (ADR 0014 amendment): 256 px WebP with transparency, no heavier than before', async () => {
+	const b = new Uint8Array(await (await fetch(shisaLogoUrl)).arrayBuffer());
+	const ascii = (a: number, z: number) => String.fromCharCode(...b.subarray(a, z));
+	const u24 = (i: number) => b[i] | (b[i + 1] << 8) | (b[i + 2] << 16);
+	expect(ascii(0, 4)).toBe('RIFF');
+	expect(ascii(8, 16)).toBe('WEBPVP8X');
+	expect(b[20] & 0x10).toBe(0x10); // alpha flag: the art sits on a transparent background
+	expect(u24(24) + 1).toBe(256);
+	expect(u24(27) + 1).toBe(256);
+	expect(b.length).toBeLessThanOrEqual(28_000);
+	// No sky left behind the pair: the bitmap's top-centre (between the
+	// pillars, under the lintel) is see-through.
+	const bmp = await createImageBitmap(new Blob([b], { type: 'image/webp' }));
+	const c = new OffscreenCanvas(256, 256);
+	const g = c.getContext('2d')!;
+	g.drawImage(bmp, 0, 0);
+	expect(g.getImageData(128, 80, 1, 1).data[3]).toBeLessThan(16);
 });

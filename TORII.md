@@ -69,6 +69,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | Names show inside Continuum: the hidden header still loads the team's profiles, ADR 0021 fix                             | `0.6.1-torii.23` (Suite v0.9.71-alpha)                           |
 | Softer own messages inside Continuum: a pale amber tint with a thin border, like Continuum's own chat, ADR 0022          | `0.6.1-torii.24` (Suite v0.9.72-alpha)                           |
 | Feels like part of Continuum: opens at the latest message, unread counts, Search, voice notes, Loading project, ADR 0023 | `0.6.1-torii.25` (Suite v0.9.73-alpha)                           |
+| Cleaner logo: the torii and shisa pair only, no cloud or sky behind them on the sign-in card, ADR 0014 amendment 1       | `0.6.1-torii.26` (Suite v0.9.77-alpha)                           |
 
 ### Using actions (J1 slice 2)
 

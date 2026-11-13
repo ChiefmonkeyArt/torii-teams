@@ -70,3 +70,18 @@ torii.
 - Checked in Chromium on a real release build: sign-in card, favicon at 16 to
   128 px on dark and light, no `/pwa/` in the service worker cache, no
   outside requests.
+
+## Amendment 1: no cloud or sky behind the logo (torii.26)
+
+Date: 2026-11-13. Status: **Accepted** (owner, 2026-11-13: "remove the
+background cloud/mountains from the logo on the homepage of teams… just keep
+the Torii gate and the shisa", then "Accept and ship").
+
+Decision 3 changes: the sign-in logo keeps the corrected torii and the painted
+pair, but the cloud, misty mountains, rising sun and sparkles behind them are
+removed. The art sits straight on the page, so it reads the same on light and
+dark themes. Same file, size and placement (`src/lib/torii/ui/shisa-logo.webp`,
+256 px, shown at 128 px), now about 27 KB instead of 30 KB. Edited from the
+1254 px source with AI; the favicon, install icons and the invite pair are
+unchanged. A test checks the file is a 256 px WebP with transparency, no
+larger than 28 KB, with a see-through gap between the pillars.
