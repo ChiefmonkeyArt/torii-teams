@@ -70,6 +70,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | Softer own messages inside Continuum: a pale amber tint with a thin border, like Continuum's own chat, ADR 0022          | `0.6.1-torii.24` (Suite v0.9.72-alpha)                           |
 | Feels like part of Continuum: opens at the latest message, unread counts, Search, voice notes, Loading project, ADR 0023 | `0.6.1-torii.25` (Suite v0.9.73-alpha)                           |
 | Cleaner logo: the torii and shisa pair only, no cloud or sky behind them on the sign-in card, ADR 0014 amendment 1       | `0.6.1-torii.26` (Suite v0.9.77-alpha)                           |
+| Logo: the human shisa types on a laptop instead of wearing headphones, ADR 0014 amendment 2                              | `0.6.1-torii.27` (Suite v0.9.78-alpha)                           |
 
 ### Using actions (J1 slice 2)
 
