@@ -85,3 +85,17 @@ dark themes. Same file, size and placement (`src/lib/torii/ui/shisa-logo.webp`,
 1254 px source with AI; the favicon, install icons and the invite pair are
 unchanged. A test checks the file is a 256 px WebP with transparency, no
 larger than 28 KB, with a see-through gap between the pillars.
+
+## Amendment 2: the human shisa uses a laptop (torii.27)
+
+Date: 2026-11-16. Status: **Accepted** (owner, 2026-11-16: "remove the
+headphones and add a laptop", "Turn the laptop around so that the orange red
+Shisa is using it", then "Go, accept, ship and deploy the laptop logo as
+torii.27").
+
+The orange-red human shisa on the right no longer wears headphones; it types
+on a small open laptop at chest height, screen facing it, so the viewer sees
+the back of the dark grey lid with a soft cyan glow. The torii, the blue AI
+shisa and everything else from amendment 1 are unchanged. Same file, size and
+placement, about 27 KB. The favicon, install icons and the invite pair are
+unchanged. The amendment 1 test still applies.
