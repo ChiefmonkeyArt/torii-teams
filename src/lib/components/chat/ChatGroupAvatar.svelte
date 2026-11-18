@@ -5,7 +5,7 @@
 	import { metadataRelays } from '$lib/services/relay-pool';
 	import { TORII_NODE_BUILD } from '$lib/torii/build';
 	import { toriiAvatarSrc } from '$lib/torii/toriiProfiles.svelte';
-	import { normalizePubKey, pubkeyToHexColor } from '$lib/utils';
+	import { cn, normalizePubKey, pubkeyToHexColor } from '$lib/utils';
 	import { getDirectChatTargetPubkey } from '$lib/components/chat/chatGroupDisplay';
 	import { useProfileHints } from '$lib/services/useProfileHints.svelte';
 	import { getLoadAvatars } from '$lib/services/chatMediaStorage.svelte';
@@ -98,8 +98,12 @@
 		fallbackClass
 	)}
 {:else}
+	<!-- Torii: as wide as the two avatars, so the +N never sits over the title. -->
 	<div
-		class={`${className} flex shrink-0 items-center -space-x-1.5 *:data-[slot=avatar]:ring-2 *:data-[slot=avatar]:ring-background`}
+		class={cn(
+			className,
+			'flex w-auto shrink-0 items-center -space-x-1.5 *:data-[slot=avatar]:ring-2 *:data-[slot=avatar]:ring-background'
+		)}
 	>
 		{#each visibleMemberPubkeys as pubkey (pubkey)}
 			{@render memberAvatar(

@@ -19,6 +19,7 @@ import {
 	matchProjectGroup,
 	type GroupLike,
 	type InviteLink,
+	type AiMember,
 	type RosterTeams,
 	type TeamProject
 } from './continuumApi';
@@ -54,6 +55,8 @@ export const projectChannels = $state<{
 	rosters: Record<string, string[]>;
 	/** Membership signals per project (ADR 0006); absent on an older Continuum. */
 	teams: Record<string, RosterTeams>;
+	/** The project AI per project, when its roster lists it (ADR 0024). */
+	ai: Record<string, AiMember>;
 	/** Continuum knows we opened Teams; null on an older Continuum. */
 	ready: boolean | null;
 	coordinator: string;
@@ -70,6 +73,7 @@ export const projectChannels = $state<{
 	owners: {},
 	rosters: {},
 	teams: {},
+	ai: {},
 	ready: null,
 	coordinator: '',
 	relays: [],
@@ -205,6 +209,7 @@ async function loadProjectChannels(quiet = false): Promise<void> {
 		const owners: Record<string, string | null> = {};
 		const rosters: Record<string, string[]> = {};
 		const teams: Record<string, RosterTeams> = {};
+		const ai: Record<string, AiMember> = {};
 		let unreadable = false;
 		await Promise.all(
 			me.projects.map(async (p) => {
@@ -213,6 +218,7 @@ async function loadProjectChannels(quiet = false): Promise<void> {
 				owners[p.slug] = roster?.owner ?? null;
 				if (roster?.members) rosters[p.slug] = roster.members;
 				if (roster?.teams) teams[p.slug] = roster.teams;
+				if (roster?.ai) ai[p.slug] = roster.ai;
 			})
 		);
 		// A background refresh never swaps a good view for a partial one.
@@ -222,6 +228,7 @@ async function loadProjectChannels(quiet = false): Promise<void> {
 		projectChannels.owners = owners;
 		projectChannels.rosters = rosters;
 		projectChannels.teams = teams;
+		projectChannels.ai = ai;
 		projectChannels.ready = me.ready;
 		projectChannels.error = '';
 		projectChannels.invite = null;
@@ -416,6 +423,7 @@ export function signOutOfContinuum(): void {
 	projectChannels.projects = [];
 	projectChannels.rosters = {};
 	projectChannels.teams = {};
+	projectChannels.ai = {};
 	projectChannels.ready = null;
 }
 

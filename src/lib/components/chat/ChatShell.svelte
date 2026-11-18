@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { embedState } from '$lib/torii/ui/embedState.svelte';
 	import { canMarkRead } from '$lib/torii/ui/embed';
+	import { projectChannels } from '$lib/torii/projectChannels.svelte';
+	import { aiAskHint, slugOfDescription } from '$lib/torii/aiMember';
 	import { untrack } from 'svelte';
 	import ChatComposer from './ChatComposer.svelte';
 	import ChatHeader from './ChatHeader.svelte';
@@ -343,6 +345,13 @@
 	const messageMaps = $derived.by(() => buildAnnotationIndex(storedMessages));
 
 	// Torii Teams (J1): the action log folded from this group's messages.
+	// The project AI's ask rule (ADR 0024): say so before a non-asker sends.
+	const aiSlug = $derived(slugOfDescription(group?.metadata?.description));
+	const aiForChat = $derived(aiSlug ? (projectChannels.ai[aiSlug] ?? null) : null);
+	const aiRole = $derived(projectChannels.projects.find((p) => p.slug === aiSlug)?.role ?? null);
+	const aiMentionHint = $derived(
+		aiForChat ? (pubkeys: string[]) => aiAskHint(aiForChat, aiRole, pubkeys) : null
+	);
 	// Roles: group admins act as maintainers (every member in an admin-less,
 	// egalitarian group); a Torii roster resolver replaces this in TEAMS-2c.
 	const actionRoleOf = $derived(
@@ -1535,6 +1544,7 @@
 			focusKey={composerFocusKey}
 			{mentionCandidates}
 			bind:selectedMentions
+			mentionHint={aiMentionHint}
 		/>
 	</div>
 {/snippet}
