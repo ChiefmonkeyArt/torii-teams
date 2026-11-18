@@ -368,7 +368,12 @@ export function parseRosterTeams(raw: unknown): RosterTeams | null {
 const MAX_ROSTER = 64;
 
 const clean = (v: unknown, max: number) =>
-	typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max) : '';
+	typeof v === 'string'
+		? Array.from(v, (c) => (c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127 ? '' : c))
+				.join('')
+				.trim()
+				.slice(0, max)
+		: '';
 
 /** The AI member, only when it is an agent on this roster. */
 export function parseAiMember(raw: unknown, agents: ReadonlySet<string>): AiMember | null {
