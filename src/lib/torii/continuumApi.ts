@@ -281,8 +281,18 @@ export function parseRosterOwner(raw: unknown): string | null {
 	return typeof owner === 'string' && HEX64.test(owner) ? owner : null;
 }
 
+/** The project AI member (ADR 0024): on the roster as an agent. */
+export interface AiMember {
+	pubkey: string;
+	name: string;
+	/** "Local · llama3.2:1b" / "Routstr · model". */
+	label: string;
+}
+
 export interface ProjectRoster {
 	owner: string;
+	/** The project AI, when the roster lists it. */
+	ai?: AiMember;
 	/** Everyone on the roster, owner and agents included, deduplicated;
 	 *  null when the reply carries no member list (never guess membership). */
 	members: string[] | null;
@@ -357,6 +367,17 @@ export function parseRosterTeams(raw: unknown): RosterTeams | null {
 
 const MAX_ROSTER = 64;
 
+const clean = (v: unknown, max: number) =>
+	typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max) : '';
+
+/** The AI member, only when it is an agent on this roster. */
+export function parseAiMember(raw: unknown, agents: ReadonlySet<string>): AiMember | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const { pubkey, name, label } = raw as { pubkey?: unknown; name?: unknown; label?: unknown };
+	if (typeof pubkey !== 'string' || !HEX64.test(pubkey) || !agents.has(pubkey)) return null;
+	return { pubkey, name: clean(name, 40) || 'Continuum AI', label: clean(label, 60) };
+}
+
 /** The roster (owner + member pubkeys), or null when it has no valid owner. */
 export function parseRoster(raw: unknown): ProjectRoster | null {
 	const owner = parseRosterOwner(raw);
@@ -369,11 +390,16 @@ export function parseRoster(raw: unknown): ProjectRoster | null {
 	const event = signedEventOf(ev, owner);
 	if (!Array.isArray(list)) return { owner, members: null, teams, signedAt, event };
 	const members = new Set<string>([owner]);
+	const agents = new Set<string>();
 	for (const m of list.slice(0, MAX_ROSTER)) {
-		const pk = (m as { pubkey?: unknown } | null)?.pubkey;
-		if (typeof pk === 'string' && HEX64.test(pk)) members.add(pk);
+		const { pubkey: pk, role } = (m ?? {}) as { pubkey?: unknown; role?: unknown };
+		if (typeof pk === 'string' && HEX64.test(pk)) {
+			members.add(pk);
+			if (role === 'agent') agents.add(pk);
+		}
 	}
-	return { owner, members: [...members], teams, signedAt, event };
+	const ai = parseAiMember((raw as { ai?: unknown }).ai, agents);
+	return { owner, members: [...members], teams, signedAt, event, ...(ai ? { ai } : {}) };
 }
 
 /** The source and origin checks for a `torii:session` message (pubkey: adopt). */

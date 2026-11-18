@@ -27,6 +27,8 @@
 	import MarkerName from './MarkerName.svelte';
 	import { pickProfileName, profileDisplayName } from '$lib/utils/profileName';
 	import { nip19 } from 'nostr-tools';
+	import { projectChannels } from '$lib/torii/projectChannels.svelte';
+	import { aiMemberOf } from '$lib/torii/aiMember';
 	import Check from '@lucide/svelte/icons/check';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import ChevronUp from '@lucide/svelte/icons/chevron-up';
@@ -209,6 +211,8 @@
 			ensureProfileLoaded(message.systemTarget);
 	});
 	const authorNpub = $derived(nip19.npubEncode(message.author));
+	// The project AI (ADR 0024): its messages say so, with the model.
+	const aiAuthor = $derived(aiMemberOf(projectChannels.ai, message.author));
 	const authorHref = $derived(resolve('/p/[identifier]', { identifier: authorNpub }));
 	const displayName = $derived.by(
 		() =>
@@ -905,9 +909,16 @@
 
 					{#if showAuthor}
 						<p
-							class="max-w-[12rem] truncate px-1 text-xs font-medium text-foreground/90 sm:max-w-[16rem]"
+							class="flex max-w-[16rem] items-center gap-1.5 px-1 text-xs font-medium text-foreground/90 sm:max-w-[22rem]"
 						>
-							{displayName}
+							<span class="truncate">{displayName}</span>
+							{#if aiAuthor}
+								<span
+									class="shrink-0 rounded-full border border-border bg-muted px-1.5 py-px text-[10px] font-medium text-muted-foreground"
+									data-testid="ai-badge"
+									title="Written by an AI">AI{aiAuthor.label ? ` · ${aiAuthor.label}` : ''}</span
+								>
+							{/if}
 						</p>
 					{/if}
 

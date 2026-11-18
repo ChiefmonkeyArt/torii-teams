@@ -71,6 +71,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | Feels like part of Continuum: opens at the latest message, unread counts, Search, voice notes, Loading project, ADR 0023 | `0.6.1-torii.25` (Suite v0.9.73-alpha)                           |
 | Cleaner logo: the torii and shisa pair only, no cloud or sky behind them on the sign-in card, ADR 0014 amendment 1       | `0.6.1-torii.26` (Suite v0.9.77-alpha)                           |
 | Logo: the human shisa types on a laptop instead of wearing headphones, ADR 0014 amendment 2                              | `0.6.1-torii.27` (Suite v0.9.78-alpha)                           |
+| Project AI: an "AI · model" label on its messages, a hint for who can ask it, the +N badge clear of the title, ADR 0024 | `0.6.1-torii.28` (Continuum v0.2.214-alpha, Suite v0.9.79-alpha) |
 
 ### Using actions (J1 slice 2)
 

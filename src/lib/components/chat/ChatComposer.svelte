@@ -66,7 +66,8 @@
 		onSendMedia = () => {},
 		onSendVoice = () => {},
 		onSendPoll = () => {},
-		minimal = false
+		minimal = false,
+		mentionHint = null
 	}: {
 		value?: string;
 		onSubmit: () => void;
@@ -89,7 +90,10 @@
 		onSendPoll?: (draft: PollDraft) => void;
 		/** Torii team chat (ADR 0005): no polls or GIF search (voice notes: ADR 0023). */
 		minimal?: boolean;
+		/** A note for the picked @mentions, e.g. the project AI's ask rule (ADR 0024). */
+		mentionHint?: ((pubkeys: string[]) => string | null) | null;
 	} = $props();
+	const mentionNote = $derived(mentionHint?.(selectedMentions.map((m) => m.pubkey)) ?? null);
 
 	let textareaRef: HTMLTextAreaElement | null = $state(null);
 	let expanded = $state(false);
@@ -790,6 +794,12 @@
 					<X class="size-4" />
 				</Button>
 			</div>
+		{/if}
+
+		{#if mentionNote}
+			<p class="mb-2 px-1 text-xs text-muted-foreground" role="status" data-testid="mention-hint">
+				{mentionNote}
+			</p>
 		{/if}
 
 		<input

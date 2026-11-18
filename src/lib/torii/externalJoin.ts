@@ -1,4 +1,5 @@
-// Joining while the owner is away (ADR 0011). A newcomer's own client joins
+// Joining while the owner is away (ADR 0011). Continuum's AI member mirrors
+// this check in agent/lib/team-ai-join.mjs; change both together (ADR 0024). A newcomer's own client joins
 // the project chat with an MLS external commit built from the GroupInfo the
 // members keep on the node. The commit carries a proof in its authenticated
 // data; every member checks it here, using only the commit and the group's
