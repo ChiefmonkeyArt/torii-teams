@@ -89,6 +89,21 @@ export function waitingMembers(roster: string[] | undefined, groupMembers: strin
 	return roster.filter((pk) => !inGroup.has(pk));
 }
 
+/**
+ * Who the project chat header lists as not joined yet. The owner's list is the
+ * last roster sync's (it knows who is ready); it is checked against the live
+ * members so someone who joined while the owner was away drops off at once,
+ * not at the next sync. Everyone else derives it from the roster.
+ */
+export function headerWaiting(
+	isOwner: boolean,
+	synced: string[] | undefined,
+	roster: string[] | undefined,
+	groupMembers: string[]
+): string[] {
+	return waitingMembers(isOwner ? synced : roster, groupMembers);
+}
+
 const MARKER_RE = /^torii:project=([a-z0-9][a-z0-9-]{0,62})$/;
 
 /** The project slugs a group description claims (normally one). */
