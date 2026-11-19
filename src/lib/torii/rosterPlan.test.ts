@@ -18,7 +18,8 @@ import {
 	welcomeDue,
 	WELCOME_MIN_MS,
 	WELCOME_MAX_MS,
-	waitingMembers
+	waitingMembers,
+	headerWaiting
 } from './rosterPlan';
 
 const O = 'a'.repeat(64);
@@ -95,6 +96,21 @@ describe('waitingMembers', () => {
 	it('lists roster members not in the chat', () => {
 		expect(waitingMembers([O, A, B], [O, A])).toEqual([B]);
 		expect(waitingMembers(undefined, [O])).toEqual([]);
+	});
+});
+
+describe('headerWaiting', () => {
+	it("drops a teammate from the owner's list once they are in the chat", () => {
+		// Last sync saw A and B waiting; B then joined while the owner was away.
+		expect(headerWaiting(true, [A, B], [O, A, B], [O, B])).toEqual([A]);
+		expect(headerWaiting(true, [A, B], [O, A, B], [O, A, B])).toEqual([]);
+	});
+	it('keeps the synced list for the owner, not the raw roster', () => {
+		expect(headerWaiting(true, [B], [O, A, B], [O])).toEqual([B]);
+		expect(headerWaiting(true, undefined, [O, A], [O])).toEqual([]);
+	});
+	it('uses the roster for everyone else', () => {
+		expect(headerWaiting(false, [A], [O, A, B], [O, A])).toEqual([B]);
 	});
 });
 

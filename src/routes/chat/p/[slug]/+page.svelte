@@ -17,7 +17,7 @@
 	import TeamLoading from '$lib/torii/ui/TeamLoading.svelte';
 	import { embedState } from '$lib/torii/ui/embedState.svelte';
 	import { rosterSync, startProjectChat } from '$lib/torii/rosterSync.svelte';
-	import { waitingMembers } from '$lib/torii/rosterPlan';
+	import { headerWaiting } from '$lib/torii/rosterPlan';
 	import TeamChatHeader from '$lib/torii/ui/TeamChatHeader.svelte';
 	import ShisaWelcome from '$lib/torii/ui/ShisaWelcome.svelte';
 
@@ -41,9 +41,12 @@
 	const signals = $derived(Boolean(projectChannels.teams[slug]));
 	const added = $derived(projectChannels.projects.find((p) => p.slug === slug)?.added ?? false);
 	const waiting = $derived(
-		isOwner
-			? (rosterSync.waiting[slug] ?? [])
-			: waitingMembers(projectChannels.rosters[slug], group?.memberPubkeys ?? [])
+		headerWaiting(
+			isOwner,
+			rosterSync.waiting[slug],
+			projectChannels.rosters[slug],
+			group?.memberPubkeys ?? []
+		)
 	);
 	const note = $derived(
 		rosterSync.error[slug]
