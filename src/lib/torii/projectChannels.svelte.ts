@@ -8,6 +8,9 @@ import { listChatGroupMembers, listChatGroups } from '$lib/services/chatGroups.s
 import { manager } from '$lib/services/accountManager.svelte';
 import { eventStore } from '$lib/services/eventStore';
 import { setProfileSource } from './toriiProfiles.svelte';
+import { deviceOwner, loadDeviceClaims } from './deviceOwners.svelte';
+import { peopleOnly } from './deviceClaim';
+import { getChatStorage } from '$lib/storage/chatStorage';
 import { safeNormalizePubKey as normalizePubKey } from '$lib/utils';
 import type { ToriiNodeConfig } from './nodeConfig';
 import type { Device, MyDevices } from './devices';
@@ -435,6 +438,11 @@ function groupLikes(): GroupLike[] {
 		} catch {
 			members = [];
 		}
+		// ADR 0025: a person's devices are not roster members and take no seat.
+		void getChatStorage()
+			.then((storage) => loadDeviceClaims(storage, g.id))
+			.catch(() => undefined);
+		members = peopleOnly(members, deviceOwner);
 		const admins = g.metadata?.adminPubkeys?.length
 			? g.metadata.adminPubkeys.map((p) => normalizePubKey(p))
 			: null;

@@ -16,7 +16,7 @@ import {
 	type ChatStorage,
 	type StoredMessageLedgerRow
 } from '$lib/storage/chatStorage';
-import { SYSTEM_MESSAGE_KIND, isStreamHiddenKind } from '$lib/chat/kinds';
+import { ChatKinds, SYSTEM_MESSAGE_KIND, isStreamHiddenKind } from '$lib/chat/kinds';
 import { chatMessageReferencesPubkey } from '$lib/services/chatMentions';
 import type { StoredChatMessage } from '$lib/services/chatGroupMessages.svelte';
 import { samePubKey } from '$lib/utils';
@@ -54,7 +54,10 @@ export function buildMessageLedgerRows(
 	const rows: StoredMessageLedgerRow[] = [];
 	for (const message of messages) {
 		const countable =
-			message.kind !== SYSTEM_MESSAGE_KIND && !(me && samePubKey(message.sender, me));
+			message.kind !== SYSTEM_MESSAGE_KIND &&
+			// Torii Teams (ADR 0025): a device claim is bookkeeping, not news.
+			message.kind !== ChatKinds.DeviceClaim &&
+			!(me && samePubKey(message.sender, me));
 		let refTargetId: string | undefined;
 		if (me && !samePubKey(message.sender, me) && chatMessageReferencesPubkey(message.tags, me)) {
 			refTargetId = isStreamHiddenKind(message.kind)

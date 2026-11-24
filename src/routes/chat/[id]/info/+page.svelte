@@ -48,12 +48,21 @@
 	import UserRoundX from '@lucide/svelte/icons/user-round-x';
 	import { resolveGroupLocator } from '$lib/utils/groupShareLink';
 	import { groupRouteId } from '$lib/services/chatGroupLinks.svelte';
+	import { deviceOf, loadDeviceClaims } from '$lib/torii/deviceOwners.svelte';
+	import { getChatStorage } from '$lib/storage/chatStorage';
 
 	let { params } = $props();
 
 	const gid = $derived(resolveGroupLocator(params.id, page.url.searchParams).gid);
 	const group = $derived.by(() => (gid ? getChatGroup(gid) : undefined) ?? listChatGroups()[0]);
 	const members = $derived.by(() => (group ? listChatGroupMembers(group.id) : []));
+	$effect(() => {
+		const id = group?.id;
+		if (id)
+			void getChatStorage()
+				.then((storage) => loadDeviceClaims(storage, id))
+				.catch(() => undefined);
+	});
 	const canManageMembers = $derived.by(() => {
 		if (!$activeAccount || !group) return false;
 		return isGroupAdmin({ metadata: group.metadata, stablePubkey: $activeAccount.pubkey });
@@ -515,8 +524,19 @@
 									<div class="min-w-0 flex-1">
 										<div class="flex flex-wrap items-center gap-2">
 											<div class="min-w-0 flex-1">
-												<ProfileCard pubkey={member.stablePubkey} />
+												<ProfileCard
+													pubkey={deviceOf(member.stablePubkey)?.owner ?? member.stablePubkey}
+												/>
 											</div>
+											{#if deviceOf(member.stablePubkey)}
+												<span
+													class="inline-flex rounded-full border border-border px-2 py-1 text-xs text-muted-foreground"
+													data-testid="device-badge"
+													title="A device its owner signed for. It doesn't take a seat."
+												>
+													{deviceOf(member.stablePubkey)?.label} · device
+												</span>
+											{/if}
 											{#if member.isAdmin}
 												<span
 													class="inline-flex items-center gap-1 rounded-full border border-border px-2 py-1 text-xs text-muted-foreground"

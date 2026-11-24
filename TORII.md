@@ -73,6 +73,7 @@ Design: torii-continuum `docs/adr-team-jobs.md` (sections 2–3 and 2a) and
 | Logo: the human shisa types on a laptop instead of wearing headphones, ADR 0014 amendment 2                                | `0.6.1-torii.27` (Suite v0.9.78-alpha)                           |
 | Project AI: an "AI · model" label on its messages, a hint for who can ask it, the +N badge clear of the title, ADR 0024    | `0.6.1-torii.28` (Continuum v0.2.214-alpha, Suite v0.9.79-alpha) |
 | Owner's "not joined yet" clears the moment someone joins while the owner was away, not at the next roster check (ADR 0005) | `0.6.1-torii.29` (Suite v0.9.80-alpha)                           |
+| Your own Tab5 in rooms: shows as "<owner>'s Tab5", takes no seat, leaves with its owner, ADR 0025                          | `0.6.1-torii.30` (unreleased)                                    |
 
 ### Using actions (J1 slice 2)
 
@@ -219,6 +220,12 @@ unread counts (`torii:unread`) and a ready signal (`torii:ready`), opens its
 search on `torii:search`, shows "Loading project" instead of a false "not on
 this project", and has voice notes again:
 [`docs/torii/adr-0023-seamless-in-continuum.md`](docs/torii/adr-0023-seamless-in-continuum.md).
+
+Since torii.30, a person's own device (the Torii Companion Tab5) can sit in a
+room with its own key. It proves who owns it with a note signed by the owner's
+main key (kind 27532, sent inside the room as hidden kind 1013), shows as
+"<owner>'s Tab5", takes no seat and is removed if its owner leaves:
+[`docs/torii/adr-0025-device-members.md`](docs/torii/adr-0025-device-members.md).
 
 ## Versions
 
