@@ -29,6 +29,8 @@
 	import { nip19 } from 'nostr-tools';
 	import { projectChannels } from '$lib/torii/projectChannels.svelte';
 	import { aiMemberOf } from '$lib/torii/aiMember';
+	import { deviceOf } from '$lib/torii/deviceOwners.svelte';
+	import { deviceName } from '$lib/torii/deviceClaim';
 	import Check from '@lucide/svelte/icons/check';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import ChevronUp from '@lucide/svelte/icons/chevron-up';
@@ -188,7 +190,9 @@
 					: 'border-border bg-card'
 			} ${highlighted ? 'border-amber-400 bg-amber-50/70 ring-4 ring-amber-300/35 shadow-xl scale-[1.015] animate-pulse' : ''}`
 	);
-	const profileState = useProfile(() => message.author);
+	// A device member (ADR 0025) goes by its owner's name: "Chiefmonkey's Tab5".
+	const authorDevice = $derived(deviceOf(message.author));
+	const profileState = useProfile(() => authorDevice?.owner ?? message.author);
 	const profile = $derived(profileState.current);
 	// System-message name lookups (committer/target) — local truncating chips instead of
 	// ProfileCard's inline mode: the system sentence needs text-xs prose flow and one-line
@@ -214,11 +218,18 @@
 	// The project AI (ADR 0024): its messages say so, with the model.
 	const aiAuthor = $derived(aiMemberOf(projectChannels.ai, message.author));
 	const authorHref = $derived(resolve('/p/[identifier]', { identifier: authorNpub }));
-	const displayName = $derived.by(
-		() =>
+	const displayName = $derived.by(() => {
+		if (authorDevice) {
+			const owner =
+				pickProfileName(profile?.name, profile?.display_name, profile?.nip05) ||
+				`${nip19.npubEncode(authorDevice.owner).slice(0, 12)}…`;
+			return deviceName(owner, authorDevice.label);
+		}
+		return (
 			pickProfileName(profile?.name, profile?.display_name, profile?.nip05) ||
 			`${authorNpub.slice(0, 12)}…`
-	);
+		);
+	});
 	const replyParts = $derived.by(() =>
 		message.replyTo ? getCachedChatMessageParts(message.replyTo.id, message.replyTo.text) : []
 	);

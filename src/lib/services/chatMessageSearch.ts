@@ -334,7 +334,8 @@ function getSearchableMessages(messages: StoredChatMessage[]): StoredChatMessage
 				message.kind !== ChatKinds.Deletion &&
 				message.kind !== ChatKinds.Edit &&
 				// Torii Teams: action ops are hidden log entries, not messages.
-				message.kind !== ChatKinds.Action
+				message.kind !== ChatKinds.Action &&
+				message.kind !== ChatKinds.DeviceClaim
 		)
 		.filter((message) => !deletedIds.has(message.id))
 		.map((message) => editMap.get(message.id) ?? message);

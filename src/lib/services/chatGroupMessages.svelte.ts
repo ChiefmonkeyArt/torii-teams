@@ -16,6 +16,7 @@ import {
 import { getEventHash, type UnsignedEvent } from 'nostr-tools';
 import { gateExternalJoin, openJoinSeal } from '$lib/torii/externalJoin';
 import { gateMemberRemoval } from '$lib/torii/memberRemoval';
+import { noteDeviceClaims } from '$lib/torii/deviceOwners.svelte';
 
 import { findImetaTag, deriveMediaKey } from '$lib/services/chatMediaCrypto';
 import {
@@ -1249,6 +1250,8 @@ export async function ingestChatGroupMessages(params: {
 	if (heldFloor !== undefined) {
 		group.fetchCursor = Math.min(group.fetchCursor, heldFloor - 1);
 	}
+	// Torii Teams (ADR 0025): device claims name devices and keep them in project chats.
+	noteDeviceClaims(received);
 
 	return {
 		received,

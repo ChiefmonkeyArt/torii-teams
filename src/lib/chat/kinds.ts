@@ -29,7 +29,11 @@ export const ChatKinds = {
 	 *  `src/lib/chat/actions.ts`. Never renders as a row: the actions panel and
 	 *  locally drawn status lines fold it. PROVISIONAL number, to be agreed
 	 *  with Cordn upstream before any release. */
-	Action: 1012
+	Action: 1012,
+	/** Torii Teams device claim (ADR 0025): a device member (a Tab5) posts its
+	 *  owner's signed note saying the device is theirs. Never renders as a row;
+	 *  it names the device and keeps it in project chats. PROVISIONAL number. */
+	DeviceClaim: 1013
 } as const;
 
 /** Annotation kinds never render as a row — they mutate a primary message
@@ -53,5 +57,10 @@ export function isSystemKind(kind: number): boolean {
  *  kind-specific sparse aggregates (poll responses) that only feed their
  *  owning kind's renderer via a self-query. */
 export function isStreamHiddenKind(kind: number): boolean {
-	return isAnnotationKind(kind) || kind === ChatKinds.PollResponse || kind === ChatKinds.Action;
+	return (
+		isAnnotationKind(kind) ||
+		kind === ChatKinds.PollResponse ||
+		kind === ChatKinds.Action ||
+		kind === ChatKinds.DeviceClaim
+	);
 }

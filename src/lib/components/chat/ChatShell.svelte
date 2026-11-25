@@ -41,6 +41,8 @@
 		mergeActionOps,
 		rememberActionOps
 	} from '$lib/torii/actionHistory.svelte';
+	import { loadDeviceClaims } from '$lib/torii/deviceOwners.svelte';
+	import { getChatStorage } from '$lib/storage/chatStorage';
 	import * as Sheet from '$lib/components/ui/sheet';
 	import * as Resizable from '$lib/components/ui/resizable';
 	import { IsMobile } from '$lib/hooks/is-mobile.svelte';
@@ -366,6 +368,13 @@
 	});
 	$effect(() => {
 		rememberActionOps(groupId, storedMessages);
+	});
+	// Device members (ADR 0025): claims already stored for this chat.
+	$effect(() => {
+		const id = groupId;
+		void getChatStorage()
+			.then((storage) => loadDeviceClaims(storage, id))
+			.catch(() => undefined);
 	});
 	const actionHistory = $derived(getActionHistory(groupId));
 	const actionState = $derived(
